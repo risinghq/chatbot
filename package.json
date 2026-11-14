@@ -28,11 +28,11 @@
     "dev:frontend": "bun run --cwd apps/frontend dev"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
+    "@biomejs/biome": "2.6.6",
     "@types/bun": "^1.4.4",
     "@types/node": "^26.6.6",
     "@vendeya/tsconfig": "workspace:*",
-    "oxfmt": "0.75.0",
+    "oxfmt": "0.77.0",
     "shx": "^0.4.0",
     "typescript": "npm:typescript-native-bridge@6.0.3-bridge.19.tsgo.7.0.2"
   },
