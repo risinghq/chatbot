@@ -1,21 +1,18 @@
 node_modules
 .env
 .env.*
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 
 # build and dev generated files
 *.tsbuildinfo
 dist
 logs
+.wrangler
+worker-configuration.d.ts
+wrangler.script.*.json
 
-# Signed contracts and call recordings are generated at runtime, never source.
-# `data/uploads` is deliberately not here because the seeded catalog images
-# under it are tracked.
-**/data/private/
-
-# database
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
 
 # dev tools
 *.ps1
