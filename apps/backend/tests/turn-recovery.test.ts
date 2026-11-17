@@ -305,6 +305,39 @@ describe("a customer whose turn fails", () => {
     ]);
   });
 
+  it("settles the rows a turn leaves when recording its failure throws too", async () => {
+    failures = Infinity;
+    // A trigger that refuses an attempts write stands in for a D1 error in
+    // `recordFailedTurn`, after the group was already marked `processing`.
+    whileAnswering[1] = async () => {
+      await run(
+        `CREATE TRIGGER refuse_attempt_writes BEFORE UPDATE ON message_inbox
+         WHEN NEW.attempts <> OLD.attempts
+         BEGIN SELECT RAISE(ABORT, 'd1 gone'); END`,
+      );
+    };
+    await queue("wamid-first", "mmm lo voy a pensar");
+
+    await expect(wake()).rejects.toThrow();
+    expect(await inbox()).toMatchObject([{ status: "processing" }]);
+
+    // The next wake settles the leftover rows instead of leaving them
+    // `processing` in a live object: the dead write counts as one attempt,
+    // the retry fails on its own, and the handoff covers the rows.
+    await run("DROP TRIGGER refuse_attempt_writes");
+    await wake();
+
+    expect(attempts).toBe(2);
+    expect(await inbox()).toMatchObject([
+      { status: "failed", attempts: 2, last_error: "the model is down" },
+    ]);
+    expect(await conversation()).toEqual({
+      status: "human_takeover",
+      handover_reason: "turn_failed",
+    });
+    expect(alerts).toHaveLength(1);
+  });
+
   it("is answered after its object is aborted mid-turn, with no duplicate send", async () => {
     let state!: DurableObjectState;
     await runInDurableObject(stub(), (_object, objectState) => {
