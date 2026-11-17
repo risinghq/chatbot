@@ -16,22 +16,19 @@
     {
       "binding": "DB",
       "database_name": "vendeya",
-      // First deploy: replace with the id `wrangler d1 create vendeya` prints.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "88cac004-1a6e-4f1f-ab7f-a0f5689a6b7e",
       "migrations_dir": "migrations",
     },
   ],
   "kv_namespaces": [
     {
       "binding": "KV",
-      // First deploy: replace with the id `wrangler kv namespace create vendeya` prints.
-      "id": "00000000000000000000000000000000",
+      "id": "485590a311484a83893acf3779d57e7f",
     },
   ],
   "r2_buckets": [
     {
       "binding": "FILES",
-      // First deploy: create it with `wrangler r2 bucket create vendeya-files`.
       "bucket_name": "vendeya-files",
     },
   ],
