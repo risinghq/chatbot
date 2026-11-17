@@ -36,7 +36,9 @@ Change these values in both configuration files before the first deploy:
 
 ## Create the resources
 
-Create the database, the KV namespace and the bucket:
+`apps/backend/wrangler.jsonc` holds the ids of the database and the KV namespace
+on the rising account. A deploy to another account creates its own database, KV
+namespace and bucket:
 
 ```sh
 bunx wrangler d1 create vendeya
@@ -44,8 +46,7 @@ bunx wrangler kv namespace create vendeya
 bunx wrangler r2 bucket create vendeya-files
 ```
 
-Each of the first two prints an id. Put them in `apps/backend/wrangler.jsonc`,
-where the placeholders of zeros stand:
+Each of the first two prints an id. Put them in `apps/backend/wrangler.jsonc`:
 
 - the D1 id in `d1_databases[0].database_id`;
 - the KV id in `kv_namespaces[0].id`.
@@ -168,9 +169,9 @@ deploys only the Workers whose inputs the push changed:
 Migrations run before the new code, so the code never reads a column the
 database lacks. The dashboard job waits for the backend job when both run.
 
-The workflow reads two repository secrets. Add them on GitHub under **Settings
-
-> Secrets and variables > Actions**:
+The workflow reads two secrets. The risinghq organization gives both to its
+public repositories. A fork or a private copy adds them on GitHub under
+**Settings > Secrets and variables > Actions**:
 
 | Secret                  | Value                                                                      |
 | ----------------------- | -------------------------------------------------------------------------- |
