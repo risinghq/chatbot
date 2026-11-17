@@ -9,22 +9,25 @@ Cálidda credit. VendeYa staff create and operate each tenant. The bot handles
 text messages and catalog images. It does not take payment, arrange delivery, or
 process inbound images, audio, or other non-text messages.
 
+VendeYa runs on Cloudflare Workers. Local development runs the same Workers
+under `wrangler dev`, with local D1, KV and R2, and needs no Cloudflare account.
+
 ## Install
 
-The local setup needs [mise](https://mise.jdx.dev) and Bun. From a fresh clone:
+The local setup needs [mise](https://mise.jdx.dev), which installs Bun and Node.
+From a fresh clone:
 
 ```sh
 mise install
 bun install --frozen-lockfile
-cp .env.example .env
+cp apps/backend/.dev.vars.example apps/backend/.dev.vars
 bun run db:migrate
 bun run seed
 bun run account create admin
 bun run dev
 ```
 
-`db:migrate` needs a running Postgres at `DATABASE_URL`;
-[Get started](./docs/get-started.md#the-database) shows how to start one.
+`account create` asks for the new user's password.
 
 Open <http://localhost:5173>, log in as `admin`, and open the Simulador. Start a
 simulation with the persona `FNB - Crédito Alto (S/ 8000)`, then send `hola`,
@@ -36,6 +39,8 @@ instructions are in [Get started](./docs/get-started.md).
 
 - A fixed Cálidda credit-eligibility flow backed by FNB and GASO providers.
 - Tenant-specific catalogs, bundles, conversations, orders, and staff roles.
+- New tenants and their WhatsApp numbers are added with the `account` CLI,
+  without a deploy.
 - A dashboard for conversations, catalog and order work, reports, and a provider
   lookup for platform operators.
 - A simulator with built-in personas for testing the conversation flow.
@@ -45,8 +50,8 @@ instructions are in [Get started](./docs/get-started.md).
 
 ## Read next
 
-- The [manual](./docs/readme.md) is the ordered guide for setup, operations,
-  WhatsApp, tenancy, and development.
-- [Architecture](./docs/architecture.md) maps workspaces, request flow, state,
+- The [manual](./docs/readme.md) is the ordered guide for setup, deploy,
+  operations, WhatsApp, tenancy, and development.
+- [Architecture](./docs/architecture.md) maps the Workers, request flow, state,
   and code ownership.
 - [Contributing](./.github/contributing.md) is the contributor entry point.

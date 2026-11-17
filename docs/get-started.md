@@ -1,13 +1,14 @@
 # Get started
 
 This takes a fresh clone to a bot you can talk to in the dashboard's simulator.
-It needs no WhatsApp number, no Cálidda credentials and no LLM key.
+It needs no Cloudflare account, no WhatsApp number, no Cálidda credentials and
+no LLM key.
 
 ## Prerequisites
 
-- [mise](https://mise.jdx.dev), which installs the pinned bun and Postgres from
-  [`mise.toml`](../mise.toml). A bun of the pinned version on your `PATH` works
-  too.
+- [mise](https://mise.jdx.dev), which installs the pinned Bun and Node from
+  [`mise.toml`](../mise.toml). Bun and Node of those versions on your `PATH`
+  work too. Wrangler, the Cloudflare CLI, runs on Node.
 
 ## Install
 
@@ -18,16 +19,15 @@ mise install
 bun install --frozen-lockfile
 ```
 
-## The env file
+## The local secrets
 
 ```sh
-cp .env.example .env
+cp apps/backend/.dev.vars.example apps/backend/.dev.vars
 ```
 
-Every app reads the root `.env`. For the simulator, the defaults in
-`.env.example` are enough. Variables already set in your shell win over the
-file, so unset any `WHATSAPP_*`, `CALIDDA_*` or `POWERBI_*` you have exported
-for another checkout.
+`wrangler dev`, the seed and the account command read `apps/backend/.dev.vars`.
+Its values override the production values in `apps/backend/wrangler.jsonc`. For
+the simulator, the defaults are enough.
 
 Set `SECRETS_KEY` now. It encrypts each WhatsApp number's access token:
 
@@ -35,33 +35,29 @@ Set `SECRETS_KEY` now. It encrypts each WhatsApp number's access token:
 bun scripts/generate-token.ts secrets
 ```
 
-prints a line such as `SECRETS_KEY="IiGTB0N-..."`. Put it in `.env`.
+prints a line such as `SECRETS_KEY="IiGTB0N-..."`. Put it in
+`apps/backend/.dev.vars`.
 
 Without `SECRETS_KEY`, no access token can be stored. The seed leaves the
-default number `pending`, the channels API refuses a token with 503, and nothing
-can be sent to WhatsApp. The simulator still works, because it sends nothing. A
+default number `pending`, the account command refuses a token, and nothing can
+be sent to WhatsApp. The simulator still works, because it sends nothing. A
 different key later cannot read the tokens stored under this one.
 
 ## The database
 
-The seed and the account command write to Postgres, at the `DATABASE_URL` in
-`.env`. `mise install` provides the server. To run one outside the repository,
-as the user that owns it:
-
-```sh
-initdb --pgdata ~/.vendeya/postgres --username postgres --auth trust --no-instructions
-pg_ctl --pgdata ~/.vendeya/postgres --log ~/.vendeya/postgres.log start
-createdb --username postgres vendeya
-```
-
-Then create the tables:
+The database is a local D1 database. Wrangler keeps it, with the local KV and R2
+stores, under `apps/backend/.wrangler/state`. Create the tables:
 
 ```sh
 bun run db:migrate
 ```
 
-It applies the migrations that have not run, and does nothing when there are
-none. Run it again after pulling a change that adds a migration.
+It applies the migrations in `apps/backend/migrations` that have not run, and
+does nothing when there are none. Run it again after pulling a change that adds
+a migration.
+
+`bun run --cwd apps/backend clean` deletes the local state. Run `db:migrate` and
+the seed again after it.
 
 ## The seed
 
@@ -69,9 +65,10 @@ none. Run it again after pulling a change that adds a migration.
 bun run seed
 ```
 
-writes the default tenant `totem`, a sample catalog with images, and a few test
-conversations to Postgres. With no `WHATSAPP_PHONE_ID` in `.env`, the tenant's
-number is a `pending` placeholder. The seed is safe to run again.
+writes the default tenant `totem`, a sample catalog, and a few test
+conversations to the local D1, and uploads the catalog images to the local R2.
+With no `WHATSAPP_PHONE_ID` in `.dev.vars`, the tenant's number is a `pending`
+placeholder. The seed is safe to run again.
 
 ## The first account
 
@@ -96,18 +93,22 @@ bun run account create ops --platform-operator
 bun run dev
 ```
 
-starts two processes, which restart on change:
+starts two servers, which reload on change:
 
-| Process  | Address                 | Role                             |
-| -------- | ----------------------- | -------------------------------- |
-| backend  | `http://localhost:3000` | the API, the workers and the bot |
-| frontend | `http://localhost:5173` | the dashboard                    |
+| Server    | Address                 | Role                                                         |
+| --------- | ----------------------- | ------------------------------------------------------------ |
+| backend   | `http://localhost:8787` | `wrangler dev`: the webhook, the API, the Durable Objects    |
+| dashboard | `http://localhost:5173` | `vite dev`: the dashboard, which sends `/api` to the backend |
 
-`bun run dev:backend` and `dev:frontend` start one at a time.
+The dashboard reaches the backend through its `BACKEND` service binding, as in
+production. `bun run dev:backend` and `dev:frontend` start one at a time.
 
-On a fresh setup the backend warns that `WHATSAPP_APP_SECRET` is unset, and,
-unless you created one, that no platform operator exists. Neither affects the
-simulator.
+`wrangler dev` does not run the cron trigger on its own. To run the sweep that
+production runs every minute:
+
+```sh
+curl http://localhost:8787/cdn-cgi/local/scheduled
+```
 
 ## Talk to the bot
 
@@ -122,10 +123,10 @@ The bot greets you as Cálidda, asks whether the gas service is in your name,
 asks for your DNI, then offers S/ 8000 of credit and lists the product groups:
 
 ```text
-hola      -> Hola 👋 Somos Cálidda. El servicio de gas está a tu nombre?
-si        -> Excelente 😊. Necesito tu DNI para consultar tu línea de crédito.
-12345678  -> Perfecto Maria 🎉 Calificas con S/ 8000.00 de línea.
-             Tengo Línea blanca y hogar, Tecnología, Combos. ¿Qué te gustaría ver?
+hola      -> ¡Qué tal! Somos Cálidda. ¿Tu servicio de gas está a tu nombre?
+si        -> Genial 😊, ¿me brindas el número de tu DNI?
+12345678  -> ¡Excelente noticia, Maria! 🎉 Tienes una línea de crédito aprobada de S/ 8000.00.
+             ¿Qué estás buscando? Tengo productos de Línea blanca y hogar, Tecnología, Combos.
 ```
 
 The wording varies between runs. Answer with a group, such as `Tecnología`, then
@@ -135,7 +136,7 @@ For each simulated message the backend logs "Refusing to send on a channel
 account that is not active". It comes from marking the message read on the
 `pending` placeholder number, and changes nothing.
 
-The same conversation through the API, with the frontend running:
+The same conversation through the API, with both servers running:
 
 ```sh
 curl -c cookies.txt -H 'content-type: application/json' \
@@ -162,11 +163,12 @@ another simulation holds.
 
 Without `OPENAI_API_KEY`, a message the bot's patterns do not recognize gets no
 reply, the backend logs "Message processing failed", and the simulator answers
-500 with `{"status":"failed","error":"..."}`. Set the key in `.env` to let the
-bot answer questions and recover from unclear replies.
+500 with `{"status":"failed","error":"..."}`. Set the key in `.dev.vars` to let
+the bot answer questions and recover from unclear replies.
 
 ## Next
 
 - [How a conversation runs](./conversation.md) explains what just happened.
 - [Connecting WhatsApp](./whatsapp.md) connects a real number.
+- [Deploy](./deploy.md) puts it on Cloudflare.
 - [Development](./development.md) lists the checks to run before a change.

@@ -16,8 +16,8 @@ repeating it.
    selection, recovery, and simulator personas.
 6. [Connecting WhatsApp](./whatsapp.md): register a number and configure Meta's
    callback.
-7. [Deploy](./deploy.md): run the container stack, set its env file, and back up
-   and restore it.
+7. [Deploy](./deploy.md): create the Cloudflare resources, set the secrets,
+   deploy the Workers, and restore the database.
 8. [Operations](./operations.md): inspect health and logs, manage accounts, and
    investigate missing replies.
 9. [Development](./development.md): run checks, find CI jobs, and follow code

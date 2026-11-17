@@ -6,24 +6,24 @@ then describes the phases a conversation moves through and how a person takes it
 over.
 
 ```text
-webhook -> message_inbox -> aggregator -> lock -> turn
+webhook -> message_inbox -> wake the conversation's object
+  object (holds the lock): send due replies -> answer the pending group -> handoff
   turn:  idle reset -> mark read -> enrichment loop (core transition) ->
          pacing delay -> execute commands (send, persist) -> emit events
-  send failure -> outbox -> outbox worker -> handoff to a person
+  send failure -> outbox -> the object's alarm -> handoff to a person
 ```
 
 ## The webhook
 
-Meta posts a signed batch to the frontend at `/api/webhook`, which relays it to
-the backend and returns the backend's verdict. How the endpoint is set up and
-secured is in [Connecting WhatsApp](./whatsapp.md).
+Meta posts a signed batch to the backend Worker at `/api/webhook`. How the
+endpoint is set up and secured is in [Connecting WhatsApp](./whatsapp.md).
 
 [`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts) handles each
 message in the batch on its own and reports a status for it in the 200 body:
 
 | Status                                 | Meaning                                                                  |
 | -------------------------------------- | ------------------------------------------------------------------------ |
-| `received`                             | Stored in `message_inbox` for the aggregator.                            |
+| `received`                             | Stored in `message_inbox` for the conversation's object.                 |
 | `duplicate`                            | Its Meta message id is already queued. Nothing is done.                  |
 | `non_text_ignored`                     | Image, audio, video, document or unknown type. No reply, nothing stored. |
 | `ignored_system_message`               | No sender.                                                               |
@@ -40,51 +40,69 @@ redelivers it, and the message id check skips the ones already stored.
 Before storing a text message, the webhook creates the conversation if needed
 and writes the inbound `messages` row. The dashboard shows it from there.
 
+The webhook answers Meta once every message is stored. It then wakes the object
+of each conversation that got a message, in `waitUntil`, so the turn runs after
+the answer. A wake that fails is logged as "Waking the conversation failed; the
+sweep wakes it", and the minute sweep wakes the conversation.
+
 The backend ignores Meta's delivery and read statuses. A reply's `sent` status
 means Meta accepted it, not that it was delivered.
 
 ## The inbox and the aggregator
 
-[`conversation/aggregator-worker.ts`](../apps/backend/src/conversation/aggregator-worker.ts)
-polls `message_inbox` every 100 ms. It takes every `pending` row older than 2 s,
-groups them by conversation, and joins each group's text with spaces into one
-message. The 2 s is an age per row, not a pause since the customer's last
-message: two messages 1.5 s apart can be answered in two turns.
+Each conversation has one Durable Object,
+[`ConversationObject`](../apps/backend/src/conversation/object.ts), named by the
+conversation's tenant, channel account and phone. A wake runs one pass: send the
+replies that are due ([the outbox](#the-outbox)), answer the pending messages,
+then [hand off](#the-handoff) what failed. The pass ends by setting the object's
+alarm to the next due moment, so the object wakes itself.
+
+[`aggregator.ts`](../apps/backend/src/conversation/aggregator.ts) takes the
+conversation's `pending` rows as one group and joins their text with spaces into
+one message. The group waits for a quiet window: it is answered 2 s after its
+newest message, and never later than 10 s after its oldest. Two messages sent
+within 2 s of each other are answered in one turn. While the window is open the
+alarm is set to its end.
 
 Rows of a suspended tenant or an inactive number are skipped and stay `pending`
-([`message-inbox.ts`](../apps/backend/src/conversation/message-inbox.ts)). All
-ready groups run in parallel. Each row moves:
+([`message-inbox.ts`](../apps/backend/src/conversation/message-inbox.ts)).
+Different conversations run in parallel, each in its own object. Each row moves:
 
 ```text
 pending -> processing -> processed    the turn recorded its result
-                      -> pending      the lock was busy, or the number was
-                                      switched off during the turn, or the
-                                      turn failed for the first time
+                      -> pending      the number was switched off during the
+                                      turn, or the turn failed for the first
+                                      time
                       -> failed       the turn failed for the second time
 ```
 
-A row becomes `processed` only in the transaction that records the turn: the
-phase, the analytics rows and the row's own status commit together (see
-[the executor](#the-executor)). A turn that throws before that, anywhere in the
-reply step, leaves the rows unsettled. The aggregator counts the failure in
+A row becomes `processed` only in the batch that records the turn: the phase,
+the analytics rows and the row's own status commit together in one D1 `batch()`
+(see [the executor](#the-executor)). A turn that throws before that, anywhere in
+the reply step, leaves the rows unsettled. The object counts the failure in
 `message_inbox.attempts` and keeps the error in `last_error`. Attempts belong to
 the conversation, not the row: a message that arrives after the first failure
 joins the retry and fails with the older ones. After the first failure the group
-goes back to `pending` and the next poll runs its turn again. After the second,
+goes back to `pending` and the next pass runs its turn again. After the second,
 every row of the group ends `failed`, and so does every `pending` row of the
 conversation, including one that arrived while the second attempt ran.
 [The handoff](#the-handoff) then gives the conversation to a person with reason
 `turn_failed`, and no row is left to be answered after it. A turn refused
-because the lock was busy or the number was switched off counts no attempt.
+because the number was switched off counts no attempt.
 
-A backend that dies mid-turn leaves its rows `processing`. At boot, before the
-aggregator polls, each conversation's `processing` rows are settled as one
-failed attempt with `last_error` `interrupted: the process ended mid-turn`, on
-the same rule, so a message that kills the backend every time reaches a person.
-When that is the second attempt, the conversation's `pending` rows fail with it.
-The commit comes after the sends, so a reply that went out before the backend
-died is sent again on the rerun, as with a send that throws partway through a
-batch.
+An object that ends mid-turn, by a crash, an exceeded limit or a restart of the
+Worker, leaves its rows `processing`. The first call into the conversation's
+next object, before anything else runs, settles them as one failed attempt with
+`last_error` `interrupted: the turn ended mid-run`, on the same rule, so a
+message that ends the object every time reaches a person. When that is the
+second attempt, the conversation's `pending` rows fail with it. The commit comes
+after the sends, so a reply that went out before the object ended is sent again
+on the rerun, as with a send that throws partway through a batch.
+
+The minute sweep wakes every conversation of an open tenant with a pending group
+past its quiet window, a row still `processing`, a reply due, or a failed row
+not handed off. It catches a wake that was lost and a number or tenant switched
+back on.
 
 Processed rows are kept 7 days, because the Meta message id on them is what
 recognizes a redelivery
@@ -92,17 +110,20 @@ recognizes a redelivery
 
 ## The lock
 
-Every turn, takeover, release and outbox attempt runs inside the conversation's
-lock ([`conversation/locks.ts`](../apps/backend/src/conversation/locks.ts)). The
-key is `tenant:channel account:phone`, so the same contact writing to two
-numbers has two conversations. Waiters queue in order. The lock lives in the
-backend's memory, which is one reason the backend is
-[one process](./architecture.md#durable-state).
+Every turn, outbox attempt, handoff, takeover, release, decline and timed-out
+reassignment runs inside the conversation's lock
+([`conversation/locks.ts`](../apps/backend/src/conversation/locks.ts)). The lock
+lives in the conversation's object. Every call for a conversation reaches its
+one object, named `tenant:channel account:phone`, so the same contact writing to
+two numbers has two conversations. Waiters queue in order.
 
-The limit is 30 s and counts the wait. A caller that never got the lock gets
-`ConversationBusyError`: nothing ran, and its inbox rows go back to `pending`. A
-caller whose work outlives the limit gets `LockTimeoutError`: the work keeps
-running and keeps the lock, and its rows stay `processing` until it settles.
+The limit is 30 s and counts the wait. A call that never got the lock, or whose
+work outlived the limit, answers `busy`. A call that never got the lock ran
+nothing, and its inbox rows stay `pending`. Work that outlives the limit keeps
+running and keeps the lock, and its rows stay `processing` until it settles. The
+work holding the lock sets the alarm again when it ends. A dashboard takeover or
+release that answers `busy` gets 409, "The conversation is busy. Try again in a
+moment."
 
 A manual message from an agent does not take the lock.
 
@@ -127,7 +148,8 @@ runs one turn for one grouped message:
    conversation never emits it, so an escalation alerts once. Such a turn may
    emit `customer_message_received` ([Escalation](#escalation)).
 
-The simulator calls the same `handleMessage`.
+The simulator calls the same `answerMessage`, through the conversation's object,
+at once and with no inbox rows.
 
 ## Core's transition
 
@@ -194,8 +216,9 @@ message the regexes do not recognize ends this way.
 ## The executor
 
 [`handler/command-executor.ts`](../apps/backend/src/conversation/handler/command-executor.ts)
-runs the commands in order, then in one transaction writes the new phase if it
-changed, the analytics rows, and marks the turn's inbox rows `processed`.
+runs the commands in order, then in one D1 `batch()` writes the new phase if it
+changed, the analytics rows, and marks the turn's inbox rows `processed`. A
+batch commits whole or not at all.
 
 A simulated conversation (`is_simulation = 1`) writes each reply to `messages`
 as `sent` and sends nothing.
@@ -215,7 +238,8 @@ It sends through the Cloud API
 ([`cloud-api.ts`](../apps/backend/src/adapters/whatsapp/cloud-api.ts), 10 s for
 text, and 15 s for an image. The Graph version is set in
 [WhatsApp](./whatsapp.md#connecting-whatsapp)). An image is sent as a link to
-`<public url>/media/images/<id>.jpg`, which Meta fetches.
+`<public url>/media/<tenant>/images/<id>.jpg`, which Meta fetches from R2
+through the backend.
 
 A bot reply:
 
@@ -268,22 +292,25 @@ pending  -> cancelled a person took the conversation
 
 A reply gets at most 5 attempts, the inline send counting as the first.
 
-[`outbox-worker.ts`](../apps/backend/src/conversation/outbox-worker.ts) polls
-every second. For each conversation with a due row it takes the lock, expires
-rows past an hour, claims only the lowest-numbered row, sends it, and records
-the outcome on the outbox and `messages` rows in one transaction. A number
-switched off defers the row 60 s without counting an attempt. At boot, a row
-left `sending` is recorded as one `ambiguous` attempt with reason `interrupted`.
+[`outbox-sender.ts`](../apps/backend/src/conversation/outbox-sender.ts) runs
+first in each pass of the conversation's object, inside the lock. It expires
+rows past an hour, then sends the due rows one at a time, lowest-numbered first,
+and records each outcome on the outbox and `messages` rows in one batch. It
+sends at most 10 rows a pass. The object's alarm is set to the next row's
+`next_attempt_at`, so each retry runs on time. A number switched off defers the
+row 60 s without counting an attempt. A row left `sending` by an object that
+ended is recorded, by the next object's first call, as one `ambiguous` attempt
+with reason `interrupted`.
 
-Final rows are deleted after 7 days.
+Final rows are deleted after 7 days, by the hourly sweep.
 
 ## The handoff
 
 A `failed` row, in `outbox` or in `message_inbox`, means the customer did not
 get a reply. [`handoff.ts`](../apps/backend/src/conversation/handoff.ts) runs
-after every outbox pass and finds conversations of open tenants with a `failed`
-row not yet handed off. A suspended tenant's rows wait for it to reopen. Inside
-the lock it:
+last in each pass of the conversation's object and looks for a `failed` row not
+yet handed off. A suspended tenant's rows wait for it to reopen: the sweep wakes
+the conversation again once it is open. Inside the lock it:
 
 1. cancels the conversation's pending replies,
 2. escalates the conversation if it is still `active`, and assigns it an agent,

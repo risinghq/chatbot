@@ -9,8 +9,8 @@ only the rules those documents do not.
 
 - **Tenant scope.** A read over a scope that may be null filters with
   `tenantPredicate` from `apps/backend/src/db/query.ts`, never with a hand-built
-  `if (tenantId)` branch. A worker that sweeps every tenant uses
-  `openTenantsOnly` and `activeChannelAccountsOnly`. See
+  `if (tenantId)` branch. Code that sweeps every tenant uses `openTenantsOnly`
+  and `activeChannelAccountsOnly`. See
   [Tenancy](./docs/tenancy.md#how-a-read-is-scoped) for the current scope model.
 - **File paths** come from `apps/backend/src/lib/storage-paths.ts`.
 - **Core stays free of I/O.** If a turn needs the database, a provider or the
@@ -19,14 +19,16 @@ only the rules those documents do not.
 - **Sends** go through `WhatsAppService` and act on the returned outcome. Most
   failures come back as an outcome, not a throw. An inactive number throws
   `ChannelUnavailableError`.
-- **One backend process.** Locks, the circuit breaker and the workers live in
-  memory. Do not add state that assumes a second process shares it, and do not
-  design for one.
-- **Schema.** `schema.sql` is the whole schema and never alters a table that
-  exists. After changing a table, delete the database file and restart the
-  backend. The Postgres schema is different: a change is a new file in
-  `db/migrations/` and an edit to `db/types.ts`, never an edit to a migration
-  that has run.
+- **No state in an isolate.** Workers run many isolates and evict them at any
+  time. State that correctness depends on lives in D1, KV, R2 or a Durable
+  Object. A write that must not interleave with a bot turn runs inside the
+  conversation's `ConversationObject`, and its next due moment is the object's
+  alarm. Use no `setInterval`; periodic work belongs in the cron sweep
+  (`apps/backend/src/sweep.ts`).
+- **Atomic writes.** D1 has no interactive transaction. Statements that must
+  commit together are one `batch()` from `apps/backend/src/db/index.ts`.
+- **Schema.** The schema is the D1 migrations in `apps/backend/migrations`. A
+  change is a new migration, never an edit to one that has run.
 - **A new workspace** needs a `typecheck` script, which `bun run typecheck`
   runs. Nothing checks that it has one.
 - **Names.** The product and every workspace package are VendeYa (`@vendeya/*`).
@@ -38,23 +40,26 @@ only the rules those documents do not.
 
 ## Before you finish
 
-Run `bun run fix`, then `bun run check` and `bun run test:integration`, which
-are what CI runs ([Development](./docs/development.md#checks)). Report a check
-you could not run.
+Run `bun run fix`, then `bun run check`, which is what CI runs
+([Development](./docs/development.md#checks)). Report a check you could not run.
 
 When behavior changes, change the manual page that describes it in the same
 commit. A page that is wrong is worse than none.
 
 ## Environment hazards
 
-- Variables set in your shell override the root `.env`. If the shell carries
+- `bun run dev`, `seed` and `account` read `apps/backend/.dev.vars`. If it holds
   real `WHATSAPP_*`, `CALIDDA_*` or `OPENAI_API_KEY` values, a local run uses
-  them: it can seed a live number, query Cálidda and send real messages. Run
-  local probes with those variables unset.
-- `bun test` points the database and uploads at a temporary directory through
-  `apps/backend/tests/setup.ts`. A script run outside the test runner uses
-  `apps/backend/data/database.sqlite`. `bun run db:migrate`, `seed` and
-  `account` use the Postgres database at `DATABASE_URL`.
+  them: it can seed a live number, query Cálidda and send real messages. Point
+  `GRAPH_API_BASE_URL` at a fake server for local probes.
+- `seed --remote`, `account --remote` and `db:migrate:remote` write to the
+  deployed D1 database and R2 bucket. Run them only when you mean to.
+- The backend's tests run in workerd with their own D1, KV and R2 per test, and
+  `apps/backend/tests/bindings.ts` overrides `.dev.vars`. A script run outside
+  the tests uses the local state under `apps/backend/.wrangler/state`, which
+  `bun run --cwd apps/backend clean` deletes.
+- `wrangler dev` does not run the cron trigger. Run the sweep with
+  `curl http://localhost:8787/cdn-cgi/local/scheduled`.
 
 ## Commits
 

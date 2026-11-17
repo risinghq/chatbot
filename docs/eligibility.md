@@ -25,14 +25,15 @@ name, a balance and an NSE (socio-economic stratum).
 The credentials are one Cálidda login (`CALIDDA_BASE_URL`, `CALIDDA_USERNAME`,
 `CALIDDA_PASSWORD`) and one Power BI report (`POWERBI_RESOURCE_KEY`,
 `POWERBI_REPORT_ID`, `POWERBI_DATASET_ID`, `POWERBI_MODEL_ID`), read from the
-environment when a check runs ([`config.ts`](../apps/backend/src/config.ts)). A
-missing variable does not stop boot. It makes that provider fail at the first
-check.
+Worker's environment when a check runs
+([`config.ts`](../apps/backend/src/config.ts)). A missing value makes that
+provider fail at each check.
 
 Timeouts are 10 s for the FNB login, 15 s for the FNB query and 20 s for each
 Power BI query ([`config/timeouts.ts`](../apps/backend/src/config/timeouts.ts)).
-Nothing is retried. The FNB login token is cached in memory for 3500 s and
-shared by every tenant.
+Nothing is retried. The FNB login token is kept in KV for 3500 s and shared by
+every tenant and every isolate
+([`fnb-client.ts`](../apps/backend/src/adapters/providers/fnb-client.ts)).
 
 ## Which answer wins
 
@@ -99,7 +100,7 @@ alerts the dev group, and the customer's conversation waits in
 every waiting conversation in scope:
 
 ```sh
-curl -X POST -b "session=<token>" https://<frontend>/api/admin/retry-eligibility
+curl -X POST -b "session=<token>" https://vendeya.rising.sh/api/admin/retry-eligibility
 ```
 
 The dashboard has no button for it. `GET /api/admin/outage-status` counts the
@@ -116,8 +117,10 @@ When one provider fails and the other answers, the backend emits
 [`adapters/providers/health.ts`](../apps/backend/src/adapters/providers/health.ts)
 blocks a provider for 30 minutes when its error message contains `auth`, `401`
 or `403` (or `bloqueado`, for FNB). A blocked provider fails at once without a
-request. The breaker lives in the backend's memory, so a restart clears it.
-`/health` reports it (see [Operations](./operations.md#health)).
+request. A block is a KV key that expires when the block ends, so every isolate
+sees it. KV takes up to a minute to show a write everywhere, so an isolate
+elsewhere may try the provider once more after the block. A deploy does not
+clear it. `/api/health` reports it (see [Operations](./operations.md#health)).
 
 ## The kill switches
 
@@ -145,7 +148,7 @@ persona queries the real providers.
 A platform operator can check a DNI outside any conversation:
 
 ```sh
-curl -b "session=<token>" https://<frontend>/api/providers/<dni>
+curl -b "session=<token>" https://vendeya.rising.sh/api/providers/<dni>
 ```
 
 It runs the same parallel check with no tenant, so no catalog is consulted

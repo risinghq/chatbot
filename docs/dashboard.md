@@ -6,22 +6,24 @@ orders. Its UI text is Spanish.
 
 ## How it reaches the backend
 
-The browser talks only to the frontend. Three routes forward to the backend at
-the URL returned by `getBackendUrl()` in
-[`packages/utils/src/url.ts`](../packages/utils/src/url.ts). It reads
-`BACKEND_URL` and defaults to `http://localhost:3000`.
+The dashboard is its own Worker, `vendeya-dashboard`, on the same host as the
+backend. In production the browser's requests to `/api/*` and `/media/*` go
+straight to the backend Worker, whose routes take those paths before the
+dashboard sees them.
 
-| Route                                                                                         | Forwards                                                                                                                                 |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| [`routes/api/[...path]/+server.ts`](../apps/frontend/src/routes/api/[...path]/+server.ts)     | `/api/*` with every request header, the `session` cookie included, and returns the backend's response and headers, `Set-Cookie` included |
-| [`routes/media/[...path]/+server.ts`](../apps/frontend/src/routes/media/[...path]/+server.ts) | `/media/*`, the public catalog images, with a one-week cache header                                                                      |
-| [`routes/api/webhook/+server.ts`](../apps/frontend/src/routes/api/webhook/+server.ts)         | Meta's webhook. See [Connecting WhatsApp](./whatsapp.md)                                                                                 |
+The dashboard's server reaches the backend through its `BACKEND` service
+binding, a call between Workers that never leaves Cloudflare.
+[`hooks.server.ts`](../apps/frontend/src/hooks.server.ts) does two things with
+it:
 
-The `/api` proxy forwards the request body as bytes, so a binary upload (a
-bundle image, a contract PDF, a call recording) reaches the backend as the
-browser sent it. It holds the whole body in memory. The built frontend refuses a
-body over 64 MiB before the proxy sees it
-([Operations](./operations.md#uploads)).
+- It passes any request for `/api/*` or `/media/*` that reaches the dashboard to
+  the backend unchanged, body and headers included. A server load's `fetch` of
+  `/api/...` takes this path, and so does every browser request under
+  `bun run dev`.
+- For every page, it asks the backend's `/api/auth/me` who the `session` cookie
+  belongs to, and sends a visitor with no user from `/dashboard/*` to `/login`.
+
+`/login` is prerendered and served from Workers assets, with no server code.
 
 Components call the API with `fetchApi` from
 [`lib/utils/api.ts`](../apps/frontend/src/lib/utils/api.ts), a thin `fetch`
@@ -81,8 +83,8 @@ the selector, is not shown on `/dashboard` itself.
 
 ```text
 routes/
-  +page.svelte                      sends to /dashboard or /login
-  login/                            sign-in form
+  +page.server.ts                   sends to /dashboard or /login
+  login/                            sign-in form, prerendered
   dashboard/
     +page.svelte                    home: a grid of tiles
     +layout.svelte                  nav bar and breadcrumbs, except on home
@@ -97,7 +99,6 @@ routes/
     admin/                          admin only
       users/  [userId]/  create/
       periods/  audit/  settings/
-  api/[...path]/  api/webhook/  media/[...path]/
 ```
 
 ## Adding a page
@@ -148,8 +149,7 @@ does not say which provider replied, so the page shows the segment.
 
 The two dots in the page header come from `providersChecked` in the same answer:
 the providers whose circuit breaker was closed for that lookup. They appear
-after the first lookup. The dashboard cannot reach `/health`, which the proxy
-does not forward.
+after the first lookup. The page does not read `/api/health`.
 
 ## Editing the catalog
 

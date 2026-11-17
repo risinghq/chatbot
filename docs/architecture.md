@@ -1,86 +1,117 @@
 # Architecture
 
-This is the code map for contributors. It names the boundary between the
-conversation core and the backend, shows how a message becomes a reply, and
-points to the owner of each change. The user-facing flow is in
+This is the code map for contributors. It names the Workers and their bindings,
+the boundary between the conversation core and the backend, how a message
+becomes a reply, and the owner of each change. The user-facing flow is in
 [How a conversation runs](./conversation.md).
 
 ## Workspaces
 
-| Workspace               | Owns                                                                                                                                                |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/backend`          | Hono API, SQLite state, webhook intake, conversation and outbox workers, provider calls, authentication, tenancy, notifications, and domain routes. |
-| `apps/frontend`         | SvelteKit 3 with Svelte 5: dashboard, server-side session checks, the HTTP and media proxies, and the public webhook endpoint.                      |
-| `packages/core`         | Conversation phases, validation, matching, templates, and the transition contract. It does not call external services.                              |
-| `packages/intelligence` | The OpenAI-backed `IntelligenceProvider` and its prompts.                                                                                           |
-| `packages/types`        | Types shared by the applications and packages.                                                                                                      |
-| `packages/utils`        | Shared service URLs and trace-id helpers.                                                                                                           |
-| `packages/logger`       | The shared Pino logger.                                                                                                                             |
-| `packages/tsconfig`     | TypeScript configuration bases used by the workspaces.                                                                                              |
+| Workspace               | Owns                                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/backend`          | The backend Worker: the Hono API, the webhook, the conversation Durable Object, the cron sweep, provider calls, authentication and tenancy. |
+| `apps/frontend`         | The dashboard Worker: SvelteKit 3 with Svelte 5 on `@sveltejs/adapter-cloudflare`, and its server-side session check.                       |
+| `packages/core`         | Conversation phases, validation, matching, templates, and the transition contract. It does not call external services.                      |
+| `packages/intelligence` | The OpenAI-backed `IntelligenceProvider` and its prompts.                                                                                   |
+| `packages/types`        | Types shared by the applications and packages.                                                                                              |
+| `packages/utils`        | The trace-id helper.                                                                                                                        |
+| `packages/tsconfig`     | TypeScript configuration bases used by the workspaces.                                                                                      |
 
 Workspace dependencies point inward:
 
 ```text
-types, utils, logger, tsconfig
+types, utils, tsconfig
 core            -> types, utils
 intelligence    -> core, types
-backend         -> core, intelligence, logger, types, utils
-frontend        -> types, utils
+backend         -> core, intelligence, types, utils
+frontend        -> types
 ```
 
-The browser talks to the frontend. The frontend server calls the backend over
-HTTP at `BACKEND_URL`, which defaults to `http://localhost:3000` and is
-`http://backend:3000` in the production Compose file. The backend does not
-import frontend code. The URL helper is
-[`packages/utils/src/url.ts`](../packages/utils/src/url.ts).
+## Workers and bindings
+
+VendeYa is two Workers on one host.
+
+| Worker              | Serves                                 | Configuration                                                     |
+| ------------------- | -------------------------------------- | ----------------------------------------------------------------- |
+| `vendeya-backend`   | `/api/*` and `/media/*`, the cron      | [`apps/backend/wrangler.jsonc`](../apps/backend/wrangler.jsonc)   |
+| `vendeya-dashboard` | every other path, as the custom domain | [`apps/frontend/wrangler.jsonc`](../apps/frontend/wrangler.jsonc) |
+
+The backend's routes on the host win over the dashboard's custom domain. So
+Meta's webhook, the browser's API calls and Meta's image fetches go straight to
+the backend. The dashboard's server code calls the backend through the `BACKEND`
+service binding, without a public hop. Under `vite dev` and `wrangler dev`,
+where there are no routes, the dashboard's
+[`hooks.server.ts`](../apps/frontend/src/hooks.server.ts) passes `/api/*` and
+`/media/*` to the same binding.
+
+They are two Workers because the SvelteKit adapter writes the dashboard Worker's
+entry point. The backend's entry point,
+[`src/index.ts`](../apps/backend/src/index.ts), exports the Hono app, the
+`scheduled` handler and the Durable Object class.
+
+The backend's bindings:
+
+| Binding         | Kind           | Holds                                                   |
+| --------------- | -------------- | ------------------------------------------------------- |
+| `DB`            | D1             | Every table, for every tenant.                          |
+| `CONVERSATIONS` | Durable Object | `ConversationObject`, one per conversation.             |
+| `KV`            | KV             | The FNB session token and the provider circuit breaker. |
+| `FILES`         | R2             | Catalog images, contracts and call recordings.          |
+| `IMAGES`        | Images         | Resizes an uploaded catalog image to a 1024 px JPEG.    |
+| `LOGIN_LIMITER` | Rate limit     | Login attempts: 10 per minute per client address.       |
+
+Code reads bindings and secrets from `env` in `cloudflare:workers`. The Worker
+uses no `nodejs_compat` flag.
 
 ## Request path
 
 ```text
 Meta
   POST /api/webhook
-apps/frontend  routes/api/webhook/+server.ts
-  relays the raw body to BACKEND_URL and waits up to 10 s for its verdict
-apps/backend   routes/webhook.ts
-  verifies, routes by phone_number_id, deduplicates, and stores the message
-  message_inbox row
-conversation/aggregator-worker.ts
-  waits for the quiet window, groups one contact's messages, and starts a turn
+apps/backend  routes/webhook.ts
+  verifies the signature, routes by phone_number_id, deduplicates, stores the
+  message as a message_inbox row, wakes the conversation's object, answers 200
+conversation/object.ts  ConversationObject
+  one per conversation; its alarm fires when the quiet window ends
+conversation/aggregator.ts
+  groups the contact's pending messages and starts one turn
 conversation/handler/orchestrator.ts
-  locks the conversation and runs the enrichment loop
+  runs the turn and the enrichment loop
 conversation/handler/enrichment-loop.ts <-> packages/core transition()
   core returns commands or asks the backend for an enrichment
 conversation/handler/command-executor.ts
   sends commands, records the phase, and records analytics events
 adapters/whatsapp/index.ts
   sends through CloudApiAdapter
-conversation/outbox-worker.ts
-  retries recoverable failures and handoff.ts escalates a failed reply or turn
+conversation/outbox-sender.ts
+  retries recoverable failures on the object's alarm; handoff.ts escalates a
+  failed reply or turn
 shared/events + bootstrap/event-bus-setup.ts
   dispatch domain events such as orders and escalation alerts
 ```
 
-The complete turn, including the phase table and failure states, is in
-[How a conversation runs](./conversation.md). Provider selection and recovery
-are in [Eligibility](./eligibility.md).
+The webhook answers Meta once the rows are stored. The turn runs on the object's
+alarm, after the response. The complete turn, including the phase table and
+failure states, is in [How a conversation runs](./conversation.md). Provider
+selection and recovery are in [Eligibility](./eligibility.md).
 
 ## Durable state
 
-The backend stores durable state in one SQLite database. `DB_PATH` defaults to
-`apps/backend/data/database.sqlite` when the backend is run from its directory.
-The schema is [`db/schema.sql`](../apps/backend/src/db/schema.sql).
+### D1
 
-The same schema also exists for Postgres, which the backend does not read yet.
-Its tables come from forward-only migrations in
-[`db/migrations/`](../apps/backend/src/db/migrations), run by
-[`db/migrate.ts`](../apps/backend/src/db/migrate.ts), and
-[`db/types.ts`](../apps/backend/src/db/types.ts) types them for Kysely, so a
-query that names a column outside the schema fails `tsc`. `types.ts` is written
-by hand: change it together with the migration.
-[`bun run seed`](./get-started.md#the-seed) and `bun run account` write to
-Postgres. Nothing else does.
+One D1 database holds every tenant. Every tenant-owned row carries `tenant_id`.
+The schema is the wrangler migrations in
+[`apps/backend/migrations/`](../apps/backend/migrations/), applied in order by
+`wrangler d1 migrations apply`. A schema change is a new numbered file. Never
+edit a migration that has run remotely.
 
-| Area                  | Tables or files                                                                         |
+Queries are plain prepared statements through
+[`db/index.ts`](../apps/backend/src/db/index.ts): `getOne`, `getAll`, `run`, and
+`batch` for steps that must land together. D1 has no interactive transaction. A
+multi-step write is one `batch()`, and the conversation's object keeps a second
+writer out.
+
+| Area                  | Tables                                                                                  |
 | --------------------- | --------------------------------------------------------------------------------------- |
 | Tenancy and auth      | `tenants`, `users`, `tenant_memberships`, `session`                                     |
 | Channel credentials   | `channel_accounts`, encrypted `channel_secrets`                                         |
@@ -93,11 +124,60 @@ A conversation's phase and metadata are one JSON column,
 `conversations.context_data`, shaped `{ phase, metadata }`.
 `conversations.current_state` is generated from it.
 
-Catalog images are stored below `UPLOAD_DIR/images` and served without
-authentication so Meta can fetch them. Contracts and call recordings are under
-`PRIVATE_DIR` and are served only through the tenant-checked assets route. Both
-roots are derived in
+### The conversation's Durable Object
+
+[`ConversationObject`](../apps/backend/src/conversation/object.ts) serializes
+every write that must not interleave with a bot turn: the turn, the outbox
+sends, the handoff, a takeover, a release, a decline and a timed-out
+reassignment. Its name is `tenant:channel account:phone number`, so the same
+contact on two businesses has two objects. The lock lives in the object's
+memory, and each object runs in one place at a time.
+
+The object's alarm is the conversation's next due moment: the end of the quiet
+window of its pending messages, or the next outbox attempt. Each locked call
+sets the alarm again from D1. The object's own storage holds only the
+conversation's identity, which the alarm handler needs.
+
+A row left `processing` or `sending` belongs to an object instance that ended
+mid-turn. A new instance settles those rows before its first locked call.
+
+### The cron sweep
+
+The cron trigger runs [`sweep.ts`](../apps/backend/src/sweep.ts) every minute.
+It wakes the objects of conversations that are due, which their own alarm may
+not know: a number or tenant switched back on, a lost wake, a row an ended
+instance left mid-flight. It hands assignments not taken within 5 minutes to the
+next agent. Once an hour it deletes processed inbox rows and finished outbox
+rows past their retention.
+
+### Shared stores
+
+Every isolate sees the same values:
+
+| State                                         | Store                     | Owner                                                                                      |
+| --------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------ |
+| Conversation lock and quiet window            | the conversation's object | [`conversation/object.ts`](../apps/backend/src/conversation/object.ts)                     |
+| The provider circuit breaker                  | KV, with a TTL            | [`adapters/providers/health.ts`](../apps/backend/src/adapters/providers/health.ts)         |
+| The FNB session token, shared by every tenant | KV, with a TTL            | [`adapters/providers/fnb-client.ts`](../apps/backend/src/adapters/providers/fnb-client.ts) |
+| Login attempts                                | the rate-limit binding    | [`middleware/security.ts`](../apps/backend/src/middleware/security.ts)                     |
+
+KV is eventually consistent. Two isolates may each log in to FNB once, or see
+the breaker open a few seconds late. Neither changes a result.
+
+### Files
+
+R2 keys start with the tenant id. They are built only in
 [`lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts).
+
+| Key                        | Served                                                            |
+| -------------------------- | ----------------------------------------------------------------- |
+| `<tenant>/images/<id>.jpg` | `/media/<key>`, without a session, cached for a year as immutable |
+| `<tenant>/contracts/...`   | only `/api/assets/:id`, after a tenant scope check                |
+| `<tenant>/recordings/...`  | only `/api/assets/:id`, after a tenant scope check                |
+
+Catalog images are public because Meta fetches an outgoing image's link with no
+credentials. The image id holds 60 random bits, so a key cannot be guessed. An
+image's bytes never change under its key.
 
 ### Who holds a conversation
 
@@ -114,7 +194,7 @@ of them.
 | empty to the saver          | an agent saving agent data         | `updateAgentData`                                                             |
 | empty to the next agent     | an escalation, by the round-robin  | [`assignment.ts`](../apps/backend/src/domains/conversations/assignment.ts)    |
 | held to the next agent      | the holder declines                | `declineAssignment`, which hands it to the round-robin under the lock         |
-| held to the next agent      | the 60 s reassignment timer        | `checkAndReassignTimeouts`, for an assignment not taken over within 5 minutes |
+| held to the next agent      | the minute sweep                   | `checkAndReassignTimeouts`, for an assignment not taken over within 5 minutes |
 | held to empty, on hand-back | release, or the 3 h idle reset     | `resetSession`, only when the conversation was with a person                  |
 | held to empty, user leaves  | removal, role change, deactivation | `MembershipService.remove`, `upsert` on a changed role, `clearAllAssignments` |
 | held to another holder      | nobody                             | takeover answers 409 while someone else holds the conversation                |
@@ -131,39 +211,22 @@ not answered since. A conversation is either `none` (no row) or `unread` (a
 row). Only `none` lets a customer message to a held conversation alert the
 assigned agent.
 
-| Transition     | When                                                                                                              | Owner                                                                                                                |
-| -------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| none to unread | a bot turn escalates the conversation, after it is assigned                                                       | `handleMessage` in [`orchestrator.ts`](../apps/backend/src/conversation/handler/orchestrator.ts), `raiseUnreadAlert` |
-| none to unread | a failed reply or turn hands the conversation to a person                                                         | `handOff` in [`handoff.ts`](../apps/backend/src/conversation/handoff.ts), `raiseUnreadAlert`                         |
-| none to unread | a customer message reaches a `human_takeover` conversation whose agent has a phone                                | `claimMessageAlert` in [`unread-alerts.ts`](../apps/backend/src/conversation/unread-alerts.ts), one atomic insert    |
-| unread to none | the holder sends a message                                                                                        | `sendManualMessage`, `clearUnreadAlert`, after the send succeeded                                                    |
-| unread to none | `assigned_agent` is written: assignment, reassignment, decline, takeover, release, idle reset, an agent's removal | the trigger `conversations_assignment_clears_unread_alert` in [`schema.sql`](../apps/backend/src/db/schema.sql)      |
-| unread to none | none of the alert's notifications went out                                                                        | `notify` in [`notify.ts`](../apps/backend/src/domains/notifications/notify.ts)                                       |
+| Transition     | When                                                                                                              | Owner                                                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| none to unread | a bot turn escalates the conversation, after it is assigned                                                       | `answerMessage` in [`orchestrator.ts`](../apps/backend/src/conversation/handler/orchestrator.ts), `raiseUnreadAlert`      |
+| none to unread | a failed reply or turn hands the conversation to a person                                                         | `handOff` in [`handoff.ts`](../apps/backend/src/conversation/handoff.ts), `raiseUnreadAlert`                              |
+| none to unread | a customer message reaches a `human_takeover` conversation whose agent has a phone                                | `claimMessageAlert` in [`unread-alerts.ts`](../apps/backend/src/conversation/unread-alerts.ts), one atomic insert         |
+| unread to none | the holder sends a message                                                                                        | `sendManualMessage`, `clearUnreadAlert`, after the send succeeded                                                         |
+| unread to none | `assigned_agent` is written: assignment, reassignment, decline, takeover, release, idle reset, an agent's removal | the trigger `conversations_assignment_clears_unread_alert` in [`0001_init.sql`](../apps/backend/migrations/0001_init.sql) |
+| unread to none | none of the alert's notifications went out                                                                        | `notify` in [`notify.ts`](../apps/backend/src/domains/notifications/notify.ts)                                            |
 
 The row is written before the alert is sent and the turn waits for the send, all
 under the conversation lock, so the next message sees the row as the delivery
 left it. An escalation assigns before it raises the row, because writing
 `assigned_agent` removes it.
 
-The backend also has process-local state:
-
-| State                                         | Owner                                                                                      |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Conversation locks                            | [`conversation/locks.ts`](../apps/backend/src/conversation/locks.ts)                       |
-| The provider circuit breaker                  | [`adapters/providers/health.ts`](../apps/backend/src/adapters/providers/health.ts)         |
-| The FNB session token, shared by every tenant | [`adapters/providers/fnb-client.ts`](../apps/backend/src/adapters/providers/fnb-client.ts) |
-| Login rate-limit counters                     | [`middleware/security.ts`](../apps/backend/src/middleware/security.ts)                     |
-
-The inbox and outbox workers assume they are the only ones running. At boot, the
-outbox worker records every row left `sending` as an interrupted attempt,
-because no other process could be sending it.
-
-This makes the backend one process per database. A second backend on the same
-file would not share the locks, could answer the same inbox rows twice, and
-would mark the first one's live sends as interrupted at its boot.
-
-The frontend keeps no state of its own. See [Deploy](./deploy.md) for deployment
-details.
+The dashboard Worker keeps no state of its own. See [Deploy](./deploy.md) for
+deployment.
 
 ## Boundaries
 
@@ -188,20 +251,14 @@ details.
   [`adapters/whatsapp/index.ts`](../apps/backend/src/adapters/whatsapp/index.ts).
   It rechecks the tenant and channel account before sending and returns a typed
   outcome for most failures. An inactive account throws
-  `ChannelUnavailableError` so its queue can wait. Alerts to staff use
+  `ChannelUnavailableError` so its outbox can wait. Alerts to staff use
   `sendDirect`, which skips the suspension check.
 - Tenant scope comes from [`db/query.ts`](../apps/backend/src/db/query.ts). Read
-  functions use `tenantPredicate`. Cross-tenant workers use `openTenantsOnly`
-  and `activeChannelAccountsOnly`.
-- A new table or column belongs in `schema.sql`. Boot uses
-  `CREATE TABLE IF NOT EXISTS`, so it never changes a table that already exists:
-  a database file made before the change keeps the old shape, and a new file
-  gets the new one.
-- The browser talks only to the frontend. The frontend proxies `/api/*` and
-  `/media/*` to the URL returned by `getBackendUrl()` in
-  [`packages/utils/src/url.ts`](../packages/utils/src/url.ts). That helper reads
-  `BACKEND_URL`, trims it, removes trailing slashes, and defaults to
-  `http://localhost:3000`.
+  functions use `tenantPredicate`. Cross-tenant work, such as the sweep, uses
+  `openTenantsOnly` and `activeChannelAccountsOnly`.
+- Logs are one JSON object per line on `console`, which Workers Logs indexes.
+  `LOG_LEVEL` sets the level, and `LOG_LEVEL_<MODULE>` overrides it for one
+  module ([`lib/logger.ts`](../apps/backend/src/lib/logger.ts)).
 
 ## Where a change belongs
 
@@ -218,19 +275,17 @@ details.
 | API endpoint                          | [`apps/backend/src/routes/`](../apps/backend/src/routes/)                                                                                                                                             |
 | Dashboard page                        | [`apps/frontend/src/routes/dashboard/`](../apps/frontend/src/routes/dashboard/)                                                                                                                       |
 | Catalog data or rules                 | [`apps/backend/src/domains/catalog/`](../apps/backend/src/domains/catalog/)                                                                                                                           |
-| New table or column                   | [`apps/backend/src/db/schema.sql`](../apps/backend/src/db/schema.sql)                                                                                                                                 |
+| New table or column                   | A new file in [`apps/backend/migrations/`](../apps/backend/migrations/)                                                                                                                               |
+| Binding, variable, route or cron      | [`apps/backend/wrangler.jsonc`](../apps/backend/wrangler.jsonc), then `bun run --cwd apps/backend types`                                                                                              |
 | Notification recipient or text        | [`apps/backend/src/domains/notifications/`](../apps/backend/src/domains/notifications/)                                                                                                               |
-| Uploaded-file location                | [`apps/backend/src/lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts)                                                                                                                   |
+| R2 key layout                         | [`apps/backend/src/lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts)                                                                                                                   |
 
 ## Tests that enforce structure
 
-These tests live in [`apps/backend/tests/`](../apps/backend/tests/):
+| Test                                                   | Holds                                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `apps/backend/tests/created-at-contract.test.ts`       | INTEGER `*_at` fields reach clients as milliseconds.                           |
+| `apps/backend/tests/foreign-keys.test.ts`              | The schema's foreign keys and cascades hold in D1.                             |
+| `apps/backend/tests/source/tenant-scope-guard.test.ts` | No backend query reads tenant rows without the scope helpers in `db/query.ts`. |
 
-| Test                          | Holds                                                                                              |
-| ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| `created-at-contract.test.ts` | INTEGER `*_at` fields reach clients as milliseconds.                                               |
-| `foreign-keys.test.ts`        | The application connection enables `PRAGMA foreign_keys`.                                          |
-| `webhook-proxy.test.ts`       | The frontend relays backend webhook refusals to Meta.                                              |
-| `boot-safety.test.ts`         | Boot creates no account, warns without an operator, and does not bind a port after a seed failure. |
-
-The commands and CI matrix are in [Development](./development.md).
+The commands and CI jobs are in [Development](./development.md).

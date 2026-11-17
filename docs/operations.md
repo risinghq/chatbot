@@ -1,179 +1,154 @@
 # Operations
 
-This is for whoever runs a deployment and answers when it breaks.
+This is for whoever runs a deployment and answers when it breaks. How to deploy
+is in [Deploy](./deploy.md).
 
 ## What runs
 
-A local run has two processes:
+| Worker              | Runs on                             | Does                                                                           |
+| ------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
+| `vendeya-backend`   | `/api/*` and `/media/*` of the host | the webhook, the API, catalog images, the conversation objects, the cron sweep |
+| `vendeya-dashboard` | every other path of the host        | the dashboard pages, which call the backend through the `BACKEND` binding      |
+
+The backend's cron trigger runs the sweep every minute
+([`sweep.ts`](../apps/backend/src/sweep.ts)):
+
+- It wakes each conversation with work its own alarm cannot know about: a reply
+  due to send, messages waiting for a turn, a failed turn, a handoff not yet
+  made.
+- It hands an assignment that was not accepted in time to the next agent.
+- At minute 0 of each hour it deletes processed inbox rows and finished outbox
+  rows past their retention.
+
+A task of the sweep that throws is logged as "Scheduled task failed", with the
+task's name. The other tasks still run, and the task runs again the next minute.
+
+`wrangler dev` does not run the cron trigger. Run one sweep locally with:
 
 ```sh
-bun install --frozen-lockfile
-bun run --cwd apps/frontend build                # builds apps/frontend/dist
-bun run --cwd apps/backend start                 # backend on :3000
-PORT=5173 bun apps/frontend/dist/index.js
+curl http://localhost:8787/cdn-cgi/local/scheduled
 ```
 
-- The backend listens on `PORT`, default 3000. The frontend server calls the
-  backend at `BACKEND_URL`, which defaults to `http://localhost:3000`. The
-  production Compose file sets it to `http://backend:3000`.
-- The built frontend also reads `PORT`, and its default is 3000 too. Give it
-  another port.
-- The backend sends every reply through the Cloud API.
-- Run one backend per database. Its locks and workers live in memory
-  ([Architecture](./architecture.md#durable-state)).
+Nothing is checked when a Worker starts. A missing provider credential or LLM
+key shows up the first time it is used.
 
-The production container stack is in [Deploy](./deploy.md).
+## Variables and secrets
 
-The backend and development frontend scripts load the root `.env` with
-`--env-file=../../.env`. `.env.production.example` lists production values to
-copy into it.
+Variables live in `vars` of
+[`apps/backend/wrangler.jsonc`](../apps/backend/wrangler.jsonc). A change to one
+takes effect at the next deploy. Secrets are set with `wrangler secret put` and
+take effect at once. Locally, `apps/backend/.dev.vars` sets both and overrides
+the values in `wrangler.jsonc`.
 
-## Boot
+| Name                                                                                  | Kind     | Without it                                                                                                             |
+| ------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ENVIRONMENT`                                                                         | variable | anything but `production` serves the simulator routes, and a 500 carries the error's message and stack                 |
+| `PUBLIC_URL`                                                                          | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:` |
+| `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL`                                             | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                      |
+| `CALIDDA_BASE_URL`                                                                    | variable | every FNB check fails                                                                                                  |
+| `BOT_RESPONSE_DELAY_MS`                                                               | variable | 2300                                                                                                                   |
+| `PLATFORM_OPS_PHONE_NUMBER_ID`                                                        | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one          |
+| `WHATSAPP_GROUP_AGENT`, `WHATSAPP_GROUP_DEV`                                          | variable | sales and dev alerts with no tenant setting have no target. See [Alerts](#alerts)                                      |
+| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`                                                     | variable | `info`. See [Logs](#logs)                                                                                              |
+| `SECRETS_KEY`                                                                         | secret   | no channel token can be stored or read                                                                                 |
+| `WHATSAPP_APP_SECRET`                                                                 | secret   | every webhook POST answers 503                                                                                         |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN`                                                       | secret   | the handshake answers only a channel account's own verify token                                                        |
+| `OPENAI_API_KEY`                                                                      | secret   | any message the regexes miss gets no reply                                                                             |
+| `CALIDDA_USERNAME`, `CALIDDA_PASSWORD`                                                | secret   | every FNB check fails                                                                                                  |
+| `POWERBI_RESOURCE_KEY`, `POWERBI_REPORT_ID`, `POWERBI_DATASET_ID`, `POWERBI_MODEL_ID` | secret   | every Gaso check fails                                                                                                 |
 
-[`apps/backend/src/index.ts`](../apps/backend/src/index.ts), in order:
-
-1. Check the Graph settings, described in
-   [WhatsApp](./whatsapp.md#connecting-whatsapp).
-2. Open the database (`DB_PATH`, default `./data/database.sqlite` relative to
-   `apps/backend`) and apply [`schema.sql`](../apps/backend/src/db/schema.sql),
-   which alters no existing table
-   ([Architecture](./architecture.md#boundaries)).
-3. Run the seed: tenant `totem`, its channel account, the sample catalog and,
-   outside production, test conversations. It runs on every boot.
-4. Warn if no platform operator can log in, and if `WHATSAPP_APP_SECRET` is
-   unset.
-5. Start the aggregator and the outbox worker, a 60 s agent-reassignment timer,
-   and an hourly purge of processed inbox rows and final outbox rows. A timer
-   task that throws is logged as "Scheduled task failed" and runs again on the
-   next tick.
-6. Listen.
-
-Boot checks nothing else. A missing `SECRETS_KEY`, provider credential, LLM key
-or `PUBLIC_URL` shows up when it is first used.
-
-## The Postgres schema
-
-`bun run db:migrate` applies the migrations in
-[`db/migrations/`](../apps/backend/src/db/migrations) that the database has not
-run, in the order of their names, and prints what it applied. Run it before
-`bun run seed` and `bun run account`, and on every deploy
-([Deploy](./deploy.md#services) runs it as the `migrate` service). Migrations
-only go forward. A database that has run one keeps it, so a change to the schema
-is a new migration, never an edit to an old one.
-
-Two processes that run it together apply each migration once: Postgres holds an
-advisory lock for the run, and the second process waits, finds nothing to do and
-exits 0. It exits 1 and prints `error: migration failed` when a migration fails
-or the database cannot be reached.
-
-## Environment
-
-| Variable                                                               | Read by                | Without it                                                                                           |
-| ---------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                                                             | all                    | test data is seeded and the simulator routes answer; `production` skips both and sets secure cookies |
-| `DATABASE_URL`                                                         | migrate, seed, account | those commands stop                                                                                  |
-| `DB_PATH`                                                              | backend                | `./data/database.sqlite`                                                                             |
-| `UPLOAD_DIR`, `PRIVATE_DIR`                                            | backend                | see [Uploads](#uploads)                                                                              |
-| `SECRETS_KEY`                                                          | backend                | no channel token can be stored or read                                                               |
-| `PUBLIC_URL`                                                           | backend                | image links, alert links and the CORS origin name `http://localhost:5173`                            |
-| `WHATSAPP_APP_SECRET`                                                  | backend                | every webhook POST answers 503                                                                       |
-| `WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | seed                   | the default tenant's number is a `pending` placeholder                                               |
-| `GRAPH_API_VERSION`                                                    | backend                | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                    |
-| `GRAPH_API_BASE_URL`                                                   | backend                | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                    |
-| `PLATFORM_OPS_PHONE_NUMBER_ID`                                         | backend                | platform alerts go out on `WHATSAPP_PHONE_ID`'s account                                              |
-| `WHATSAPP_GROUP_AGENT`, `WHATSAPP_GROUP_DEV`                           | backend                | sales and dev alerts with no tenant setting have no target. See [Alerts](#alerts)                    |
-| `CALIDDA_*`, `POWERBI_*`                                               | backend                | that eligibility provider fails at every check                                                       |
-| `OPENAI_API_KEY`                                                       | backend                | any message the regexes miss gets no reply                                                           |
-| `BOT_RESPONSE_DELAY_MS`                                                | backend                | 2300                                                                                                 |
-| `COOKIE_SECURE`                                                        | backend                | secure cookies only in production                                                                    |
-| `PORT`                                                                 | backend, frontend      | 3000                                                                                                 |
-| `BODY_SIZE_LIMIT`                                                      | built frontend         | 64M. See [Uploads](#uploads)                                                                         |
-| `LOG_DIR`                                                              | backend                | stdout in production; `./data/logs` in development, relative to `apps/backend`                       |
-| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`                                      | all                    | `info`                                                                                               |
+In production `wrangler deploy` refuses to deploy while a secret is missing.
+`WHATSAPP_PHONE_ID` and `WHATSAPP_TOKEN` are read only by the seed, from
+`.dev.vars`. They give the default tenant its number.
 
 ## Accounts
 
-The seed and boot create no user. Every first account comes from the command
-line ([`cli/account.ts`](../apps/backend/src/cli/account.ts)):
+The seed creates no user. Every first account comes from the command line
+([`cli/account.ts`](../apps/backend/src/cli/account.ts)). Each form writes to
+the local D1 database, or with `--remote` to the deployed one:
 
 ```sh
-bun run account create <username> [--platform-operator | --tenant <tenant id>] [--name <display name>]
+bun run account create <username> [--platform-operator | --tenant <tenant>] [--name <display name>]
 bun run account promote <username>
+bun run account tenant create <slug> --name <business name>
+bun run account channel create --tenant <tenant> --phone-number-id <id> \
+  [--waba-id <id>] [--display-phone-number <number>] [--label <label>]
 ```
 
-- `create` makes an `admin` of the tenant given by `--tenant`, which takes the
-  tenant's id, not its slug. With exactly one tenant, `--tenant` can be left
-  off. `--platform-operator` makes a platform operator with no membership
-  instead. The two flags exclude each other.
+`<tenant>` is a tenant's id or slug.
+
+- `create` makes an `admin` of the tenant given by `--tenant`. With exactly one
+  tenant, `--tenant` can be left off. `--platform-operator` makes a platform
+  operator with no membership instead. The two flags exclude each other.
 - `promote` makes an existing, active account a platform operator and keeps its
   memberships. Promoting an operator changes nothing.
+- `tenant create` makes an active tenant with no number.
+- `channel create` gives a tenant a WhatsApp number. It reads the access token,
+  and stores it encrypted with `SECRETS_KEY`. An empty token makes the number
+  `pending`. With `--remote` the key is the `SECRETS_KEY` of your shell, which
+  must be the deployed key ([Deploy](./deploy.md#the-first-accounts)).
 
-The password is read from a hidden prompt, twice, or from stdin when stdin is
-not a terminal:
+A password or an access token is read from a hidden prompt, or from stdin when
+stdin is not a terminal:
 
 ```sh
 printf '%s\n' "$PASSWORD" | bun run account create <username>
 ```
 
-It must be at least 12 characters. It is never taken from an argument or the
-environment. The command exits 0 on success, 1 when refused, 2 on a usage error.
-It writes to the Postgres database at `DATABASE_URL` and applies neither the
-migrations nor the seed, so `create` needs a tenant: run `bun run db:migrate`
-and `bun run seed` first. Both actions are written to the audit log with the
-actor `cli:<os user>`.
+A password is asked twice and must be at least 12 characters. Neither is ever
+taken from an argument or the environment. The command exits 0 on success, 1
+when refused, 2 on a usage error. It applies neither the migrations nor the
+seed, so run `bun run db:migrate` first. Each change is written to the audit log
+with the actor `cli:<os user>`.
 
-**When no platform operator can log in**, boot logs a warning. Nobody can then
-create a tenant, act across tenants or change platform settings. On the server,
-create a new operator or promote an existing account:
-
-```sh
-bun run account create <new username> --platform-operator
-bun run account promote <username>
-```
+**When no platform operator can log in**, nobody can create a tenant from the
+API, act across tenants or change platform settings. Create a new operator, or
+promote an existing account, with `--remote`.
 
 The command line cannot reset a password. The API resets a password only for a
 member of the caller's active tenant (`POST /api/admin/users/:id/password`), so
 an operator with no membership who lost theirs is replaced: create a new
 operator.
 
-## Uploads
+Logins are limited to 10 attempts a minute for each client address, counted by
+the `LOGIN_LIMITER` rate-limit binding. One more answers 429.
 
-Uploaded files split by who may read them. The roots come from
+## Files
+
+Files live in the R2 bucket `vendeya-files`. Every key starts with the owning
+tenant's id. The keys come from
 [`lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts):
 
-| Directory             | Holds                                | Read by                                                                                                          |
-| --------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `<UPLOAD_DIR>/images` | catalog images, named by random id   | anyone: served unauthenticated at `/media/images/<id>.jpg`, because Meta fetches image links with no credentials |
-| `PRIVATE_DIR`         | signed contracts and call recordings | nobody directly. Only `GET /api/assets/:id`, after checking the caller's tenant                                  |
+| Key                        | Holds                              | Read by                                                                                            |
+| -------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `<tenant>/images/<id>.jpg` | catalog images, named by random id | anyone, at `/media/<key>`, cached for a year, because Meta fetches image links with no credentials |
+| `<tenant>/contracts/...`   | signed contracts                   | nobody directly. Only `GET /api/assets/:id`, after checking the caller's tenant                    |
+| `<tenant>/recordings/...`  | call recordings                    | nobody directly. Only `GET /api/assets/:id`, after checking the caller's tenant                    |
 
-`UPLOAD_DIR` defaults to `./data/uploads`. `PRIVATE_DIR` defaults to `private`
-beside `UPLOAD_DIR`. Both are relative to `apps/backend` unless absolute. In
-production, point `UPLOAD_DIR` at a persistent volume: the asset rows in the
-database outlive a redeploy, and the files must too.
+The `IMAGES` binding fits an uploaded catalog image inside 1024 × 1024 px,
+without enlarging it, and stores it as JPEG. A request body is limited by the
+Cloudflare plan of the zone, 100 MB on the Free and Pro plans. The webhook holds
+Meta's body to 3 MiB (see [Connecting WhatsApp](./whatsapp.md#body-size)).
 
-The built frontend server refuses a request body over 64 MiB with 413, before
-any route runs. That is the largest upload: an hour of 8 kHz mono WAV is about
-55 MiB. The limit is set at build time in
-[`vite.config.ts`](../apps/frontend/vite.config.ts), and `BODY_SIZE_LIMIT` at
-run time replaces it. The webhook route holds Meta's webhook to 3 MiB regardless
-(see [Connecting WhatsApp](./whatsapp.md#body-size)), so leave `BODY_SIZE_LIMIT`
-unset.
+The seed uploads the sample catalog's photos, which ship in
+`apps/backend/src/db/seed-data/images`. It leaves alone an object that is
+already there.
 
-The seeded catalog photos are tracked in `apps/backend/data/uploads/images`.
-Every boot copies any that are missing into `<UPLOAD_DIR>/images`.
+The bucket has no backup ([Deploy](./deploy.md#backups)).
 
 ## Health
 
 ```sh
-curl http://localhost:3000/health
+curl https://vendeya.rising.sh/api/health
 ```
 
-`GET /health` needs no session. It runs `SELECT 1` against the backend's SQLite
-database. It answers 503 with `status: "unavailable"` when that query fails:
+`GET /api/health` needs no session. It runs `SELECT 1` against D1 and answers
+503 with `status: "unavailable"` when that query fails:
 
 ```json
 {
   "status": "healthy",
+  "database": { "status": "healthy" },
   "providers": {
     "fnb": {
       "status": "healthy",
@@ -194,7 +169,7 @@ database. It answers 503 with `status: "unavailable"` when that query fails:
       "blockedUntil": null
     }
   },
-  "timestamp": "2026-09-21T02:25:34.190Z"
+  "timestamp": "2026-11-17T10:10:58.355Z"
 }
 ```
 
@@ -204,27 +179,28 @@ computed:
 
 - The circuit breaker blocks `powerbi`, never `gaso`, and `powerbi` is not in
   the computation. A blocked Power BI leaves `status` unchanged.
-- `providers` reflects the in-memory circuit breaker and the last error it
+- `providers` is the circuit breaker's state in KV and the last error it
   recorded. It is not a live check of the providers.
 
 `lastError` carries the provider's raw error message.
 
 ## Logs
 
-The production backend writes one JSON object per line to stdout unless
-`LOG_DIR` is set, in which case it writes `backend.log` there. The production
-Compose file does not set `LOG_DIR`, so Docker collects the backend's stdout
-with its `json-file` driver and rotates five 10 MiB files. Development prints
-pretty logs to the terminal and also writes `backend.log` under `LOG_DIR`,
-defaulting to `data/logs`. `LOG_LEVEL` sets the level, and `LOG_LEVEL_<MODULE>`
-overrides it for one module.
+Both Workers send their logs to Workers Logs, which the Cloudflare dashboard
+shows under **Workers & Pages > vendeya-backend > Logs**. Each entry is an
+object with `level`, `module` and `message`, plus the fields of the call, such
+as `tenantId`. A failure carries an `error` object with `name`, `message`,
+`stack` and its `cause`. Filter by any of these fields in the dashboard's query
+builder.
 
-A failure carries an `error` object with `type`, `message` and `stack`, and the
-`code` or cause the error has. When `LOG_DIR` is set, list every error in the
-file with:
+`LOG_LEVEL` sets the lowest level written: `debug`, `info`, `warn`, `error` or
+`silent`. `LOG_LEVEL_<MODULE>` overrides it for one module, as
+`LOG_LEVEL_WEBHOOK=debug`.
+
+To follow the backend's logs live from a terminal:
 
 ```sh
-grep '"level":50' "$LOG_DIR/backend.log"
+bunx wrangler tail vendeya-backend --format=pretty
 ```
 
 ## Alerts
@@ -246,15 +222,17 @@ The sales target is the tenant setting `whatsapp_group_sales`, else
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
   -d '{"whatsapp_group_sales":"<number or group id>"}' \
-  https://<frontend>/api/admin/settings
+  https://vendeya.rising.sh/api/admin/settings
 ```
 
 An alert about a tenant goes out on the event's own number, else the tenant's
 default number. A tenant with no number gets no alert: the trace is recorded as
 failed with reason `no_channel_account`, and the alert never leaves from the
 platform operations number. An alert with no tenant, such as both eligibility
-providers being down, goes out on the platform operations number. Every decision
-is recorded in `notification_traces`.
+providers being down, goes out on the platform operations number: the account
+the platform setting `platform_ops_channel_account_id` names, else
+`PLATFORM_OPS_PHONE_NUMBER_ID`. Every decision is recorded in
+`notification_traces`.
 
 `WHATSAPP_GROUP_AGENT` and `WHATSAPP_GROUP_DEV` are VendeYa's own operations
 groups. They receive the alerts of every tenant that has no setting of its own,
@@ -263,9 +241,8 @@ only VendeYa staff. A business that wants its own alerts gets
 `whatsapp_group_sales` and `whatsapp_group_dev` set.
 
 Alert links and the backend's CORS origin come from `PUBLIC_URL`, the address
-image links use too, with any trailing slash removed
-([`packages/utils/src/url.ts`](../packages/utils/src/url.ts)). The CORS origin
-is read once, at boot, so restart the backend after changing `PUBLIC_URL`.
+image links use too, with any trailing slash removed (`publicOrigin` in
+[`config.ts`](../apps/backend/src/config.ts)).
 
 ## The audit log
 
@@ -280,19 +257,30 @@ pinned admin sees their tenant. An unpinned operator also sees platform actions.
 A `send_message` row whose delivery WhatsApp did not confirm carries a "Entrega
 sin confirmar" mark; see [the send](./conversation.md#the-send).
 
+## Reading the database
+
+`wrangler d1 execute` runs SQL against the database, from `apps/backend`. Leave
+off `--remote` for the local one:
+
+```sh
+bunx wrangler d1 execute vendeya --remote \
+  --command "SELECT id, status, last_kind, last_reason FROM outbox ORDER BY id DESC LIMIT 10"
+```
+
 ## When customers get no reply
 
-| Check                                    | Where                                                                                  |
-| ---------------------------------------- | -------------------------------------------------------------------------------------- |
-| Webhooks arrive at all                   | the backend log: "Webhook POST rejected" or "refused" names signature, size or secret  |
-| The number is `active`                   | `GET /api/admin/channels`                                                              |
-| The tenant is not suspended              | `GET /api/tenants`                                                                     |
-| The turn failed                          | the log line "Message processing failed", and the dev alert                            |
-| The reply failed to send                 | `messages.status` `failed` or `queued`; the `outbox` row's `last_reason`               |
-| The conversation is waiting on providers | phase `waiting_for_recovery`; see [Eligibility](./eligibility.md#outages-and-recovery) |
-| The conversation is with a person        | phase `escalated`; the bot stays silent until release                                  |
+| Check                                    | Where                                                                                        |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Webhooks arrive at all                   | the backend's logs: "Webhook POST rejected" or "refused" names the signature, size or secret |
+| The number is `active`                   | `GET /api/admin/channels`                                                                    |
+| The tenant is not suspended              | `GET /api/tenants`                                                                           |
+| The turn failed                          | the log line "Message processing failed", and the dev alert                                  |
+| The reply failed to send                 | `messages.status` `failed` or `queued`; the `outbox` row's `last_kind` and `last_reason`     |
+| The sweep runs                           | the backend's logs for "Scheduled task failed", and its cron events in the dashboard         |
+| The conversation is waiting on providers | phase `waiting_for_recovery`; see [Eligibility](./eligibility.md#outages-and-recovery)       |
+| The conversation is with a person        | phase `escalated`; the bot stays silent until release                                        |
 
-Failed turns and crashes are retried and handed off as
+Failed turns and interrupted sends are retried and handed off as
 [Conversation](./conversation.md#the-inbox-and-the-aggregator) describes.
 `message_inbox.last_error` keeps the error. The inbox rows are not in the
 dashboard, but the conversation is.

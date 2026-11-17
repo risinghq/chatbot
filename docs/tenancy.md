@@ -2,8 +2,8 @@
 
 One VendeYa deployment serves several businesses. Each business is a tenant. Its
 conversations, catalog, orders and settings are its own, and its customers write
-to its own WhatsApp numbers. The schema is in
-[`db/schema.sql`](../apps/backend/src/db/schema.sql).
+to its own WhatsApp numbers. Every tenant lives in the one D1 database. The
+schema is in [`migrations/`](../apps/backend/migrations).
 
 ## Tenants
 
@@ -13,15 +13,27 @@ keyed by `(tenant_id, channel_account_id, phone_number)`, so the same contact
 has a separate conversation with each business and each number.
 
 The seed creates one tenant, `totem`, with a sample catalog. A platform operator
-creates any other:
+creates any other, with no deploy, from the command line:
+
+```sh
+bun run account tenant create acme --name "Acme" --remote
+```
+
+or through the API:
 
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"slug":"acme","name":"Acme"}' https://<frontend>/api/tenants
+  -d '{"slug":"acme","name":"Acme"}' https://vendeya.rising.sh/api/tenants
 ```
 
 A new tenant has no catalog, no periods and no channel account. The dashboard
-has no page for creating tenants.
+has no page for creating tenants. Its first admin and its number come from
+`account create` and `account channel create`
+([Operations](./operations.md#accounts)).
+
+A tenant's files sit under its id in R2, and each conversation's Durable Object
+is named by its tenant, number and contact. A tenant shares the Workers, the
+database and the bucket with every other tenant, and nothing else.
 
 ## Users, memberships and roles
 
@@ -99,7 +111,7 @@ operator, and a member of several, starts unpinned and picks one:
 
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"tenantId":"<id>"}' https://<frontend>/api/tenants/active
+  -d '{"tenantId":"<id>"}' https://vendeya.rising.sh/api/tenants/active
 ```
 
 The dashboard does this from the tenant selector. The active tenant is the only
@@ -128,9 +140,9 @@ Read functions take `tenantId: string | null` and filter with
 tenant. `null` means every open tenant, never every row. A row fetched by id is
 checked with `canAccessTenant`, and another tenant's row answers 404, not 403.
 
-Background workers read across tenants with `openTenantsOnly()` and
-`activeChannelAccountsOnly()`, so a suspended business or a switched-off number
-is skipped.
+The minute sweep and the conversation objects read across tenants with
+`openTenantsOnly()` and `activeChannelAccountsOnly()`, so a suspended business
+or a switched-off number is skipped.
 
 ## Channel accounts
 
@@ -188,18 +200,18 @@ Setting `tenants.status` to `suspended` closes a business:
 
 - its sessions lose their pin, and its members cannot pin it,
 - the webhook drops its messages,
-- the workers skip its queued messages and outbox rows,
+- the conversation objects and the sweep skip its queued messages and outbox
+  rows,
 - its customers get no sends,
 - an operator's cross-tenant reads leave it out.
 
 Alerts about it still go out. Nothing in the dashboard or the API suspends a
-tenant. It is a SQL update, here through `bun:sqlite` from `apps/backend`:
+tenant. It is a SQL update, run from `apps/backend`:
 
 ```sh
-cd apps/backend
-bun --env-file=../../.env -e 'import { Database } from "bun:sqlite";
-const db = new Database(process.env.DB_PATH ?? "./data/database.sqlite");
-db.run("UPDATE tenants SET status = ? WHERE slug = ?", ["suspended", "acme"]);'
+bunx wrangler d1 execute vendeya --remote \
+  --command "UPDATE tenants SET status = 'suspended' WHERE slug = 'acme'"
 ```
 
-Setting the status back to `active` reopens it.
+Leave off `--remote` to change the local database. Setting the status back to
+`active` reopens it.

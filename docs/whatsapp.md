@@ -38,15 +38,29 @@ The backend calls one Graph endpoint with the token,
 `POST https://graph.facebook.com/<version>/<phone number id>/messages`, to send
 replies and mark messages read
 ([`cloud-api.ts`](../apps/backend/src/adapters/whatsapp/cloud-api.ts)). The
-version is `GRAPH_API_VERSION`, `v26.0` when unset. It must match `v26.0`, or
-boot stops. `GRAPH_API_BASE_URL` replaces `https://graph.facebook.com`, for a
-proxy or a fake server. Every Graph URL is built by `graphUrl` in
-[`config/graph.ts`](../apps/backend/src/config/graph.ts).
+version is `GRAPH_API_VERSION`, `v26.0` when unset. A value that does not look
+like `v26.0` makes every send throw. `GRAPH_API_BASE_URL` replaces
+`https://graph.facebook.com`, for a proxy or a fake server. Every Graph URL is
+built by `graphUrl` in [`config/graph.ts`](../apps/backend/src/config/graph.ts).
 
 ## Registering the number
 
-A platform operator pinned to the tenant registers the number. `SECRETS_KEY`
-must be set on the backend, or a request carrying a token answers 503.
+A platform operator registers the number from the command line, with no deploy.
+The command reads the access token from a hidden prompt:
+
+```sh
+SECRETS_KEY=<the deployed key> bun run account channel create --tenant <slug> \
+  --phone-number-id <phone number id> --waba-id <whatsapp business account id> \
+  --display-phone-number "+51 999 999 999" --label Ventas --remote
+```
+
+[Operations](./operations.md#accounts) explains the key and the other forms. A
+number made this way has no verify token of its own, so Meta's handshake uses
+the secret `WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
+
+A platform operator pinned to the tenant can also register the number through
+the API. `SECRETS_KEY` must be set on the backend, or a request carrying a token
+answers 503.
 
 ```sh
 bun scripts/generate-token.ts webhook    # prints a verify token
@@ -62,7 +76,7 @@ curl -X POST -b "session=<token>" -H 'content-type: application/json' \
     "accessToken": "<permanent access token>",
     "verifyToken": "<verify token>"
   }' \
-  https://<frontend>/api/admin/channels
+  https://vendeya.rising.sh/api/admin/channels
 ```
 
 The answer is the account, without its secrets. An account created with an
@@ -73,35 +87,33 @@ answers 409. The routes are in
 To list the tenant's numbers, replace a token, or switch a number off:
 
 ```sh
-curl -b "session=<token>" https://<frontend>/api/admin/channels
+curl -b "session=<token>" https://vendeya.rising.sh/api/admin/channels
 curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"accessToken":"<new token>"}' https://<frontend>/api/admin/channels/<id>
+  -d '{"accessToken":"<new token>"}' https://vendeya.rising.sh/api/admin/channels/<id>
 curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"status":"disabled"}' https://<frontend>/api/admin/channels/<id>
+  -d '{"status":"disabled"}' https://vendeya.rising.sh/api/admin/channels/<id>
 ```
 
 `status` accepts `active`, `pending` and `disabled`. An account with no access
 token cannot be made `active`.
 
-The seed registers one number for the default tenant from the environment:
+The seed registers one number for the default tenant from `.dev.vars`:
 `WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN` and `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
 ([`db/seeds/tenants.ts`](../apps/backend/src/db/seeds/tenants.ts)). It imports a
 credential only when the account does not have one yet, so a token replaced
-through the API survives the next seed. Every other number is registered through
-the API.
+through the API survives the next seed.
 
 ## The callback URL
 
-In the app's WhatsApp configuration, set the callback URL to the frontend's
-public address followed by `/api/webhook`, exactly:
+In the app's WhatsApp configuration, set the callback URL to the public host
+followed by `/api/webhook`:
 
 ```text
-https://<public host>/api/webhook
+https://vendeya.rising.sh/api/webhook
 ```
 
-The frontend relays the request to the backend
-([`routes/api/webhook/+server.ts`](../apps/frontend/src/routes/api/webhook/+server.ts)).
-A trailing slash does not reach it: `/api/webhook/` answers a redirect.
+The backend Worker's route on `/api/*` takes the request straight from Meta
+([`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts)).
 
 Then subscribe the app to the number's `messages` webhook field. The backend
 reads only the `messages` in a delivery and ignores delivery statuses.
@@ -115,7 +127,7 @@ the token matches the verify token of any channel account, or
 carries no phone number id, so any stored verify token passes it.
 
 ```sh
-curl "https://<public host>/api/webhook?hub.mode=subscribe&hub.verify_token=<verify token>&hub.challenge=42"
+curl "https://vendeya.rising.sh/api/webhook?hub.mode=subscribe&hub.verify_token=<verify token>&hub.challenge=42"
 ```
 
 prints `42`.
@@ -125,9 +137,9 @@ prints `42`.
 Meta signs every delivery with the app secret, in the header
 `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the raw body>`. The backend
 checks it against `WHATSAPP_APP_SECRET` and answers 401 on a mismatch
-([`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts)). While the
-variable is unset, every POST answers 503 and boot logs a warning. The GET
-handshake does not need it.
+([`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts)). While the secret
+is unset, every POST answers 503 and logs "Webhook POST refused:
+WHATSAPP_APP_SECRET is not set". The GET handshake does not need it.
 
 The deployment holds one app secret, so every number it serves must deliver its
 webhooks through the same Meta app.
@@ -139,20 +151,15 @@ body='{"entry":[]}'
 sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$WHATSAPP_APP_SECRET" | sed 's/^.* //')
 curl -X POST -H 'content-type: application/json' \
   -H "X-Hub-Signature-256: sha256=$sig" -d "$body" \
-  https://<public host>/api/webhook
+  https://vendeya.rising.sh/api/webhook
 ```
 
-prints `{"status":"received"}`.
+prints `{"results":[]}`. Each message of a real delivery adds one entry with its
+`phoneNumberId` and its `status`
+([Conversation](./conversation.md#the-webhook)).
 
 ## Body size
 
-Meta documents webhook payloads of up to 3 MB. Two limits apply:
-
-- The backend refuses a body over 3 MiB with 413, before it checks the
-  signature.
-- The frontend's webhook route refuses a body over 3 MiB with 413 and stops
-  reading a chunked body at the limit. The built server itself accepts bodies up
-  to 64 MiB for the dashboard's uploads, so leave `BODY_SIZE_LIMIT` unset (see
-  [Uploads](./operations.md#uploads)).
-
-A refused delivery is not stored.
+Meta documents webhook payloads of up to 3 MB. The backend refuses a body over 3
+MiB with 413, before it checks the signature, and stops reading a chunked body
+at the limit. A refused delivery is not stored.
