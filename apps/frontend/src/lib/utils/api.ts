@@ -27,7 +27,7 @@ export async function fetchApi<T>(
 
   if (!response.ok) {
     const error = await response
-      .json()
+      .json<{ error?: string }>()
       .catch(() => ({ error: "Request failed" }));
     throw new ApiError(
       error.error || `HTTP ${response.status}`,
@@ -35,7 +35,7 @@ export async function fetchApi<T>(
     );
   }
 
-  return response.json();
+  return response.json<T>();
 }
 
 export function createFormData(data: Record<string, any>): FormData {

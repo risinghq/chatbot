@@ -1,3 +1,4 @@
+import type { Order, OrderMetrics } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ url, cookies, fetch }) => {
@@ -25,8 +26,10 @@ export const load: PageServerLoad = async ({ url, cookies, fetch }) => {
       }),
     ]);
 
-    const orders = ordersRes.ok ? await ordersRes.json() : [];
-    const metrics = metricsRes.ok ? await metricsRes.json() : null;
+    const orders = ordersRes.ok ? await ordersRes.json<Order[]>() : [];
+    const metrics = metricsRes.ok
+      ? await metricsRes.json<OrderMetrics>()
+      : null;
 
     return { orders, metrics };
   } catch {

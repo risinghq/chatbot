@@ -1,3 +1,4 @@
+import type { Bundle, CatalogPeriod, Product, Segment } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ cookies, url, fetch }) => {
@@ -16,40 +17,37 @@ export const load: PageServerLoad = async ({ cookies, url, fetch }) => {
 
   try {
     const periodsRes = await fetch("/api/periods", { headers });
-    const periods = periodsRes.ok ? await periodsRes.json() : [];
+    const periods = periodsRes.ok
+      ? await periodsRes.json<CatalogPeriod[]>()
+      : [];
 
     const selectedPeriodId = url.searchParams.get("period");
     let activePeriod =
-      periods.find((p: any) => p.status === "active") || periods[0] || null;
+      periods.find((p) => p.status === "active") || periods[0] || null;
 
     if (selectedPeriodId) {
-      const selected = periods.find((p: any) => p.id === selectedPeriodId);
+      const selected = periods.find((p) => p.id === selectedPeriodId);
       if (selected) activePeriod = selected;
     }
 
-    const [productsRes, bundlesRes, fnbRes] = await Promise.all([
+    const bundlesFor = async (segment: Segment): Promise<Bundle[]> => {
+      if (!activePeriod) return [];
+      const res = await fetch(
+        `/api/catalog/bundles?period_id=${activePeriod.id}&segment=${segment}`,
+        { headers },
+      );
+      return res.ok ? res.json<Bundle[]>() : [];
+    };
+
+    const [productsRes, bundles, fnbOfferings] = await Promise.all([
       fetch("/api/catalog/products", { headers }),
-      activePeriod
-        ? fetch(
-            `/api/catalog/bundles?period_id=${activePeriod.id}&segment=gaso`,
-            {
-              headers,
-            },
-          )
-        : Promise.resolve({ ok: false, json: () => [] }),
-      activePeriod
-        ? fetch(
-            `/api/catalog/bundles?period_id=${activePeriod.id}&segment=fnb`,
-            {
-              headers,
-            },
-          )
-        : Promise.resolve({ ok: false, json: () => [] }),
+      bundlesFor("gaso"),
+      bundlesFor("fnb"),
     ]);
 
-    const baseProducts = productsRes.ok ? await productsRes.json() : [];
-    const bundles = bundlesRes.ok ? await bundlesRes.json() : [];
-    const fnbOfferings = fnbRes.ok ? await fnbRes.json() : [];
+    const baseProducts = productsRes.ok
+      ? await productsRes.json<Product[]>()
+      : [];
 
     return { baseProducts, bundles, fnbOfferings, periods, activePeriod };
   } catch (error) {

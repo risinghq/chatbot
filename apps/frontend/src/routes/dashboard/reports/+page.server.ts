@@ -28,8 +28,12 @@ export const load: PageServerLoad = async ({ cookies, locals, fetch }) => {
     ]);
 
     const [userData, countData] = await Promise.all([
-      userRes.ok ? userRes.json() : Promise.resolve(null),
-      countRes.ok ? countRes.json() : Promise.resolve({ count: 0 }),
+      userRes.ok
+        ? userRes.json<{ user: App.Locals["user"] }>()
+        : Promise.resolve(null),
+      countRes.ok
+        ? countRes.json<{ count: number }>()
+        : Promise.resolve({ count: 0 }),
     ]);
 
     return {

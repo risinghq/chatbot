@@ -1,4 +1,5 @@
 import { error } from "@sveltejs/kit";
+import type { SystemLogEntry } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ fetch, locals, cookies }) => {
@@ -18,7 +19,7 @@ export const load: PageServerLoad = async ({ fetch, locals, cookies }) => {
       throw new Error("Failed to fetch system logs");
     }
 
-    const data = await res.json();
+    const data = await res.json<{ logs: SystemLogEntry[] }>();
 
     return {
       logs: data.logs,

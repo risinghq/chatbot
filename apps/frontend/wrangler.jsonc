@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vendeya-dashboard",
+  "main": ".svelte-kit/cloudflare/_worker.js",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  // The backend's routes on this host, /api/* and /media/*, take precedence
+  // over the custom domain, so those paths never reach this Worker in
+  // production.
+  "routes": [{ "pattern": "vendeya.rising.sh", "custom_domain": true }],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".svelte-kit/cloudflare",
+  },
+  "services": [{ "binding": "BACKEND", "service": "vendeya-backend" }],
+}

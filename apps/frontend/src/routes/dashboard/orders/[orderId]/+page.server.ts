@@ -1,3 +1,4 @@
+import type { Order } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ params, cookies, fetch }) => {
@@ -15,7 +16,7 @@ export const load: PageServerLoad = async ({ params, cookies, fetch }) => {
       return { order: null };
     }
 
-    const order = await res.json();
+    const order = await res.json<Order>();
     return { order };
   } catch {
     return { order: null };

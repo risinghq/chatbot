@@ -52,7 +52,7 @@ function getInstallmentsText(json: string): string {
         class="aspect-video w-full bg-white mb-3 overflow-hidden relative rounded-md border border-ink-900/5"
       >
         <img
-          src="/media/images/{bundle.image_id}.jpg"
+          src="/media/{bundle.tenant_id}/images/{bundle.image_id}.jpg"
           alt={bundle.name}
           class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           onerror={(e) => {

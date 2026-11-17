@@ -7,20 +7,22 @@
     "#lib/*": "./src/lib/*"
   },
   "scripts": {
-    "dev": "bun --env-file=../../.env vite dev --host",
-    "build": "bun run --bun vite build",
-    "preview": "vite preview",
+    "dev": "vite dev --host",
+    "build": "vite build",
+    "preview": "bun run build && wrangler dev --port 8788",
+    "deploy": "wrangler deploy",
+    "deploy:dry-run": "wrangler deploy --dry-run --outdir dist",
     "prepare": "svelte-kit sync || echo ''",
-    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "typecheck:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+    "types": "wrangler types --strict-vars=false --include-main-module=false",
+    "typecheck": "bun run types && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck:watch": "bun run types && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
   },
   "dependencies": {
-    "@vendeya/types": "workspace:*",
-    "@vendeya/utils": "workspace:*"
+    "@vendeya/types": "workspace:*"
   },
   "devDependencies": {
-    "@sveltejs/adapter-bun": "^1.0.0",
-    "@sveltejs/kit": "^3.1.1",
+    "@sveltejs/adapter-cloudflare": "^8.0.2",
+    "@sveltejs/kit": "^3.2.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/vite": "^4.3.5",
@@ -28,7 +30,8 @@
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.8",
     "tailwindcss": "^4.3.3",
-    "vite": "^8.3.6",
-    "vite-plugin-devtools-json": "^1.1.2"
+    "vite": "^8.3.8",
+    "vite-plugin-devtools-json": "^1.1.2",
+    "wrangler": "^4.163.0"
   }
 }

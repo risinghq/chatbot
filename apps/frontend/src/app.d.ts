@@ -1,3 +1,5 @@
+export {};
+
 declare global {
   namespace App {
     interface Locals {
@@ -18,5 +20,3 @@ declare global {
     }
   }
 }
-
-export {};

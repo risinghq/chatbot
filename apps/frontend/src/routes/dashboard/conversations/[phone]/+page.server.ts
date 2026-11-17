@@ -1,3 +1,9 @@
+import type {
+  AnalyticsEvent,
+  Conversation,
+  ConversationMessage,
+  Order,
+} from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
@@ -22,7 +28,9 @@ export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
       }),
     ]);
 
-    const userData = userRes.ok ? await userRes.json() : { user: null };
+    const userData = userRes.ok
+      ? await userRes.json<{ user: App.Locals["user"] }>()
+      : { user: null };
 
     if (!convRes.ok) {
       return {
@@ -34,17 +42,21 @@ export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
       };
     }
 
-    const data = await convRes.json();
+    const data = await convRes.json<{
+      conversation: Conversation | null;
+      messages: ConversationMessage[];
+      events: AnalyticsEvent[];
+    }>();
 
     // Load order if conversation exists
-    let orderData = null;
+    let orderData: Order | null = null;
     if (data.conversation) {
       const orderRes = await fetch(
         `/api/orders/by-conversation/${params.phone}${channelQuery}`,
         { headers: { cookie: `session=${sessionToken}` } },
       );
       if (orderRes.ok) {
-        const orderJson = await orderRes.json();
+        const orderJson = await orderRes.json<{ order: Order | null }>();
         orderData = orderJson.order;
       }
     }

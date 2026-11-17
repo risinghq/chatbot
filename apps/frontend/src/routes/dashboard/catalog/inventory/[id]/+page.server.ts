@@ -1,3 +1,4 @@
+import type { Product } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 import { error } from "@sveltejs/kit";
 
@@ -19,6 +20,6 @@ export const load: PageServerLoad = async ({ cookies, params, fetch }) => {
     throw error(getRes.status, "Product not found");
   }
 
-  const product = await getRes.json();
+  const product = await getRes.json<Product>();
   return { product };
 };

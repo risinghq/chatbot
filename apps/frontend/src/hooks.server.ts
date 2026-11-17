@@ -1,34 +1,34 @@
 import type { Handle } from "@sveltejs/kit/hooks";
-import { getBackendUrl } from "@vendeya/utils";
+import { env } from "cloudflare:workers";
 
 /**
- * Server hook that runs on every request
- * Validates session and populates event.locals.user
+ * The backend answers /api and /media. In production its Worker routes catch
+ * those paths before this Worker runs. A server load's fetch of /api, and
+ * every such request under `vite dev` or `wrangler dev`, arrives here and goes
+ * to the backend through the service binding.
  */
+function isBackendPath(pathname: string): boolean {
+  return pathname.startsWith("/api/") || pathname.startsWith("/media/");
+}
 
 export const handle: Handle = async ({ event, resolve }) => {
+  if (isBackendPath(event.url.pathname)) {
+    return env.BACKEND.fetch(event.request);
+  }
+
   const sessionToken = event.cookies.get("session");
-
   if (sessionToken) {
-    try {
-      const backendUrl = getBackendUrl();
-      const response = await fetch(`${backendUrl}/api/auth/me`, {
-        headers: {
-          cookie: `session=${sessionToken}`,
-        },
-      });
+    const response = await env.BACKEND.fetch(
+      new URL("/api/auth/me", event.url),
+      { headers: { cookie: `session=${sessionToken}` } },
+    ).catch(() => null);
 
-      if (response.ok) {
-        const data = await response.json();
-        event.locals.user = data.user;
-      }
-    } catch (error) {
-      // Silent fail
-      // user remains null
+    if (response?.ok) {
+      const data = await response.json<{ user: App.Locals["user"] }>();
+      event.locals.user = data.user;
     }
   }
 
-  // Protect dashboard routes
   if (event.url.pathname.startsWith("/dashboard") && !event.locals.user) {
     return new Response(null, {
       status: 302,

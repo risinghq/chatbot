@@ -1,3 +1,4 @@
+import type { Bundle, Product } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 import { error } from "@sveltejs/kit";
 
@@ -19,12 +20,14 @@ export const load: PageServerLoad = async ({ cookies, params, url, fetch }) => {
       : Promise.resolve(null),
   ]);
 
-  const baseProducts = productsRes.ok ? await productsRes.json() : [];
-  let bundle = null;
+  const baseProducts = productsRes.ok
+    ? await productsRes.json<Product[]>()
+    : [];
+  let bundle: Bundle | null = null;
 
   if (bundleRes) {
     if (bundleRes.ok) {
-      bundle = await bundleRes.json();
+      bundle = await bundleRes.json<Bundle>();
     } else {
       throw error(bundleRes.status, "Bundle not found");
     }

@@ -228,6 +228,36 @@ export type Order = {
   updated_at: number;
 };
 
+export type SystemLogSource = "llm" | "audit";
+export type SystemLogStatus = "success" | "error" | "info";
+
+/** One row of the activity timeline, from an LLM call or an audit entry. */
+export type SystemLogEntry = {
+  id: string;
+  timestamp: string;
+  source: SystemLogSource;
+  event: string;
+  status: SystemLogStatus;
+  actor: string;
+  summary: string;
+  metadata?: any;
+  original_data: any;
+};
+
+export type OrderMetrics = {
+  totalOrders: number;
+  pendingCount: number;
+  supervisorApprovedCount: number;
+  calidaApprovedCount: number;
+  deliveredCount: number;
+  rejectedCount: number;
+  totalRevenue: number;
+  revenueThisMonth: number;
+  avgOrderValue: number;
+  approvalRate: number;
+  rejectionRate: number;
+};
+
 export type ProviderCheckResult = {
   eligible: boolean;
   credit: number;
