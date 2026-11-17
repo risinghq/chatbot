@@ -1,18 +1,17 @@
-import { db } from "../../db/index.ts";
-import { getAll, getOne } from "../../db/query.ts";
 import type { ConversationRef } from "@vendeya/types";
 import type {
   ConversationMessage,
   MessageDirection,
   StoredMessageType,
 } from "./types.ts";
+import { getAll, getOne, run } from "../../db/index.ts";
 
 /**
  * Message history is keyed by the full conversation identity, so the same
  * contact number writing to two businesses keeps two separate threads.
  */
 export const MessageStore = {
-  log(
+  async log(
     ref: ConversationRef,
     direction: MessageDirection,
     type: StoredMessageType,
@@ -20,22 +19,23 @@ export const MessageStore = {
     status: string = "sent",
     whatsappMessageId?: string,
     productId?: string,
-  ): string {
+  ): Promise<string> {
     const id = crypto.randomUUID();
-    db.prepare(
+    await run(
       `INSERT INTO messages (id, tenant_id, channel_account_id, phone_number, direction, type, content, status, whatsapp_message_id, product_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
-      ref.tenantId,
-      ref.channelAccountId,
-      ref.phoneNumber,
-      direction,
-      type,
-      content,
-      status,
-      whatsappMessageId ?? null,
-      productId ?? null,
+      [
+        id,
+        ref.tenantId,
+        ref.channelAccountId,
+        ref.phoneNumber,
+        direction,
+        type,
+        content,
+        status,
+        whatsappMessageId ?? null,
+        productId ?? null,
+      ],
     );
 
     // The outbox row keeps this id, so a retry moves this row rather than
@@ -43,11 +43,11 @@ export const MessageStore = {
     return id;
   },
 
-  findProductByMessageId(
+  async findProductByMessageId(
     ref: ConversationRef,
     whatsappMessageId: string,
-  ): string | null {
-    const result = getOne<{ product_id: string | null }>(
+  ): Promise<string | null> {
+    const result = await getOne<{ product_id: string | null }>(
       `SELECT product_id FROM messages
        WHERE whatsapp_message_id = ? AND tenant_id = ? AND channel_account_id = ?`,
       [whatsappMessageId, ref.tenantId, ref.channelAccountId],
@@ -55,21 +55,24 @@ export const MessageStore = {
     return result?.product_id ?? null;
   },
 
-  getMessageById(
+  async getMessageById(
     ref: ConversationRef,
     whatsappMessageId: string,
-  ): ConversationMessage | null {
+  ): Promise<ConversationMessage | null> {
     return (
-      getOne<ConversationMessage>(
+      (await getOne<ConversationMessage>(
         `SELECT * FROM messages
          WHERE whatsapp_message_id = ? AND tenant_id = ? AND channel_account_id = ?`,
         [whatsappMessageId, ref.tenantId, ref.channelAccountId],
-      ) ?? null
+      )) ?? null
     );
   },
 
-  getHistory(ref: ConversationRef, limit: number = 50): ConversationMessage[] {
-    return getAll<ConversationMessage>(
+  async getHistory(
+    ref: ConversationRef,
+    limit: number = 50,
+  ): Promise<ConversationMessage[]> {
+    return await getAll<ConversationMessage>(
       `SELECT * FROM messages
        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
        ORDER BY created_at DESC, ROWID DESC
@@ -78,10 +81,11 @@ export const MessageStore = {
     );
   },
 
-  clear(ref: ConversationRef): void {
-    db.prepare(
+  async clear(ref: ConversationRef): Promise<void> {
+    await run(
       `DELETE FROM messages
        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-    ).run(ref.tenantId, ref.channelAccountId, ref.phoneNumber);
+      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    );
   },
 };

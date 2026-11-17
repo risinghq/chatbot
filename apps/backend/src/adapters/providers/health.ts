@@ -1,70 +1,73 @@
+import { env } from "cloudflare:workers";
 import { createLogger } from "../../lib/logger.ts";
 
 const logger = createLogger("providers");
 
-type ProviderName = "fnb" | "gaso" | "powerbi";
+export type ProviderName = "fnb" | "gaso" | "powerbi";
 
-type HealthStatus = {
-  status: "healthy" | "blocked";
-  lastError: string | null;
-  blockedUntil: Date | null;
-};
+const PROVIDERS: ProviderName[] = ["fnb", "gaso", "powerbi"];
 
-const BLOCK_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+/** How long a provider that failed is left alone before it is tried again. */
+const BLOCK_DURATION_S = 30 * 60;
 
-const providers: Map<ProviderName, HealthStatus> = new Map([
-  ["fnb", { status: "healthy", lastError: null, blockedUntil: null }],
-  ["gaso", { status: "healthy", lastError: null, blockedUntil: null }],
-  ["powerbi", { status: "healthy", lastError: null, blockedUntil: null }],
-]);
+type Block = { lastError: string; blockedUntil: number };
 
-export function isAvailable(provider: ProviderName): boolean {
-  const health = providers.get(provider)!;
-  if (health.status === "healthy") return true;
-  if (health.blockedUntil && new Date() > health.blockedUntil) {
-    markHealthy(provider);
-    return true;
-  }
-  return false;
+/**
+ * The breaker lives in KV, so every isolate sees a block. A block is a key
+ * that expires when the block ends, and a missing key means healthy. KV takes
+ * up to a minute to show a write everywhere, so an isolate elsewhere may try a
+ * provider once more after it was blocked.
+ */
+function keyOf(provider: ProviderName): string {
+  return `breaker:${provider}`;
 }
 
-export function markBlocked(provider: ProviderName, errorMsg: string): void {
-  const health = providers.get(provider)!;
-  const wasHealthy = health.status === "healthy";
+async function blockOf(provider: ProviderName): Promise<Block | null> {
+  return env.KV.get<Block>(keyOf(provider), "json");
+}
 
-  health.status = "blocked";
-  health.lastError = errorMsg;
-  health.blockedUntil = new Date(Date.now() + BLOCK_DURATION_MS);
+export async function isAvailable(provider: ProviderName): Promise<boolean> {
+  const block = await blockOf(provider);
+  return !block || block.blockedUntil <= Date.now();
+}
+
+export async function markBlocked(
+  provider: ProviderName,
+  errorMsg: string,
+): Promise<void> {
+  const wasHealthy = await isAvailable(provider);
+  const block: Block = {
+    lastError: errorMsg,
+    blockedUntil: Date.now() + BLOCK_DURATION_S * 1000,
+  };
+  await env.KV.put(keyOf(provider), JSON.stringify(block), {
+    expirationTtl: BLOCK_DURATION_S,
+  });
 
   if (wasHealthy) {
     logger.error(
-      { provider, errorMsg, blockedUntil: health.blockedUntil },
+      {
+        provider,
+        errorMsg,
+        blockedUntil: new Date(block.blockedUntil).toISOString(),
+      },
       "Provider blocked for 30 minutes",
     );
   }
 }
 
-export function markHealthy(provider: ProviderName): void {
-  const health = providers.get(provider)!;
-  health.status = "healthy";
-  health.lastError = null;
-  health.blockedUntil = null;
-}
-
-export function getStatus(provider: ProviderName) {
-  const health = providers.get(provider)!;
+export async function getStatus(provider: ProviderName) {
+  const block = await blockOf(provider);
+  const blocked = !!block && block.blockedUntil > Date.now();
   return {
-    status: health.status,
-    available: isAvailable(provider),
-    lastError: health.lastError,
-    blockedUntil: health.blockedUntil?.toISOString() || null,
+    status: blocked ? "blocked" : "healthy",
+    available: !blocked,
+    lastError: blocked ? block.lastError : null,
+    blockedUntil: blocked ? new Date(block.blockedUntil).toISOString() : null,
   };
 }
 
-export function getAllStatus() {
-  return {
-    fnb: getStatus("fnb"),
-    gaso: getStatus("gaso"),
-    powerbi: getStatus("powerbi"),
-  };
+export async function getAllStatus() {
+  const [fnb, gaso, powerbi] = await Promise.all(PROVIDERS.map(getStatus));
+  return { fnb: fnb!, gaso: gaso!, powerbi: powerbi! };
 }

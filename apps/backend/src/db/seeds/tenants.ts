@@ -1,7 +1,6 @@
-import type { Database } from "bun:sqlite";
-import process from "node:process";
-import { channelAccountsOn } from "../../domains/channels/accounts.ts";
-import { tenantsOn } from "../../domains/tenants/index.ts";
+import { env } from "cloudflare:workers";
+import { ChannelAccountService } from "../../domains/channels/accounts.ts";
+import { TenantService } from "../../domains/tenants/index.ts";
 import { isEncryptionAvailable } from "../../platform/crypto/secrets.ts";
 import { createLogger } from "../../lib/logger.ts";
 import type { ChannelAccount, Tenant } from "@vendeya/types";
@@ -13,43 +12,52 @@ import {
 
 const logger = createLogger("seed-tenants");
 
-export function ensureDefaultTenant(db: Database): Tenant {
-  const tenants = tenantsOn(db);
+/**
+ * Seed-only values from .dev.vars. The Worker never reads them: after the
+ * seed, the number and its token live on the channel account.
+ */
+function seedVar(
+  name:
+    | "WHATSAPP_PHONE_ID"
+    | "WHATSAPP_TOKEN"
+    | "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+): string | null {
+  const value = (env as unknown as Record<string, unknown>)[name];
+  return typeof value === "string" && value !== "" ? value : null;
+}
 
+export async function ensureDefaultTenant(): Promise<Tenant> {
   return (
-    tenants.getBySlug(DEFAULT_TENANT_SLUG) ??
-    tenants.create({
+    (await TenantService.getBySlug(DEFAULT_TENANT_SLUG)) ??
+    (await TenantService.create({
       slug: DEFAULT_TENANT_SLUG,
       name: DEFAULT_TENANT_NAME,
-    })
+    }))
   );
 }
 
 /**
- * Creates the channel account for a tenant from the WHATSAPP_* environment
- * variables, or imports the credentials that an existing one is missing. A
- * fresh seed and the migration both come through here, and nothing else
+ * Creates the channel account for a tenant from the WHATSAPP_* seed values,
+ * or imports the credentials that an existing one is missing. Nothing else
  * imports those credentials.
  */
-export function ensureChannelAccountFromEnv(
-  db: Database,
+export async function ensureChannelAccountFromEnv(
   tenantId: string,
-): ChannelAccount {
-  const channelAccounts = channelAccountsOn(db);
-  const phoneNumberId = seededPhoneNumberId(channelAccounts, tenantId);
+): Promise<ChannelAccount> {
+  const configured = seedVar("WHATSAPP_PHONE_ID");
+  const phoneNumberId = await seededPhoneNumberId(configured, tenantId);
 
   // The WHATSAPP_* credentials belong to the configured number, so they are
   // only imported onto that number and never onto a placeholder.
-  const usesConfiguredNumber = phoneNumberId === process.env.WHATSAPP_PHONE_ID;
-  const accessToken = usesConfiguredNumber
-    ? process.env.WHATSAPP_TOKEN || null
-    : null;
+  const usesConfiguredNumber = phoneNumberId === configured;
+  const accessToken = usesConfiguredNumber ? seedVar("WHATSAPP_TOKEN") : null;
   const verifyToken = usesConfiguredNumber
-    ? process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || null
+    ? seedVar("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
     : null;
   const canEncrypt = isEncryptionAvailable();
 
-  const existing = channelAccounts.getByPhoneNumberId(phoneNumberId);
+  const existing =
+    await ChannelAccountService.getByPhoneNumberId(phoneNumberId);
 
   if (existing) {
     if (existing.tenant_id !== tenantId) {
@@ -77,18 +85,18 @@ export function ensureChannelAccountFromEnv(
       return existing;
     }
 
-    const imported: string[] = [];
+    const change = {
+      ...(accessToken && needsAccessToken && { accessToken }),
+      ...(verifyToken && needsVerifyToken && { verifyToken }),
+    };
+    await ChannelAccountService.update(existing, change);
+    const imported = [
+      ...("accessToken" in change ? ["access_token"] : []),
+      ...("verifyToken" in change ? ["verify_token"] : []),
+    ];
 
-    if (accessToken && needsAccessToken) {
-      channelAccounts.setAccessToken(existing.id, accessToken);
-      imported.push("access_token");
-    }
-    if (verifyToken && needsVerifyToken) {
-      channelAccounts.setVerifyToken(existing.id, verifyToken);
-      imported.push("verify_token");
-    }
-
-    const updated = channelAccounts.getById(existing.id) ?? existing;
+    const updated =
+      (await ChannelAccountService.getById(existing.id)) ?? existing;
 
     logger.info(
       {
@@ -113,7 +121,7 @@ export function ensureChannelAccountFromEnv(
   // send yet.
   const storeCredentials = canEncrypt;
 
-  const account = channelAccounts.create({
+  const account = await ChannelAccountService.create({
     tenantId,
     phoneNumberId,
     label: DEFAULT_TENANT_NAME,
@@ -139,16 +147,15 @@ export function ensureChannelAccountFromEnv(
  * WHATSAPP_PHONE_ID when it is set and free for this tenant, otherwise this
  * tenant's placeholder.
  */
-function seededPhoneNumberId(
-  channelAccounts: ReturnType<typeof channelAccountsOn>,
+async function seededPhoneNumberId(
+  configured: string | null,
   tenantId: string,
-): string {
-  const configured = process.env.WHATSAPP_PHONE_ID;
+): Promise<string> {
   if (!configured) return unconfiguredPhoneNumberId(tenantId);
 
   // A configured number registered to another tenant belongs to that tenant.
   // Handing it out would put this tenant's rows on another business's number.
-  const owner = channelAccounts.getByPhoneNumberId(configured);
+  const owner = await ChannelAccountService.getByPhoneNumberId(configured);
   if (!owner || owner.tenant_id === tenantId) return configured;
 
   logger.error(
@@ -162,18 +169,18 @@ function seededPhoneNumberId(
 function warnAboutMissingKey(): void {
   logger.warn(
     "SECRETS_KEY is not set: seeding the channel account without credentials. " +
-      "Set SECRETS_KEY and re-run the seed, or add the token via " +
-      "PATCH /api/admin/channels/:id, before sending on this number.",
+      "Set SECRETS_KEY in .dev.vars and re-run the seed, or add the token " +
+      "on the dashboard, before sending on this number.",
   );
 }
 
 /** The default tenant and its one channel account, created if absent. */
-export function seedTenants(db: Database): {
+export async function seedTenants(): Promise<{
   tenant: Tenant;
   channelAccount: ChannelAccount;
-} {
-  const tenant = ensureDefaultTenant(db);
-  const channelAccount = ensureChannelAccountFromEnv(db, tenant.id);
+}> {
+  const tenant = await ensureDefaultTenant();
+  const channelAccount = await ensureChannelAccountFromEnv(tenant.id);
 
   return { tenant, channelAccount };
 }

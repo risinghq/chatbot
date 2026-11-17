@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getAll, tenantPredicate } from "../../db/query.ts";
+import { tenantPredicate } from "../../db/query.ts";
 import {
   auditActorLabel,
   logAction,
@@ -15,12 +15,13 @@ import {
 import { getRecentLLMCalls } from "../../intelligence/tracker.ts";
 import { queryLimit } from "../../lib/http.ts";
 import { requireTenantScope } from "../../middleware/auth.ts";
+import { getAll } from "../../db/index.ts";
 
 const system = new Hono();
 
 system.use("/*", requireTenantScope);
 
-system.get("/llm-errors", (c) => {
+system.get("/llm-errors", async (c) => {
   const scope = c.get("scope");
   const phoneFilter = c.req.query("phone");
   const operationFilter = c.req.query("operation");
@@ -43,7 +44,7 @@ system.get("/llm-errors", (c) => {
 
   params.push(limit);
 
-  const errors = getAll<{
+  const errors = await getAll<{
     id: string;
     phone_number: string;
     operation: string;
@@ -69,23 +70,25 @@ system.get("/llm-errors", (c) => {
   });
 });
 
-system.get("/llm-calls", (c) => {
+system.get("/llm-calls", async (c) => {
   const limit = queryLimit(c, 50);
-  return c.json({ calls: getRecentLLMCalls(c.get("scope").tenantId, limit) });
+  return c.json({
+    calls: await getRecentLLMCalls(c.get("scope").tenantId, limit),
+  });
 });
 
-system.get("/audit", (c) => {
+system.get("/audit", async (c) => {
   const scope = c.get("scope");
   const userIdFilter = c.req.query("user_id");
   const limit = queryLimit(c, 100);
 
-  const logs = getAuditTrail(scope.tenantId, userIdFilter, limit);
+  const logs = await getAuditTrail(scope.tenantId, userIdFilter, limit);
 
   const userIds = [
     ...new Set(logs.flatMap((l) => (l.user_id === null ? [] : [l.user_id]))),
   ];
   const dbUsers = userIds.length
-    ? getAll<{ id: string; username: string; name: string }>(
+    ? await getAll<{ id: string; username: string; name: string }>(
         `SELECT id, username, name FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`,
         userIds,
       )
@@ -106,9 +109,9 @@ system.get("/audit", (c) => {
   return c.json({ logs: logsWithNames });
 });
 
-system.get("/settings", (c) => {
+system.get("/settings", async (c) => {
   const scope = c.get("scope");
-  const platform = SystemSettings.getAll();
+  const platform = await SystemSettings.getAll();
 
   if (!scope.tenantId) {
     // A platform operator with no tenant selected reads every platform setting
@@ -120,7 +123,7 @@ system.get("/settings", (c) => {
   // here as well as refused on the write, so a save never resubmits the
   // round-robin cursor and gets its own read back in `rejected`.
   const tenant = Object.fromEntries(
-    Object.entries(TenantSettings.getAll(scope.tenantId)).filter(
+    Object.entries(await TenantSettings.getAll(scope.tenantId)).filter(
       ([key]) => !isInternalTenantSettingKey(key),
     ),
   );
@@ -153,11 +156,11 @@ system.post("/settings", async (c) => {
     // Platform operator, no tenant selected: writes land on platform config.
     for (const [key, value] of Object.entries(settings)) {
       if (key.startsWith("_")) continue;
-      SystemSettings.set(key, String(value));
+      await SystemSettings.set(key, String(value));
       updates[key] = String(value);
     }
 
-    logAction(
+    await logAction(
       { userId: user.id, tenantId: null },
       "update_platform_settings",
       "system",
@@ -183,11 +186,11 @@ system.post("/settings", async (c) => {
       rejected.push(key);
       continue;
     }
-    TenantSettings.set(scope.tenantId, key, String(value));
+    await TenantSettings.set(scope.tenantId, key, String(value));
     updates[key] = String(value);
   }
 
-  logAction(
+  await logAction(
     { userId: user.id, tenantId: scope.tenantId },
     "update_settings",
     "system",

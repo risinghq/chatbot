@@ -2,7 +2,7 @@
 -- A tenant is one business using VendeYa. Each table of business data below
 -- has a `tenant_id` naming the tenant that owns the row. It is nullable only in
 -- `notification_traces` and `audit_log`, whose rows can belong to the platform.
-CREATE TABLE IF NOT EXISTS tenants (
+CREATE TABLE tenants (
     id TEXT PRIMARY KEY,
     slug TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
-CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status);
+CREATE INDEX idx_tenants_status ON tenants(status);
 
 
 -- CORE AUTHENTICATION & USER MANAGEMENT
@@ -19,7 +19,7 @@ CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status);
 -- created. Authorization reads the membership role, not this column.
 -- `is_platform_operator` marks VendeYa's own staff. They need no membership to
 -- act in a tenant, and a promoted account keeps the memberships it already had.
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
@@ -32,13 +32,13 @@ CREATE TABLE IF NOT EXISTS users (
     created_by TEXT REFERENCES users(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
-CREATE INDEX IF NOT EXISTS idx_users_platform_operator ON users(is_platform_operator);
+CREATE INDEX idx_users_active ON users(is_active);
+CREATE INDEX idx_users_platform_operator ON users(is_platform_operator);
 
 -- `is_available` is the agent's own switch, and it lives here rather than on the
 -- account: someone who sells for two businesses goes offline for one of them
 -- without dropping out of the other's assignment rotation.
-CREATE TABLE IF NOT EXISTS tenant_memberships (
+CREATE TABLE tenant_memberships (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -49,42 +49,41 @@ CREATE TABLE IF NOT EXISTS tenant_memberships (
     UNIQUE(tenant_id, user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_memberships_user ON tenant_memberships(user_id);
-CREATE INDEX IF NOT EXISTS idx_memberships_tenant_role ON tenant_memberships(tenant_id, role, is_available);
+CREATE INDEX idx_memberships_user ON tenant_memberships(user_id);
+CREATE INDEX idx_memberships_tenant_role ON tenant_memberships(tenant_id, role, is_available);
 
 -- `active_tenant_id` is the tenant scope the session is acting in. NULL means
 -- no tenant is pinned. A platform operator then gets the cross-tenant view. A
 -- member has no scope until they pick a tenant.
-CREATE TABLE IF NOT EXISTS session (
+CREATE TABLE session (
     id TEXT NOT NULL PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     active_tenant_id TEXT REFERENCES tenants(id) ON DELETE SET NULL,
     expires_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
+CREATE INDEX idx_session_user ON session(user_id);
 
 
 -- CHANNEL ACCOUNTS
--- Encrypted credential store. Values are AES-256-GCM ciphertext, which cannot be
--- decrypted without the key in SECRETS_KEY.
-CREATE TABLE IF NOT EXISTS channel_secrets (
+-- Encrypted credential store. Values are AES-256-GCM ciphertext with the tag
+-- appended, which cannot be decrypted without the key in SECRETS_KEY.
+CREATE TABLE channel_secrets (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     purpose TEXT NOT NULL CHECK(purpose IN ('access_token', 'verify_token')),
     ciphertext TEXT NOT NULL,
     iv TEXT NOT NULL,
-    auth_tag TEXT NOT NULL,
     key_id TEXT NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
-CREATE INDEX IF NOT EXISTS idx_channel_secrets_tenant ON channel_secrets(tenant_id);
+CREATE INDEX idx_channel_secrets_tenant ON channel_secrets(tenant_id);
 
 -- One row per business phone number. `channel_type` is a column rather than an
 -- assumption so a second channel can be added without reshaping the table.
-CREATE TABLE IF NOT EXISTS channel_accounts (
+CREATE TABLE channel_accounts (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_type TEXT NOT NULL DEFAULT 'whatsapp' CHECK(channel_type IN ('whatsapp')),
@@ -104,12 +103,12 @@ CREATE TABLE IF NOT EXISTS channel_accounts (
     UNIQUE(id, tenant_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_channel_accounts_tenant ON channel_accounts(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_channel_accounts_waba ON channel_accounts(waba_id);
+CREATE INDEX idx_channel_accounts_tenant ON channel_accounts(tenant_id, status);
+CREATE INDEX idx_channel_accounts_waba ON channel_accounts(waba_id);
 
 
 -- CATALOG MANAGEMENT
-CREATE TABLE IF NOT EXISTS catalog_periods (
+CREATE TABLE catalog_periods (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -125,10 +124,10 @@ CREATE TABLE IF NOT EXISTS catalog_periods (
     UNIQUE(id, tenant_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_periods_status ON catalog_periods(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_periods_year_month ON catalog_periods(tenant_id, year_month DESC);
+CREATE INDEX idx_periods_status ON catalog_periods(tenant_id, status);
+CREATE INDEX idx_periods_year_month ON catalog_periods(tenant_id, year_month DESC);
 
-CREATE TABLE IF NOT EXISTS products (
+CREATE TABLE products (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -139,9 +138,9 @@ CREATE TABLE IF NOT EXISTS products (
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
-CREATE INDEX IF NOT EXISTS idx_products_category ON products(tenant_id, category);
+CREATE INDEX idx_products_category ON products(tenant_id, category);
 
-CREATE TABLE IF NOT EXISTS catalog_bundles (
+CREATE TABLE catalog_bundles (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     period_id TEXT NOT NULL,
@@ -163,15 +162,15 @@ CREATE TABLE IF NOT EXISTS catalog_bundles (
         REFERENCES catalog_periods(id, tenant_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_bundles_period ON catalog_bundles(tenant_id, period_id);
-CREATE INDEX IF NOT EXISTS idx_bundles_filtering ON catalog_bundles(tenant_id, period_id, segment, is_active, stock_status, primary_category, price);
+CREATE INDEX idx_bundles_period ON catalog_bundles(tenant_id, period_id);
+CREATE INDEX idx_bundles_filtering ON catalog_bundles(tenant_id, period_id, segment, is_active, stock_status, primary_category, price);
 
 
 -- CONVERSATIONS & MESSAGING
 -- Identity is (tenant, channel account, contact phone number): the same person
 -- writing to two businesses, or to two of one business's numbers, is two
 -- separate conversations.
-CREATE TABLE IF NOT EXISTS conversations (
+CREATE TABLE conversations (
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
     phone_number TEXT NOT NULL,
@@ -204,15 +203,15 @@ CREATE TABLE IF NOT EXISTS conversations (
         REFERENCES channel_accounts(id, tenant_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(tenant_id, last_activity_at DESC);
-CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_conversations_assigned ON conversations(tenant_id, assigned_agent);
-CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversations(phone_number);
+CREATE INDEX idx_conversations_updated ON conversations(tenant_id, last_activity_at DESC);
+CREATE INDEX idx_conversations_status ON conversations(tenant_id, status);
+CREATE INDEX idx_conversations_assigned ON conversations(tenant_id, assigned_agent);
+CREATE INDEX idx_conversations_phone ON conversations(phone_number);
 
 -- A row means the person holding the conversation has been alerted and has not
 -- answered since. An escalation or a customer message adds it. A manual reply,
 -- a change of the assigned agent, a reset or an undelivered alert removes it.
-CREATE TABLE IF NOT EXISTS unread_alerts (
+CREATE TABLE unread_alerts (
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
     phone_number TEXT NOT NULL,
@@ -227,7 +226,7 @@ CREATE TABLE IF NOT EXISTS unread_alerts (
 -- Any statement that sets `assigned_agent` hands the conversation to someone
 -- who has not been alerted about it: assignment, reassignment, decline, takeover,
 -- release, an agent's removal. This one trigger covers every writer.
-CREATE TRIGGER IF NOT EXISTS conversations_assignment_clears_unread_alert
+CREATE TRIGGER conversations_assignment_clears_unread_alert
 AFTER UPDATE OF assigned_agent ON conversations
 BEGIN
     DELETE FROM unread_alerts
@@ -236,7 +235,7 @@ BEGIN
       AND phone_number = NEW.phone_number;
 END;
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE messages (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
@@ -254,10 +253,10 @@ CREATE TABLE IF NOT EXISTS messages (
         REFERENCES conversations(tenant_id, channel_account_id, phone_number) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_phone ON messages(tenant_id, channel_account_id, phone_number, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_whatsapp_id ON messages(whatsapp_message_id);
+CREATE INDEX idx_messages_phone ON messages(tenant_id, channel_account_id, phone_number, created_at DESC);
+CREATE INDEX idx_messages_whatsapp_id ON messages(whatsapp_message_id);
 
-CREATE TABLE IF NOT EXISTS message_inbox (
+CREATE TABLE message_inbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
@@ -268,8 +267,8 @@ CREATE TABLE IF NOT EXISTS message_inbox (
     quoted_message_context TEXT,
     status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'processed', 'failed')),
     last_error TEXT,
-    -- Turns that ended without a reply: a throw, or a process that died. The
-    -- states are in conversation/message-inbox.ts.
+    -- Turns that ended without a reply: a throw, or a Durable Object instance
+    -- that ended mid-turn. The states are in conversation/message-inbox.ts.
     attempts INTEGER NOT NULL DEFAULT 0,
     -- NULL until the handoff of a `failed` row alerts a person. Only that
     -- handoff writes it, and it is never cleared.
@@ -280,7 +279,7 @@ CREATE TABLE IF NOT EXISTS message_inbox (
         REFERENCES channel_accounts(id, tenant_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_message_inbox_pending ON message_inbox(status, tenant_id, channel_account_id, phone_number, created_at);
+CREATE INDEX idx_message_inbox_pending ON message_inbox(status, tenant_id, channel_account_id, phone_number, created_at);
 
 -- One outbound reply whose send failed and may still go out. `message_id` is the
 -- `messages` row this row updates, so a retry never writes a second row, and it
@@ -288,7 +287,7 @@ CREATE INDEX IF NOT EXISTS idx_message_inbox_pending ON message_inbox(status, te
 -- them are in conversation/outbox.ts.
 -- `handed_off_at` is NULL until the handoff of a `failed` row alerts a person.
 -- Only that handoff writes it, only on a `failed` row, and it is never cleared.
-CREATE TABLE IF NOT EXISTS outbox (
+CREATE TABLE outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
@@ -312,12 +311,12 @@ CREATE TABLE IF NOT EXISTS outbox (
         REFERENCES conversations(tenant_id, channel_account_id, phone_number) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox(status, next_attempt_at);
-CREATE INDEX IF NOT EXISTS idx_outbox_conversation ON outbox(tenant_id, channel_account_id, phone_number, status, id);
+CREATE INDEX idx_outbox_due ON outbox(status, next_attempt_at);
+CREATE INDEX idx_outbox_conversation ON outbox(tenant_id, channel_account_id, phone_number, status, id);
 
 
 -- ORDERS & SALES PROCESSING
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE orders (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
@@ -343,13 +342,13 @@ CREATE TABLE IF NOT EXISTS orders (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(tenant_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_conversation ON orders(tenant_id, channel_account_id, conversation_phone);
-CREATE INDEX IF NOT EXISTS idx_orders_agent ON orders(tenant_id, assigned_agent);
+CREATE INDEX idx_orders_status ON orders(tenant_id, status, created_at DESC);
+CREATE INDEX idx_orders_conversation ON orders(tenant_id, channel_account_id, conversation_phone);
+CREATE INDEX idx_orders_agent ON orders(tenant_id, assigned_agent);
 
 
 -- TESTING & DEVELOPMENT
-CREATE TABLE IF NOT EXISTS test_personas (
+CREATE TABLE test_personas (
     id TEXT NOT NULL,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -368,11 +367,11 @@ CREATE TABLE IF NOT EXISTS test_personas (
     PRIMARY KEY (tenant_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_personas_tenant ON test_personas(tenant_id, is_active);
+CREATE INDEX idx_personas_tenant ON test_personas(tenant_id, is_active);
 
 
 -- MEDIA & ASSETS
-CREATE TABLE IF NOT EXISTS assets (
+CREATE TABLE assets (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK(kind IN ('catalog_image', 'contract', 'recording')),
@@ -395,11 +394,11 @@ CREATE TABLE IF NOT EXISTS assets (
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
-CREATE INDEX IF NOT EXISTS idx_assets_tenant ON assets(tenant_id, kind);
+CREATE INDEX idx_assets_tenant ON assets(tenant_id, kind);
 
 
 -- ANALYTICS & MONITORING
-CREATE TABLE IF NOT EXISTS analytics_events (
+CREATE TABLE analytics_events (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
@@ -412,10 +411,10 @@ CREATE TABLE IF NOT EXISTS analytics_events (
         REFERENCES channel_accounts(id, tenant_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_analytics_phone ON analytics_events(tenant_id, channel_account_id, phone_number);
-CREATE INDEX IF NOT EXISTS idx_analytics_type ON analytics_events(tenant_id, event_type);
+CREATE INDEX idx_analytics_phone ON analytics_events(tenant_id, channel_account_id, phone_number);
+CREATE INDEX idx_analytics_type ON analytics_events(tenant_id, event_type);
 
-CREATE TABLE IF NOT EXISTS llm_calls (
+CREATE TABLE llm_calls (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     channel_account_id TEXT NOT NULL,
@@ -434,17 +433,17 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     tokens_total INTEGER,
     conversation_phase TEXT,
     context_metadata TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
     FOREIGN KEY (channel_account_id, tenant_id)
         REFERENCES channel_accounts(id, tenant_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_llm_calls_phone ON llm_calls(tenant_id, phone_number, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_llm_calls_operation ON llm_calls(tenant_id, operation, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_llm_calls_status ON llm_calls(tenant_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(tenant_id, created_at DESC);
+CREATE INDEX idx_llm_calls_phone ON llm_calls(tenant_id, phone_number, created_at DESC);
+CREATE INDEX idx_llm_calls_operation ON llm_calls(tenant_id, operation, created_at DESC);
+CREATE INDEX idx_llm_calls_status ON llm_calls(tenant_id, status, created_at DESC);
+CREATE INDEX idx_llm_calls_created ON llm_calls(tenant_id, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS notification_traces (
+CREATE TABLE notification_traces (
     id TEXT PRIMARY KEY,
     -- Null for a few events, such as provider outages affecting the whole
     -- platform, that are not attributable to one tenant. The alert goes out on
@@ -460,15 +459,15 @@ CREATE TABLE IF NOT EXISTS notification_traces (
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
-CREATE INDEX IF NOT EXISTS idx_notification_traces_trace_id ON notification_traces(trace_id);
-CREATE INDEX IF NOT EXISTS idx_notification_traces_created_at ON notification_traces(tenant_id, created_at DESC);
+CREATE INDEX idx_notification_traces_trace_id ON notification_traces(trace_id);
+CREATE INDEX idx_notification_traces_created_at ON notification_traces(tenant_id, created_at DESC);
 
 
 -- AUDIT & SYSTEM CONFIGURATION
 -- `tenant_id` is nullable: platform operators also act outside any tenant.
 -- `user_id` is null for an action no user took. `actor` always says who did it:
 -- `user:<user id>` for a person, `cli:<operating-system user>` for the terminal.
-CREATE TABLE IF NOT EXISTS audit_log (
+CREATE TABLE audit_log (
     id TEXT PRIMARY KEY,
     tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
     user_id TEXT REFERENCES users(id),
@@ -480,19 +479,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, created_at DESC);
+CREATE INDEX idx_audit_user ON audit_log(user_id, created_at DESC);
+CREATE INDEX idx_audit_tenant ON audit_log(tenant_id, created_at DESC);
 
 -- Genuinely global platform configuration: the shared Calidda provider kill
 -- switches and the operations channel. Only platform operators may write it.
-CREATE TABLE IF NOT EXISTS system_settings (
+CREATE TABLE system_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000)
 );
 
 -- Per-tenant configuration (agent round-robin cursor).
-CREATE TABLE IF NOT EXISTS tenant_settings (
+CREATE TABLE tenant_settings (
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     key TEXT NOT NULL,
     value TEXT NOT NULL,

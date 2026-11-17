@@ -1,6 +1,6 @@
 import type { ChannelAccount, SendOutcome, WhatsAppAdapter } from "./types.ts";
 import { createLogger } from "../../lib/logger.ts";
-import { getPublicUrl } from "@vendeya/utils";
+import { publicOrigin } from "../../config.ts";
 import { createAbortTimeout, TIMEOUTS } from "../../config/timeouts.ts";
 import { graphUrl } from "../../config/graph.ts";
 import { ChannelAccountService } from "../../domains/channels/accounts.ts";
@@ -15,9 +15,9 @@ function messagesUrl(account: ChannelAccount): string {
  * Credentials for one send. Returns the reason (and logs it) when the account
  * cannot currently send.
  */
-function credentials(
+async function credentials(
   account: ChannelAccount,
-): { token: string; url: string } | { refusal: string } {
+): Promise<{ token: string; url: string } | { refusal: string }> {
   if (account.status !== "active") {
     logger.warn(
       { channelAccountId: account.id, status: account.status },
@@ -26,7 +26,7 @@ function credentials(
     return { refusal: "account_not_active" };
   }
 
-  const token = ChannelAccountService.getAccessToken(account);
+  const token = await ChannelAccountService.getAccessToken(account);
   if (!token) {
     logger.warn(
       { channelAccountId: account.id },
@@ -135,7 +135,7 @@ async function post(
   payload: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<SendOutcome> {
-  const creds = credentials(account);
+  const creds = await credentials(account);
   if ("refusal" in creds) {
     return { ok: false, kind: "permanent", reason: creds.refusal };
   }
@@ -197,7 +197,7 @@ export const CloudApiAdapter: WhatsAppAdapter = {
     imagePath: string,
     caption?: string,
   ): Promise<SendOutcome> {
-    const link = `${getPublicUrl()}/media/${imagePath}`;
+    const link = `${publicOrigin()}/media/${imagePath}`;
 
     return post(
       account,
@@ -216,7 +216,7 @@ export const CloudApiAdapter: WhatsAppAdapter = {
     messageId: string,
     { typing }: { typing: boolean },
   ): Promise<void> {
-    const creds = credentials(account);
+    const creds = await credentials(account);
     if ("refusal" in creds) return;
 
     const { signal, cleanup } = createAbortTimeout(5_000);

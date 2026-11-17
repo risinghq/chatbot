@@ -1,5 +1,3 @@
-import { db } from "../../db/index.ts";
-import { getOne } from "../../db/query.ts";
 import type { ConversationRef } from "@vendeya/types";
 import type { SendOutcome } from "../../adapters/whatsapp/types.ts";
 import {
@@ -8,16 +6,17 @@ import {
 } from "../../adapters/whatsapp/index.ts";
 import { logAction } from "../../platform/audit/logger.ts";
 import { assignNextAgentHeld } from "./assignment.ts";
-import { withLock } from "../../conversation/locks.ts";
-import { cancelPending } from "../../conversation/outbox.ts";
+import { cancelPendingStatements } from "../../conversation/outbox.ts";
+import { conversationStub, unlocked } from "../../conversation/stub.ts";
 import { clearUnreadAlert } from "../../conversation/unread-alerts.ts";
 import {
+  conversationUpdate,
   findConversation,
   getOrCreateConversation,
   refreshLastActivity,
   resetSession,
-  updateConversation,
 } from "../../conversation/store.ts";
+import { batch, getOne, run, stmt } from "../../db/index.ts";
 
 const ALLOWED_AGENT_DATA_FIELDS = [
   "agent_notes",
@@ -38,87 +37,109 @@ function identityParams(ref: ConversationRef): [string, string, string] {
   return [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
 }
 
+export type WriteResult = { success: boolean; error?: string };
+
+/**
+ * A bot turn reads the phase when it starts and writes it when it ends.
+ * Without the lock a takeover that lands mid-turn is overwritten and the bot
+ * resumes. A turn already in flight may still send the replies it had ready.
+ * The lock makes checking and assigning the taker atomic.
+ *
+ * @throws ConversationBusyError if the conversation's lock does not come free
+ */
 export async function takeoverConversation(
   ref: ConversationRef,
   userId: string,
-): Promise<{ success: boolean; error?: string }> {
-  // A bot turn reads the phase when it starts and writes it when it ends.
-  // Without the lock a takeover that lands mid-turn is overwritten and the bot
-  // resumes. A turn already in flight may still send the replies it had ready.
-  // The lock makes checking and assigning the taker atomic.
-  return withLock(ref, async () => {
-    const current = getOne<{ assigned_agent: string | null }>(
-      `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
-      identityParams(ref),
-    );
-    if (current?.assigned_agent && current.assigned_agent !== userId) {
-      return {
-        success: false,
-        error: "Another agent has already taken this conversation",
-      };
-    }
-
-    // One transaction, so a failure cannot leave the bot silenced with nobody
-    // holding the conversation.
-    const cancelledReplies = db.transaction(() => {
-      updateConversation(
-        ref,
-        { phase: "escalated", reason: MANUAL_TAKEOVER_REASON },
-        {},
-      );
-
-      // Taking the conversation over accepts an assignment, so the timer that
-      // would hand it to the next agent has nothing left to wait for.
-      db.prepare(
-        `UPDATE conversations
-         SET assigned_agent = ?, assignment_notified_at = NULL
-         WHERE ${IDENTITY_WHERE}`,
-      ).run(userId, ...identityParams(ref));
-
-      // Replies the bot still owed are dropped, because the person now answers.
-      // A bot escalation does not come through here, so the "an advisor will
-      // contact you" text it queued still goes out.
-      return cancelPending(ref);
-    })();
-
-    logAction(
-      { userId, tenantId: ref.tenantId },
-      "takeover",
-      "conversation",
-      ref.phoneNumber,
-      { cancelledReplies },
-    );
-
-    return { success: true };
-  });
+): Promise<WriteResult> {
+  return unlocked(ref, await conversationStub(ref).takeover(ref, userId));
 }
 
+/** The caller holds the conversation lock. */
+export async function takeoverHeld(
+  ref: ConversationRef,
+  userId: string,
+): Promise<WriteResult> {
+  const current = await getOne<{ assigned_agent: string | null }>(
+    `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
+    identityParams(ref),
+  );
+  if (current?.assigned_agent && current.assigned_agent !== userId) {
+    return {
+      success: false,
+      error: "Another agent has already taken this conversation",
+    };
+  }
+
+  // One batch, so a failure cannot leave the bot silenced with nobody holding
+  // the conversation. Taking the conversation over accepts an assignment, so
+  // the timer that would hand it to the next agent has nothing left to wait
+  // for. Replies the bot still owed are dropped, because the person now
+  // answers. A bot escalation does not come through here, so the "an advisor
+  // will contact you" text it queued still goes out.
+  const results = await batch([
+    await conversationUpdate(
+      ref,
+      { phase: "escalated", reason: MANUAL_TAKEOVER_REASON },
+      {},
+    ),
+    stmt(
+      `UPDATE conversations
+       SET assigned_agent = ?, assignment_notified_at = NULL
+       WHERE ${IDENTITY_WHERE}`,
+      [userId, ...identityParams(ref)],
+    ),
+    ...cancelPendingStatements(ref),
+  ]);
+  const cancelledReplies = results[results.length - 1]!.meta.changes;
+
+  await logAction(
+    { userId, tenantId: ref.tenantId },
+    "takeover",
+    "conversation",
+    ref.phoneNumber,
+    { cancelledReplies },
+  );
+
+  return { success: true };
+}
+
+/**
+ * The lock keeps a bot turn from writing its phase over the reset.
+ *
+ * @throws ConversationBusyError if the conversation's lock does not come free
+ */
 export async function releaseConversation(
   ref: ConversationRef,
   userId: string,
-) {
-  // The lock keeps a bot turn from writing its phase over the reset. The state
-  // is read again inside it, because the row the route resolved may be stale.
-  await withLock(ref, async () => {
-    const row = findConversation(ref);
-    if (!row) return;
-    const { phase, metadata } = getOrCreateConversation(ref);
-
-    // A conversation the bot owns is left alone, so a repeated release cannot
-    // restart it.
-    if (row.status !== "human_takeover" && phase.phase !== "escalated") return;
-
-    resetSession(ref, metadata.lastCategory);
-
-    logAction(
-      { userId, tenantId: ref.tenantId },
-      "release",
-      "conversation",
-      ref.phoneNumber,
-    );
-  });
-
+): Promise<WriteResult> {
+  unlocked(ref, await conversationStub(ref).release(ref, userId));
   return { success: true };
+}
+
+/**
+ * The caller holds the conversation lock. The state is read again here,
+ * because the row the route resolved may be stale.
+ */
+export async function releaseHeld(
+  ref: ConversationRef,
+  userId: string,
+): Promise<void> {
+  const row = await findConversation(ref);
+  if (!row) return;
+  const { phase, metadata } = await getOrCreateConversation(ref);
+
+  // A conversation the bot owns is left alone, so a repeated release cannot
+  // restart it.
+  if (row.status !== "human_takeover" && phase.phase !== "escalated") return;
+
+  await resetSession(ref, metadata.lastCategory);
+
+  await logAction(
+    { userId, tenantId: ref.tenantId },
+    "release",
+    "conversation",
+    ref.phoneNumber,
+  );
 }
 
 const SEND_FAILURE_MESSAGES = {
@@ -160,7 +181,7 @@ export async function sendManualMessage(
   // delivery moves.
   if (!outcome.ok) {
     if (outcome.kind === "ambiguous") {
-      logAction(
+      await logAction(
         { userId, tenantId: ref.tenantId },
         "send_message",
         "conversation",
@@ -172,10 +193,10 @@ export async function sendManualMessage(
   }
 
   // Keeps the idle reset away from a conversation an agent is answering.
-  refreshLastActivity(ref);
-  clearUnreadAlert(ref);
+  await refreshLastActivity(ref);
+  await clearUnreadAlert(ref);
 
-  logAction(
+  await logAction(
     { userId, tenantId: ref.tenantId },
     "send_message",
     "conversation",
@@ -191,47 +212,53 @@ export async function sendManualMessage(
  * gets it. The check and the hand-over happen under the conversation lock, so a
  * decline cannot reassign a conversation the agent took over meanwhile.
  *
- * @throws ConversationBusyError if the lock does not come free
- * @throws LockTimeoutError if the decline outlasts the lock timeout
+ * @throws ConversationBusyError if the conversation's lock does not come free
  */
-export function declineAssignment(
+export async function declineAssignment(
   ref: ConversationRef,
   userId: string,
-): Promise<{ success: boolean; error?: string }> {
-  return withLock(ref, async () => {
-    const conv = getOne<{ assigned_agent: string | null }>(
-      `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
-      identityParams(ref),
-    );
-
-    if (!conv || conv.assigned_agent !== userId) {
-      return { success: false, error: "Not assigned to you" };
-    }
-
-    db.prepare(
-      `UPDATE conversations
-       SET assignment_notified_at = NULL, assigned_agent = NULL
-       WHERE ${IDENTITY_WHERE}`,
-    ).run(...identityParams(ref));
-
-    assignNextAgentHeld(ref);
-
-    logAction(
-      { userId, tenantId: ref.tenantId },
-      "decline_assignment",
-      "conversation",
-      ref.phoneNumber,
-    );
-
-    return { success: true };
-  });
+): Promise<WriteResult> {
+  return unlocked(ref, await conversationStub(ref).decline(ref, userId));
 }
 
-export function updateAgentData(
+/** The caller holds the conversation lock. */
+export async function declineHeld(
+  ref: ConversationRef,
+  userId: string,
+): Promise<WriteResult> {
+  const conv = await getOne<{ assigned_agent: string | null }>(
+    `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
+    identityParams(ref),
+  );
+
+  if (!conv || conv.assigned_agent !== userId) {
+    return { success: false, error: "Not assigned to you" };
+  }
+
+  await run(
+    `UPDATE conversations
+     SET assignment_notified_at = NULL, assigned_agent = NULL
+     WHERE ${IDENTITY_WHERE}`,
+    identityParams(ref),
+  );
+
+  await assignNextAgentHeld(ref);
+
+  await logAction(
+    { userId, tenantId: ref.tenantId },
+    "decline_assignment",
+    "conversation",
+    ref.phoneNumber,
+  );
+
+  return { success: true };
+}
+
+export async function updateAgentData(
   ref: ConversationRef,
   userId: string,
   updates: Record<string, string | undefined>,
-): { success: boolean; error?: string } {
+): Promise<{ success: boolean; error?: string }> {
   const validUpdates: Record<string, string> = {};
 
   for (const field of ALLOWED_AGENT_DATA_FIELDS) {
@@ -247,7 +274,7 @@ export function updateAgentData(
     return { success: false, error: "Invalid sale_status" };
   }
 
-  const conv = getOne<{ assigned_agent: string | null }>(
+  const conv = await getOne<{ assigned_agent: string | null }>(
     `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
     identityParams(ref),
   );
@@ -270,11 +297,12 @@ export function updateAgentData(
 
   values.push(...identityParams(ref));
 
-  db.prepare(
+  await run(
     `UPDATE conversations SET ${setClauses.join(", ")} WHERE ${IDENTITY_WHERE}`,
-  ).run(...values);
+    values,
+  );
 
-  logAction(
+  await logAction(
     { userId, tenantId: ref.tenantId },
     "update_agent_data",
     "conversation",

@@ -83,15 +83,17 @@ export class TenantScopeRequiredError extends Error {
  * Whether `scope` may touch a row owned by `rowTenantId`. An unpinned platform
  * operator may touch any open tenant's row.
  */
-export function canAccessTenant(
+export async function canAccessTenant(
   scope: AuthScope,
   rowTenantId: string,
-): boolean {
+): Promise<boolean> {
   if (scope.tenantId === null) {
     // Suspension is checked here, not left to the session. Dropping an
     // operator's pin on suspension yields the cross-tenant view, which removes
     // nothing.
-    return scope.isPlatformOperator && TenantService.isOpen(rowTenantId);
+    return (
+      scope.isPlatformOperator && (await TenantService.isOpen(rowTenantId))
+    );
   }
   // A pin on a suspended tenant is dropped before the scope is built.
   return scope.tenantId === rowTenantId;

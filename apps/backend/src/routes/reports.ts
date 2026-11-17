@@ -14,9 +14,9 @@ reports.use(
   requireRole("admin", "developer", "supervisor"),
 );
 
-reports.get("/daily", (c) => {
+reports.get("/daily", async (c) => {
   const date = c.req.query("date") || undefined;
-  const buffer = ReportService.generateDailyReport(
+  const buffer = await ReportService.generateDailyReport(
     c.get("scope").tenantId,
     date,
   );
@@ -30,12 +30,14 @@ reports.get("/daily", (c) => {
   return c.body(buffer);
 });
 
-reports.get("/today-count", (c) => {
-  const count = ReportService.getTodayContactCount(c.get("scope").tenantId);
+reports.get("/today-count", async (c) => {
+  const count = await ReportService.getTodayContactCount(
+    c.get("scope").tenantId,
+  );
   return c.json({ count });
 });
 
-reports.get("/activity", (c) => {
+reports.get("/activity", async (c) => {
   const startDateStr = c.req.query("startDate");
   const endDateStr = c.req.query("endDate");
   const segmentsStr = c.req.query("segments") || "fnb,gaso,none";
@@ -51,7 +53,7 @@ reports.get("/activity", (c) => {
   const segments = segmentsStr.split(",").filter(Boolean);
   const saleStatuses = saleStatusesStr.split(",").filter(Boolean);
 
-  const buffer = ReportService.generateActivityReport({
+  const buffer = await ReportService.generateActivityReport({
     tenantId: c.get("scope").tenantId,
     startDate: new Date(startMs),
     endDate: new Date(endMs),
@@ -67,7 +69,7 @@ reports.get("/activity", (c) => {
   return c.body(buffer);
 });
 
-reports.get("/orders", (c) => {
+reports.get("/orders", async (c) => {
   const startDateStr = c.req.query("startDate");
   const endDateStr = c.req.query("endDate");
   const status = c.req.query("status") || "";
@@ -80,7 +82,7 @@ reports.get("/orders", (c) => {
     ? limaRangeEdge(endDateStr, "end", "endDate")
     : undefined;
 
-  const buffer = ReportService.generateOrderReport({
+  const buffer = await ReportService.generateOrderReport({
     tenantId: c.get("scope").tenantId,
     startDate: startMs === undefined ? undefined : new Date(startMs),
     endDate: endMs === undefined ? undefined : new Date(endMs),

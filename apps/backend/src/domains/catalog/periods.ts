@@ -1,7 +1,7 @@
-import { db } from "../../db/index.ts";
-import { getOne, getAll, tenantPredicate } from "../../db/query.ts";
+import { tenantPredicate } from "../../db/query.ts";
 import { periodId } from "./ids.ts";
 import type { CatalogPeriod, PeriodStatus } from "@vendeya/types";
+import { getAll, getOne, run } from "../../db/index.ts";
 
 type CreatePeriodData = {
   tenantId: string;
@@ -16,76 +16,86 @@ type CreatePeriodData = {
  * `activeTenantId`.
  */
 export const PeriodService = {
-  getAll: (tenantId: string | null): CatalogPeriod[] =>
-    getAll<CatalogPeriod>(
+  getAll: async (tenantId: string | null): Promise<CatalogPeriod[]> =>
+    await getAll<CatalogPeriod>(
       `SELECT * FROM catalog_periods
        WHERE ${tenantPredicate(tenantId)}
        ORDER BY year_month DESC`,
       tenantId ? [tenantId] : [],
     ),
 
-  getById: (tenantId: string | null, id: string): CatalogPeriod | null =>
-    getOne<CatalogPeriod>(
+  getById: async (
+    tenantId: string | null,
+    id: string,
+  ): Promise<CatalogPeriod | null> =>
+    (await getOne<CatalogPeriod>(
       `SELECT * FROM catalog_periods
        WHERE id = ? AND ${tenantPredicate(tenantId)}`,
       tenantId ? [id, tenantId] : [id],
-    ) ?? null,
+    )) ?? null,
 
-  getActive: (tenantId: string): CatalogPeriod | null =>
-    getOne<CatalogPeriod>(
+  getActive: async (tenantId: string): Promise<CatalogPeriod | null> =>
+    (await getOne<CatalogPeriod>(
       "SELECT * FROM catalog_periods WHERE tenant_id = ? AND status = 'active' LIMIT 1",
       [tenantId],
-    ) ?? null,
+    )) ?? null,
 
-  getByYearMonth: (tenantId: string, yearMonth: string): CatalogPeriod | null =>
-    getOne<CatalogPeriod>(
+  getByYearMonth: async (
+    tenantId: string,
+    yearMonth: string,
+  ): Promise<CatalogPeriod | null> =>
+    (await getOne<CatalogPeriod>(
       "SELECT * FROM catalog_periods WHERE tenant_id = ? AND year_month = ?",
       [tenantId, yearMonth],
-    ) ?? null,
+    )) ?? null,
 
-  create: (data: CreatePeriodData): CatalogPeriod => {
+  create: async (data: CreatePeriodData): Promise<CatalogPeriod> => {
     const id = periodId(data.tenantId, data.year_month);
 
-    db.prepare(
+    await run(
       `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status, created_by)
        VALUES (?, ?, ?, ?, 'draft', ?)`,
-    ).run(id, data.tenantId, data.name, data.year_month, data.created_by);
+      [id, data.tenantId, data.name, data.year_month, data.created_by],
+    );
 
-    return PeriodService.getById(data.tenantId, id)!;
+    return (await PeriodService.getById(data.tenantId, id))!;
   },
 
-  updateStatus: (
+  updateStatus: async (
     tenantId: string,
     id: string,
     status: PeriodStatus,
-  ): CatalogPeriod => {
+  ): Promise<CatalogPeriod> => {
     const now = Date.now();
 
     if (status === "active") {
       // Deactivate any currently active period *for this tenant only*
-      db.prepare(
+      await run(
         "UPDATE catalog_periods SET status = 'archived' WHERE tenant_id = ? AND status = 'active'",
-      ).run(tenantId);
+        [tenantId],
+      );
 
       // Set this one active with published timestamp
-      db.prepare(
+      await run(
         "UPDATE catalog_periods SET status = 'active', published_at = ? WHERE id = ? AND tenant_id = ?",
-      ).run(now, id, tenantId);
+        [now, id, tenantId],
+      );
     } else {
-      db.prepare(
+      await run(
         "UPDATE catalog_periods SET status = ? WHERE id = ? AND tenant_id = ?",
-      ).run(status, id, tenantId);
+        [status, id, tenantId],
+      );
     }
 
-    return PeriodService.getById(tenantId, id)!;
+    return (await PeriodService.getById(tenantId, id))!;
   },
 
-  delete: (
+  delete: async (
     tenantId: string,
     id: string,
-  ): { success: boolean; message?: string } => {
+  ): Promise<{ success: boolean; message?: string }> => {
     // Only allow deleting draft periods with no products
-    const period = PeriodService.getById(tenantId, id);
+    const period = await PeriodService.getById(tenantId, id);
     if (!period) {
       return { success: false, message: "Período no encontrado" };
     }
@@ -98,10 +108,10 @@ export const PeriodService = {
     }
 
     // Check for bundles
-    const bundleCount = getOne<{ count: number }>(
+    const bundleCount = (await getOne<{ count: number }>(
       "SELECT COUNT(*) as count FROM catalog_bundles WHERE tenant_id = ? AND period_id = ?",
       [tenantId, id],
-    )!;
+    ))!;
 
     if (bundleCount.count > 0) {
       return {
@@ -110,9 +120,10 @@ export const PeriodService = {
       };
     }
 
-    db.prepare(
-      "DELETE FROM catalog_periods WHERE id = ? AND tenant_id = ?",
-    ).run(id, tenantId);
+    await run("DELETE FROM catalog_periods WHERE id = ? AND tenant_id = ?", [
+      id,
+      tenantId,
+    ]);
     return { success: true };
   },
 };

@@ -16,11 +16,11 @@ export async function notify(event: DomainEvent): Promise<void> {
       event,
     );
   } finally {
-    if (!delivered) releaseUndeliveredAlert(event);
+    if (!delivered) await releaseUndeliveredAlert(event);
   }
 }
 
-function releaseUndeliveredAlert(event: DomainEvent): void {
+async function releaseUndeliveredAlert(event: DomainEvent): Promise<void> {
   if (
     event.type !== "escalation_triggered" &&
     event.type !== "customer_message_received"
@@ -29,7 +29,7 @@ function releaseUndeliveredAlert(event: DomainEvent): void {
   }
   if (!event.tenantId || !event.channelAccountId) return;
 
-  clearUnreadAlert({
+  await clearUnreadAlert({
     tenantId: event.tenantId,
     channelAccountId: event.channelAccountId,
     phoneNumber: event.payload.phoneNumber,

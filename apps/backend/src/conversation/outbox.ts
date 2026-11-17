@@ -1,16 +1,11 @@
-import { db } from "../db/index.ts";
-import {
-  activeChannelAccountsOnly,
-  getAll,
-  getOne,
-  openTenantsOnly,
-} from "../db/query.ts";
+import { activeChannelAccountsOnly, openTenantsOnly } from "../db/query.ts";
 import { createLogger } from "../lib/logger.ts";
 import type { ConversationRef } from "@vendeya/types";
 import type {
   OutboundMessage,
   SendOutcome,
 } from "../adapters/whatsapp/types.ts";
+import { batch, getAll, getOne, run, stmt } from "../db/index.ts";
 
 /*
  * The states of an outbox row, and who moves each one.
@@ -19,13 +14,13 @@ import type {
  *    send failed in a way a later attempt can fix, or when the conversation
  *    already owed a reply and this one must queue behind it. It leaves pending
  *    through `claimRow`, `expirePending` or `cancelPending`.
- *  - sending: one attempt is in flight. The worker holds the conversation lock
- *    from the claim to the recorded outcome, so only the worker that claimed
- *    the row moves it on. A process that dies here leaves the row sending, and
- *    `startOutboxWorker` records that as one ambiguous attempt, for an open
- *    tenant only. A database that refuses to record an outcome also leaves the
- *    row sending until the next boot, and the conversation's later replies
- *    queue behind it.
+ *  - sending: one attempt is in flight. The conversation's object holds the
+ *    lock from the claim to the recorded outcome, so only the attempt that
+ *    claimed the row moves it on. An object that ends here leaves the row
+ *    sending, and the next object for the conversation records that as one
+ *    ambiguous attempt before it does anything else. A database that refuses
+ *    to record an outcome also leaves the row sending until then, and the
+ *    conversation's later replies queue behind it.
  *  - sent: the adapter accepted it, and the `messages` row carries Meta's id.
  *  - failed: permanent, out of budget, a second ambiguous outcome, or past
  *    `MAX_AGE_MS`. `last_reason` says which. The customer got no answer, so
@@ -38,9 +33,9 @@ import type {
  *    the caller keeps the customer's message for when the number returns.
  *  - cancelled: a person took the conversation over before it went out.
  *
- * sent, failed and cancelled are final. The worker claims only a conversation's
- * lowest-numbered pending or sending row, so replies go out in the order the
- * bot produced them.
+ * sent, failed and cancelled are final. The sender claims only a
+ * conversation's lowest-numbered pending or sending row, so replies go out in
+ * the order the bot produced them.
  */
 
 const logger = createLogger("outbox");
@@ -65,10 +60,10 @@ export const MAX_ATTEMPTS = 5;
 /** A reply this old is no longer worth delivering, so the row fails as `expired`. */
 export const MAX_AGE_MS = 60 * 60 * 1000;
 
-/** How long the worker waits after finding the conversation's number switched off. */
+/** How long the sender waits after finding the conversation's number switched off. */
 export const CHANNEL_UNAVAILABLE_DELAY_MS = 60_000;
 
-/** How long a final row is kept before the hourly purge deletes it. */
+/** How long a final row is kept before the hourly sweep deletes it. */
 export const OUTBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type OutboxStatus =
@@ -117,7 +112,7 @@ export type OutboxStep = {
 
 /**
  * The retry budget, as one decision. `WhatsAppService` calls it for the inline
- * attempt and the worker for every later one, so the two cannot drift.
+ * attempt and the sender for every later one, so the two cannot drift.
  */
 export function stepOutbox(
   counters: OutboxCounters,
@@ -190,8 +185,8 @@ function messageStatus(status: OutboxStatus): string {
 }
 
 /** Whether this conversation already owes a reply, so a new one must queue behind it. */
-export function hasQueuedReply(ref: ConversationRef): boolean {
-  const row = getOne<{ id: number }>(
+export async function hasQueuedReply(ref: ConversationRef): Promise<boolean> {
+  const row = await getOne<{ id: number }>(
     `SELECT id FROM outbox
      WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
        AND status IN ('pending', 'sending')
@@ -202,24 +197,22 @@ export function hasQueuedReply(ref: ConversationRef): boolean {
 }
 
 /** Append a reply to the conversation's queue. `id` gives the order it goes out in. */
-export function enqueue(args: {
+export async function enqueue(args: {
   ref: ConversationRef;
   messageId: string;
   message: OutboundMessage;
   state: OutboxStep;
   now: number;
-}): number {
+}): Promise<number> {
   const { ref, messageId, message, state, now } = args;
 
-  const result = db
-    .prepare(
-      `INSERT INTO outbox
+  const result = await run(
+    `INSERT INTO outbox
          (tenant_id, channel_account_id, phone_number, message_id, type, content,
           caption, status, attempts, ambiguous_attempts, last_kind, last_reason,
           next_attempt_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+    [
       ref.tenantId,
       ref.channelAccountId,
       ref.phoneNumber,
@@ -235,13 +228,14 @@ export function enqueue(args: {
       state.nextAttemptAt,
       now,
       now,
-    );
+    ],
+  );
 
   return Number(result.lastInsertRowid);
 }
 
 /**
- * What the worker needs to send a queued reply again. No product id: the
+ * What the sender needs to send a queued reply again. No product id: the
  * adapter does not take one, and the `messages` row already records it.
  */
 export function outboundOf(row: OutboxRow): OutboundMessage {
@@ -255,12 +249,18 @@ export function outboundOf(row: OutboxRow): OutboundMessage {
   return { type: "text", content: row.content };
 }
 
-/** The conversation's lowest-numbered pending or sending row, or undefined when it owes nothing. */
-export function headRow(ref: ConversationRef): OutboxRow | undefined {
-  return getOne<OutboxRow>(
+/**
+ * The conversation's lowest-numbered pending or sending row, or undefined when
+ * it owes nothing. A suspended tenant owes nothing until it reopens.
+ */
+export async function headRow(
+  ref: ConversationRef,
+): Promise<OutboxRow | undefined> {
+  return await getOne<OutboxRow>(
     `SELECT * FROM outbox
      WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
        AND status IN ('pending', 'sending')
+       AND ${openTenantsOnly()}
      ORDER BY id
      LIMIT 1`,
     [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
@@ -271,12 +271,16 @@ export function headRow(ref: ConversationRef): OutboxRow | undefined {
  * Takes the row out of the pending set, so no later pass sends it twice. Gives
  * back the claimed row, or undefined when another writer moved it first.
  */
-export function claimRow(row: OutboxRow, now: number): OutboxRow | undefined {
-  const changed = db
-    .prepare(
+export async function claimRow(
+  row: OutboxRow,
+  now: number,
+): Promise<OutboxRow | undefined> {
+  const changed = (
+    await run(
       "UPDATE outbox SET status = 'sending', updated_at = ? WHERE id = ? AND status = 'pending'",
+      [now, row.id],
     )
-    .run(now, row.id).changes;
+  ).changes;
 
   if (changed !== 1) return undefined;
 
@@ -287,11 +291,11 @@ export function claimRow(row: OutboxRow, now: number): OutboxRow | undefined {
  * Move the row and the `messages` row it owns together, so the thread never
  * shows a reply as queued once the row is final.
  */
-export function recordOutcome(
+export async function recordOutcome(
   row: OutboxRow,
   outcome: SendOutcome,
   now: number,
-): OutboxStep {
+): Promise<OutboxStep> {
   const step = stepOutbox(
     {
       attempts: row.attempts,
@@ -302,32 +306,32 @@ export function recordOutcome(
     now,
   );
 
-  const apply = db.transaction(() => {
-    db.prepare(
+  await batch([
+    stmt(
       `UPDATE outbox
        SET status = ?, attempts = ?, ambiguous_attempts = ?, last_kind = ?,
            last_reason = ?, next_attempt_at = ?, updated_at = ?
        WHERE id = ?`,
-    ).run(
-      step.status,
-      step.attempts,
-      step.ambiguousAttempts,
-      step.lastKind,
-      step.lastReason,
-      step.nextAttemptAt,
-      now,
-      row.id,
-    );
-
-    db.prepare(
+      [
+        step.status,
+        step.attempts,
+        step.ambiguousAttempts,
+        step.lastKind,
+        step.lastReason,
+        step.nextAttemptAt,
+        now,
+        row.id,
+      ],
+    ),
+    stmt(
       "UPDATE messages SET status = ?, whatsapp_message_id = ? WHERE id = ?",
-    ).run(
-      messageStatus(step.status),
-      outcome.ok ? outcome.messageId : null,
-      row.message_id,
-    );
-  });
-  apply();
+      [
+        messageStatus(step.status),
+        outcome.ok ? outcome.messageId : null,
+        row.message_id,
+      ],
+    ),
+  ]);
 
   return step;
 }
@@ -336,80 +340,121 @@ export function recordOutcome(
  * Put a claimed row back without counting an attempt. The number the
  * conversation runs on was switched off, which no attempt could have fixed.
  */
-export function deferUnavailable(id: number, now: number): void {
-  db.prepare(
+export async function deferUnavailable(id: number, now: number): Promise<void> {
+  await run(
     `UPDATE outbox SET status = 'pending', next_attempt_at = ?, updated_at = ?
      WHERE id = ? AND status = 'sending'`,
-  ).run(now + CHANNEL_UNAVAILABLE_DELAY_MS, now, id);
+    [now + CHANNEL_UNAVAILABLE_DELAY_MS, now, id],
+  );
 }
 
 /**
  * Fail the conversation's pending rows that are past the age limit. It counts
- * no attempt, because no attempt was made.
+ * no attempt, because no attempt was made. A suspended tenant's rows wait for
+ * it to reopen, as the sweep does.
  */
-export function expirePending(ref: ConversationRef, now: number): number {
+export async function expirePending(
+  ref: ConversationRef,
+  now: number,
+): Promise<number> {
   const cutoff = now - MAX_AGE_MS;
+  const identity = [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
 
-  const expire = db.transaction(() => {
-    db.prepare(
+  const [, expired] = await batch([
+    stmt(
       `UPDATE messages SET status = 'failed'
        WHERE id IN (
          SELECT message_id FROM outbox
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
            AND status = 'pending' AND created_at <= ?
+           AND ${openTenantsOnly()}
        )`,
-    ).run(ref.tenantId, ref.channelAccountId, ref.phoneNumber, cutoff);
+      [...identity, cutoff],
+    ),
+    stmt(
+      `UPDATE outbox
+       SET status = 'failed', last_reason = 'expired', updated_at = ?
+       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
+         AND status = 'pending' AND created_at <= ?
+         AND ${openTenantsOnly()}`,
+      [now, ...identity, cutoff],
+    ),
+  ]);
 
-    return db
-      .prepare(
-        `UPDATE outbox
-         SET status = 'failed', last_reason = 'expired', updated_at = ?
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-           AND status = 'pending' AND created_at <= ?`,
-      )
-      .run(now, ref.tenantId, ref.channelAccountId, ref.phoneNumber, cutoff)
-      .changes;
-  });
-
-  return expire();
+  return expired!.meta.changes;
 }
 
 /**
  * Drop the replies the bot had queued, because a person now owns the
  * conversation or is being given it. Only `pending` rows: the caller holds the
- * conversation lock, so no attempt can be in flight. Gives back how many were
- * dropped.
+ * conversation lock, so no attempt can be in flight. The outbox update comes
+ * last, so its `meta.changes` is how many were dropped.
  */
-export function cancelPending(ref: ConversationRef): number {
-  const cancel = db.transaction(() => {
-    db.prepare(
+export function cancelPendingStatements(
+  ref: ConversationRef,
+): D1PreparedStatement[] {
+  const identity = [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
+  return [
+    stmt(
       `UPDATE messages SET status = 'cancelled'
        WHERE id IN (
          SELECT message_id FROM outbox
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
            AND status = 'pending'
        )`,
-    ).run(ref.tenantId, ref.channelAccountId, ref.phoneNumber);
+      identity,
+    ),
+    stmt(
+      `UPDATE outbox SET status = 'cancelled', updated_at = ?
+       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
+         AND status = 'pending'`,
+      [Date.now(), ...identity],
+    ),
+  ];
+}
 
-    return db
-      .prepare(
-        `UPDATE outbox SET status = 'cancelled', updated_at = ?
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-           AND status = 'pending'`,
-      )
-      .run(Date.now(), ref.tenantId, ref.channelAccountId, ref.phoneNumber)
-      .changes;
-  });
-
-  return cancel();
+/** Runs `cancelPendingStatements` and gives back how many replies were dropped. */
+export async function cancelPending(ref: ConversationRef): Promise<number> {
+  const results = await batch(cancelPendingStatements(ref));
+  return results[results.length - 1]!.meta.changes;
 }
 
 /**
- * The conversations the worker looks at this pass: those with a row past the
- * age limit, and those whose head row is due on a number that can send.
+ * When the conversation's outbox next needs its object: the head row's next
+ * attempt on a number that can send, or the moment a pending row passes the
+ * age limit. Undefined when it owes nothing an alarm could move.
  */
-export function conversationsNeedingOutbox(now: number): ConversationRef[] {
-  const stale = getAll<{
+export async function outboxWakeAt(
+  ref: ConversationRef,
+): Promise<number | undefined> {
+  const identity = [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
+  const row = await getOne<{ due: number | null; stale: number | null }>(
+    `SELECT
+       (SELECT next_attempt_at FROM outbox
+        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
+          AND status IN ('pending', 'sending')
+          AND ${activeChannelAccountsOnly()}
+        ORDER BY id LIMIT 1) AS due,
+       (SELECT MIN(created_at) + ? FROM outbox
+        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
+          AND status = 'pending') AS stale
+     WHERE ${openTenantsOnly("?")}`,
+    [...identity, MAX_AGE_MS, ...identity, ref.tenantId],
+  );
+  const times = [row?.due, row?.stale].filter(
+    (time): time is number => typeof time === "number",
+  );
+  return times.length === 0 ? undefined : Math.min(...times);
+}
+
+/**
+ * The conversations the sweep wakes: those with a row past the age limit, and
+ * those whose head row is due on a number that can send.
+ */
+export async function conversationsNeedingOutbox(
+  now: number,
+): Promise<ConversationRef[]> {
+  const stale = await getAll<{
     tenant_id: string;
     channel_account_id: string;
     phone_number: string;
@@ -419,7 +464,7 @@ export function conversationsNeedingOutbox(now: number): ConversationRef[] {
     [now - MAX_AGE_MS],
   );
 
-  const due = getAll<{
+  const due = await getAll<{
     tenant_id: string;
     channel_account_id: string;
     phone_number: string;
@@ -453,8 +498,10 @@ export function conversationsNeedingOutbox(now: number): ConversationRef[] {
 }
 
 /** The conversation's `failed` rows that no handoff has covered yet, oldest first. */
-export function undeliveredRows(ref: ConversationRef): OutboxRow[] {
-  return getAll<OutboxRow>(
+export async function undeliveredRows(
+  ref: ConversationRef,
+): Promise<OutboxRow[]> {
+  return await getAll<OutboxRow>(
     `SELECT * FROM outbox
      WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
        AND status = 'failed' AND handed_off_at IS NULL
@@ -467,14 +514,18 @@ export function undeliveredRows(ref: ConversationRef): OutboxRow[] {
  * The conversations that own a `failed` row no handoff has covered. A suspended
  * tenant's rows wait for it to reopen.
  */
-export function conversationsAwaitingHandoff(): ConversationRef[] {
-  return getAll<{
-    tenant_id: string;
-    channel_account_id: string;
-    phone_number: string;
-  }>(
-    `SELECT DISTINCT tenant_id, channel_account_id, phone_number FROM outbox
+export async function conversationsAwaitingHandoff(): Promise<
+  ConversationRef[]
+> {
+  return (
+    await getAll<{
+      tenant_id: string;
+      channel_account_id: string;
+      phone_number: string;
+    }>(
+      `SELECT DISTINCT tenant_id, channel_account_id, phone_number FROM outbox
      WHERE status = 'failed' AND handed_off_at IS NULL AND ${openTenantsOnly()}`,
+    )
   ).map((row) => ({
     tenantId: row.tenant_id,
     channelAccountId: row.channel_account_id,
@@ -487,35 +538,63 @@ export function conversationsAwaitingHandoff(): ConversationRef[] {
  * first time. `updated_at` is left alone, so retention still counts from when
  * the row failed.
  */
-export function markHandedOff(ids: number[], now: number): void {
+export async function markHandedOff(ids: number[], now: number): Promise<void> {
   if (ids.length === 0) return;
 
-  db.prepare(
+  await run(
     `UPDATE outbox SET handed_off_at = ?
      WHERE id IN (${ids.map(() => "?").join(", ")})
        AND status = 'failed' AND handed_off_at IS NULL`,
-  ).run(now, ...ids);
-}
-
-/**
- * Rows left `sending` by a process that died mid-attempt. A suspended tenant
- * sends nothing, so its rows are left for the boot that follows its reopening,
- * by which time the age limit has caught them.
- */
-export function interruptedRows(): OutboxRow[] {
-  return getAll<OutboxRow>(
-    `SELECT * FROM outbox WHERE status = 'sending' AND ${openTenantsOnly()}`,
+    [now, ...ids],
   );
 }
 
+/**
+ * The conversation's rows left `sending` by an object that ended mid-attempt.
+ * The caller holds the lock in a fresh object, so no attempt is alive.
+ */
+export async function interruptedRows(
+  ref: ConversationRef,
+): Promise<OutboxRow[]> {
+  return getAll<OutboxRow>(
+    `SELECT * FROM outbox
+     WHERE status = 'sending'
+       AND tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
+    [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+  );
+}
+
+/** Conversations of open tenants with a row left `sending`, for the sweep to wake. */
+export async function conversationsWithInterruptedSends(): Promise<
+  ConversationRef[]
+> {
+  return (
+    await getAll<{
+      tenant_id: string;
+      channel_account_id: string;
+      phone_number: string;
+    }>(
+      `SELECT DISTINCT tenant_id, channel_account_id, phone_number FROM outbox
+       WHERE status = 'sending' AND ${openTenantsOnly()}`,
+    )
+  ).map((row) => ({
+    tenantId: row.tenant_id,
+    channelAccountId: row.channel_account_id,
+    phoneNumber: row.phone_number,
+  }));
+}
+
 /** Delete final rows past the retention window. */
-export function purgeFinishedOutbox(now: number = Date.now()): number {
-  const purged = db
-    .prepare(
+export async function purgeFinishedOutbox(
+  now: number = Date.now(),
+): Promise<number> {
+  const purged = (
+    await run(
       `DELETE FROM outbox
        WHERE status IN ('sent', 'failed', 'cancelled') AND updated_at < ?`,
+      [now - OUTBOX_RETENTION_MS],
     )
-    .run(now - OUTBOX_RETENTION_MS).changes;
+  ).changes;
 
   if (purged > 0) logger.info({ purged }, "Purged outbox rows past retention");
 

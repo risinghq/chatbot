@@ -1,219 +1,243 @@
 /**
  * Channel accounts: one row per business phone number a tenant messages from.
  * Inbound routing resolves Meta's `metadata.phone_number_id` to an account here.
- * Outbound sends read that account's stored credentials, not WHATSAPP_TOKEN.
+ * Outbound sends read that account's stored, encrypted credentials.
  */
 
-import type { Database } from "bun:sqlite";
-import process from "node:process";
-import { db } from "../../db/index.ts";
-import { queriesOn } from "../../db/query.ts";
-import { createLogger } from "../../lib/logger.ts";
-import {
-  decryptSecret,
-  encryptSecret,
-  type EncryptedValue,
-} from "../../platform/crypto/secrets.ts";
+import { env } from "cloudflare:workers";
 import type { ChannelAccount, ChannelType } from "@vendeya/types";
+import { batch, getAll, getOne, stmt } from "../../db/index.ts";
+import { createLogger } from "../../lib/logger.ts";
+import { decryptSecret, encryptSecret } from "../../platform/crypto/secrets.ts";
 
 const logger = createLogger("channel-accounts");
+
+type SecretPurpose = "access_token" | "verify_token";
 
 type SecretRow = {
   id: string;
   tenant_id: string;
-  purpose: "access_token" | "verify_token";
+  purpose: SecretPurpose;
   ciphertext: string;
   iv: string;
-  auth_tag: string;
   key_id: string;
 };
 
-/**
- * Binds the channel-account queries to `database`. The seeds and the migration
- * pass their own connection. Everything else uses `ChannelAccountService`.
- */
-export function channelAccountsOn(database: Database) {
-  const { getAll, getOne } = queriesOn(database);
+async function insertSecret(
+  id: string,
+  tenantId: string,
+  purpose: SecretPurpose,
+  plaintext: string,
+): Promise<D1PreparedStatement> {
+  const encrypted = await encryptSecret(plaintext);
+  return stmt(
+    `INSERT INTO channel_secrets (id, tenant_id, purpose, ciphertext, iv, key_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      tenantId,
+      purpose,
+      encrypted.ciphertext,
+      encrypted.iv,
+      encrypted.keyId,
+    ],
+  );
+}
 
-  function storeSecret(
-    tenantId: string,
-    purpose: SecretRow["purpose"],
-    plaintext: string,
-  ): string {
-    const encrypted: EncryptedValue = encryptSecret(plaintext);
-    const id = crypto.randomUUID();
+/** Decrypt a stored secret, or null if it is missing or unreadable. */
+async function readSecret(secretId: string | null): Promise<string | null> {
+  if (!secretId) return null;
 
-    database
-      .prepare(
-        `INSERT INTO channel_secrets (id, tenant_id, purpose, ciphertext, iv, auth_tag, key_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        tenantId,
-        purpose,
-        encrypted.ciphertext,
-        encrypted.iv,
-        encrypted.authTag,
-        encrypted.keyId,
-      );
+  const row = await getOne<SecretRow>(
+    "SELECT * FROM channel_secrets WHERE id = ?",
+    [secretId],
+  );
+  if (!row) return null;
 
-    return id;
+  try {
+    return await decryptSecret({
+      ciphertext: row.ciphertext,
+      iv: row.iv,
+      keyId: row.key_id,
+    });
+  } catch (error) {
+    logger.error({ error, secretId }, "Failed to decrypt channel secret");
+    return null;
   }
+}
 
-  function replaceSecret(
-    secretId: string,
-    tenantId: string,
-    purpose: SecretRow["purpose"],
-    plaintext: string,
-  ): void {
-    const encrypted = encryptSecret(plaintext);
-    database
-      .prepare(
+const SECRET_COLUMN = {
+  access_token: "access_token_secret_id",
+  verify_token: "verify_token_secret_id",
+} as const;
+
+/** The statements that store a credential, replacing the one the account has. */
+async function secretStatements(
+  account: ChannelAccount,
+  purpose: SecretPurpose,
+  token: string,
+): Promise<D1PreparedStatement[]> {
+  const encrypted = await encryptSecret(token);
+  const existing = account[SECRET_COLUMN[purpose]];
+  if (existing) {
+    return [
+      stmt(
         `UPDATE channel_secrets
-         SET ciphertext = ?, iv = ?, auth_tag = ?, key_id = ?, purpose = ?, tenant_id = ?,
-             updated_at = unixepoch('now', 'subsec') * 1000
-         WHERE id = ?`,
-      )
-      .run(
+         SET ciphertext = ?, iv = ?, key_id = ?, updated_at = unixepoch('now', 'subsec') * 1000
+         WHERE id = ? AND tenant_id = ?`,
+        [
+          encrypted.ciphertext,
+          encrypted.iv,
+          encrypted.keyId,
+          existing,
+          account.tenant_id,
+        ],
+      ),
+    ];
+  }
+
+  const secretId = crypto.randomUUID();
+  return [
+    stmt(
+      `INSERT INTO channel_secrets (id, tenant_id, purpose, ciphertext, iv, key_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        secretId,
+        account.tenant_id,
+        purpose,
         encrypted.ciphertext,
         encrypted.iv,
-        encrypted.authTag,
         encrypted.keyId,
-        purpose,
-        tenantId,
-        secretId,
-      );
-  }
+      ],
+    ),
+    stmt(
+      `UPDATE channel_accounts
+       SET ${SECRET_COLUMN[purpose]} = ?, updated_at = unixepoch('now', 'subsec') * 1000
+       WHERE id = ?`,
+      [secretId, account.id],
+    ),
+  ];
+}
 
-  /** Decrypt a stored secret, or null if it is missing or unreadable. */
-  function readSecret(secretId: string | null): string | null {
-    if (!secretId) return null;
+export const ChannelAccountService = {
+  getById: async (id: string): Promise<ChannelAccount | null> =>
+    (await getOne<ChannelAccount>(
+      "SELECT * FROM channel_accounts WHERE id = ?",
+      [id],
+    )) ?? null,
 
-    const row = getOne<SecretRow>(
-      "SELECT * FROM channel_secrets WHERE id = ?",
-      [secretId],
-    );
-    if (!row) return null;
+  listForTenant: (tenantId: string): Promise<ChannelAccount[]> =>
+    getAll<ChannelAccount>(
+      "SELECT * FROM channel_accounts WHERE tenant_id = ? ORDER BY created_at",
+      [tenantId],
+    ),
 
-    try {
-      return decryptSecret({
-        ciphertext: row.ciphertext,
-        iv: row.iv,
-        authTag: row.auth_tag,
-        keyId: row.key_id,
-      });
-    } catch (error) {
-      logger.error({ error, secretId }, "Failed to decrypt channel secret");
-      return null;
-    }
-  }
+  /**
+   * An account resolves whatever its status. The webhook logs and rejects
+   * messages for an inactive one instead of treating the number as unknown.
+   */
+  getByPhoneNumberId: async (
+    phoneNumberId: string,
+    channelType: ChannelType = "whatsapp",
+  ): Promise<ChannelAccount | null> =>
+    (await getOne<ChannelAccount>(
+      "SELECT * FROM channel_accounts WHERE channel_type = ? AND phone_number_id = ?",
+      [channelType, phoneNumberId],
+    )) ?? null,
 
-  const service = {
-    getById: (id: string): ChannelAccount | null =>
-      getOne<ChannelAccount>("SELECT * FROM channel_accounts WHERE id = ?", [
-        id,
-      ]) ?? null,
+  /**
+   * The account a tenant sends from when the caller names none. Active accounts
+   * come first, then pending, then disabled, oldest first in each.
+   */
+  getDefaultForTenant: async (
+    tenantId: string,
+  ): Promise<ChannelAccount | null> =>
+    (await getOne<ChannelAccount>(
+      `SELECT * FROM channel_accounts
+       WHERE tenant_id = ?
+       ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, created_at
+       LIMIT 1`,
+      [tenantId],
+    )) ?? null,
 
-    listForTenant: (tenantId: string): ChannelAccount[] =>
-      getAll<ChannelAccount>(
-        "SELECT * FROM channel_accounts WHERE tenant_id = ? ORDER BY created_at",
-        [tenantId],
-      ),
-
-    /**
-     * An account resolves whatever its status. The webhook logs and rejects
-     * messages for an inactive one deliberately instead of treating the number
-     * as unknown.
-     */
-    getByPhoneNumberId: (
-      phoneNumberId: string,
-      channelType: ChannelType = "whatsapp",
-    ): ChannelAccount | null =>
-      getOne<ChannelAccount>(
-        "SELECT * FROM channel_accounts WHERE channel_type = ? AND phone_number_id = ?",
-        [channelType, phoneNumberId],
-      ) ?? null,
-
-    /**
-     * The account a tenant sends from when the caller names none. Active
-     * accounts come first, then pending, then disabled, oldest first in each.
-     */
-    getDefaultForTenant: (tenantId: string): ChannelAccount | null =>
-      getOne<ChannelAccount>(
-        `SELECT * FROM channel_accounts
-         WHERE tenant_id = ?
-         ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, created_at
-         LIMIT 1`,
-        [tenantId],
-      ) ?? null,
-
-    /**
-     * The account VendeYa's own operations alerts go out on. These alerts belong
-     * to the platform, so the account comes from a platform setting or the
-     * environment, not from `getDefaultForTenant`.
-     */
-    getPlatformOps: (): ChannelAccount | null => {
-      // The setting is writable only by a platform operator and wins over the
-      // environment.
-      const designated =
-        getOne<{ value: string }>(
+  /**
+   * The account VendeYa's own operations alerts go out on. These alerts belong
+   * to the platform, so the account comes from a platform setting, which a
+   * platform operator writes, or else from PLATFORM_OPS_PHONE_NUMBER_ID.
+   */
+  getPlatformOps: async (): Promise<ChannelAccount | null> => {
+    const designated =
+      (
+        await getOne<{ value: string }>(
           "SELECT value FROM system_settings WHERE key = 'platform_ops_channel_account_id'",
-        )?.value ?? null;
-
-      if (designated) {
-        const account = service.getById(designated);
-        if (account) return account;
-
-        logger.error(
-          { channelAccountId: designated },
-          "platform_ops_channel_account_id names an account that does not exist",
-        );
-      }
-
-      // WHATSAPP_PHONE_ID is the last fallback, so a deployment that already
-      // alerts on that number needs no new configuration.
-      for (const phoneNumberId of [
-        process.env.PLATFORM_OPS_PHONE_NUMBER_ID,
-        process.env.WHATSAPP_PHONE_ID,
-      ]) {
-        if (!phoneNumberId) continue;
-        const account = service.getByPhoneNumberId(phoneNumberId);
-        if (account) return account;
-      }
-
-      return null;
-    },
-
-    create: (data: {
-      tenantId: string;
-      phoneNumberId: string;
-      wabaId?: string | null;
-      displayPhoneNumber?: string | null;
-      label?: string | null;
-      accessToken?: string | null;
-      verifyToken?: string | null;
-      status?: ChannelAccount["status"];
-      channelType?: ChannelType;
-      id?: string;
-    }): ChannelAccount => {
-      const id = data.id ?? crypto.randomUUID();
-
-      const accessTokenSecretId = data.accessToken
-        ? storeSecret(data.tenantId, "access_token", data.accessToken)
-        : null;
-      const verifyTokenSecretId = data.verifyToken
-        ? storeSecret(data.tenantId, "verify_token", data.verifyToken)
-        : null;
-
-      database
-        .prepare(
-          `INSERT INTO channel_accounts (
-             id, tenant_id, channel_type, waba_id, phone_number_id, display_phone_number,
-             label, access_token_secret_id, verify_token_secret_id, status
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(
+      )?.value ?? null;
+
+    if (designated) {
+      const account = await ChannelAccountService.getById(designated);
+      if (account) return account;
+
+      logger.error(
+        { channelAccountId: designated },
+        "platform_ops_channel_account_id names an account that does not exist",
+      );
+    }
+
+    const phoneNumberId = env.PLATFORM_OPS_PHONE_NUMBER_ID;
+    return phoneNumberId
+      ? ChannelAccountService.getByPhoneNumberId(phoneNumberId)
+      : null;
+  },
+
+  /** The account and its encrypted credentials are written in one batch. */
+  create: async (data: {
+    tenantId: string;
+    phoneNumberId: string;
+    wabaId?: string | null;
+    displayPhoneNumber?: string | null;
+    label?: string | null;
+    accessToken?: string | null;
+    verifyToken?: string | null;
+    status?: ChannelAccount["status"];
+    channelType?: ChannelType;
+    id?: string;
+  }): Promise<ChannelAccount> => {
+    const id = data.id ?? crypto.randomUUID();
+    const statements: D1PreparedStatement[] = [];
+
+    let accessTokenSecretId: string | null = null;
+    if (data.accessToken) {
+      accessTokenSecretId = crypto.randomUUID();
+      statements.push(
+        await insertSecret(
+          accessTokenSecretId,
+          data.tenantId,
+          "access_token",
+          data.accessToken,
+        ),
+      );
+    }
+
+    let verifyTokenSecretId: string | null = null;
+    if (data.verifyToken) {
+      verifyTokenSecretId = crypto.randomUUID();
+      statements.push(
+        await insertSecret(
+          verifyTokenSecretId,
+          data.tenantId,
+          "verify_token",
+          data.verifyToken,
+        ),
+      );
+    }
+
+    statements.push(
+      stmt(
+        `INSERT INTO channel_accounts (
+           id, tenant_id, channel_type, waba_id, phone_number_id, display_phone_number,
+           label, access_token_secret_id, verify_token_secret_id, status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           id,
           data.tenantId,
           data.channelType ?? "whatsapp",
@@ -224,94 +248,78 @@ export function channelAccountsOn(database: Database) {
           accessTokenSecretId,
           verifyTokenSecretId,
           data.status ?? (data.accessToken ? "active" : "pending"),
-        );
+        ],
+      ),
+    );
 
-      return service.getById(id)!;
+    await batch(statements);
+    return (await ChannelAccountService.getById(id))!;
+  },
+
+  /**
+   * Store new credentials and a new status in one batch. A pending number is
+   * waiting for its token, so storing one activates it unless the change names
+   * a status. A disabled account stays disabled because disabling is a
+   * deliberate decision, not a missing credential.
+   */
+  update: async (
+    account: ChannelAccount,
+    change: {
+      accessToken?: string;
+      verifyToken?: string;
+      status?: ChannelAccount["status"];
     },
-
-    setAccessToken: (accountId: string, token: string): void => {
-      const account = service.getById(accountId);
-      if (!account) throw new Error(`Channel account not found: ${accountId}`);
-
-      if (account.access_token_secret_id) {
-        replaceSecret(
-          account.access_token_secret_id,
-          account.tenant_id,
+  ): Promise<void> => {
+    const statements: D1PreparedStatement[] = [];
+    if (change.accessToken) {
+      statements.push(
+        ...(await secretStatements(
+          account,
           "access_token",
-          token,
-        );
-      } else {
-        const secretId = storeSecret(account.tenant_id, "access_token", token);
-        database
-          .prepare(
-            `UPDATE channel_accounts
-             SET access_token_secret_id = ?, updated_at = unixepoch('now', 'subsec') * 1000
-             WHERE id = ?`,
-          )
-          .run(secretId, accountId);
-      }
-
-      // A pending number is waiting for its token, so storing one activates it.
-      // A disabled account stays disabled because disabling is a deliberate
-      // decision, not a missing credential.
-      if (account.status === "pending")
-        service.updateStatus(accountId, "active");
-    },
-
-    setVerifyToken: (accountId: string, token: string): void => {
-      const account = service.getById(accountId);
-      if (!account) throw new Error(`Channel account not found: ${accountId}`);
-
-      if (account.verify_token_secret_id) {
-        replaceSecret(
-          account.verify_token_secret_id,
-          account.tenant_id,
+          change.accessToken,
+        )),
+      );
+    }
+    if (change.verifyToken) {
+      statements.push(
+        ...(await secretStatements(
+          account,
           "verify_token",
-          token,
-        );
-      } else {
-        const secretId = storeSecret(account.tenant_id, "verify_token", token);
-        database
-          .prepare(
-            `UPDATE channel_accounts
-             SET verify_token_secret_id = ?, updated_at = unixepoch('now', 'subsec') * 1000
-             WHERE id = ?`,
-          )
-          .run(secretId, accountId);
-      }
-    },
+          change.verifyToken,
+        )),
+      );
+    }
 
-    updateStatus: (
-      accountId: string,
-      status: ChannelAccount["status"],
-    ): void => {
-      database
-        .prepare(
+    const status =
+      change.status ??
+      (change.accessToken && account.status === "pending" ? "active" : null);
+    if (status) {
+      statements.push(
+        stmt(
           `UPDATE channel_accounts
            SET status = ?, updated_at = unixepoch('now', 'subsec') * 1000
            WHERE id = ?`,
-        )
-        .run(status, accountId);
-    },
+          [status, account.id],
+        ),
+      );
+    }
 
-    /** Plaintext access token for outbound sends. Never persisted or logged. */
-    getAccessToken: (account: ChannelAccount): string | null =>
-      readSecret(account.access_token_secret_id),
+    await batch(statements);
+  },
 
-    getVerifyToken: (account: ChannelAccount): string | null =>
-      readSecret(account.verify_token_secret_id),
+  /** Plaintext access token for outbound sends. Never persisted or logged. */
+  getAccessToken: (account: ChannelAccount): Promise<string | null> =>
+    readSecret(account.access_token_secret_id),
 
-    /**
-     * Meta's GET verification handshake carries no phone-number id. The caller
-     * matches the token against every account listed here.
-     */
-    listWithVerifyToken: (): ChannelAccount[] =>
-      getAll<ChannelAccount>(
-        "SELECT * FROM channel_accounts WHERE verify_token_secret_id IS NOT NULL",
-      ),
-  };
+  getVerifyToken: (account: ChannelAccount): Promise<string | null> =>
+    readSecret(account.verify_token_secret_id),
 
-  return service;
-}
-
-export const ChannelAccountService = channelAccountsOn(db);
+  /**
+   * Meta's GET verification handshake carries no phone-number id. The caller
+   * matches the token against every account listed here.
+   */
+  listWithVerifyToken: (): Promise<ChannelAccount[]> =>
+    getAll<ChannelAccount>(
+      "SELECT * FROM channel_accounts WHERE verify_token_secret_id IS NOT NULL",
+    ),
+};

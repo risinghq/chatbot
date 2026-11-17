@@ -1,5 +1,5 @@
-import type { Logger } from "@vendeya/logger";
-import { createLogger } from "../../lib/logger.ts";
+import { createLogger, type Logger } from "../../lib/logger.ts";
+
 import type { DomainEvent } from "./types.ts";
 
 type EventHandler<E extends DomainEvent = DomainEvent> = (

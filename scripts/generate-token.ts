@@ -48,7 +48,8 @@ function main() {
 
   const token = generateToken(length);
 
-  console.log(`Add to your .env file:`);
+  console.log(`Add to apps/backend/.dev.vars:`);
+
   console.log(`${variable}="${token}"`);
 }
 

@@ -24,7 +24,7 @@ export class AnswerQuestionHandler
     request: Extract<EnrichmentRequest, { type: "answer_question" }>,
     context: EnrichmentContext,
   ): Promise<Extract<EnrichmentResult, { type: "question_answered" }>> {
-    const tenant = TenantService.getById(context.ref.tenantId);
+    const tenant = await TenantService.getById(context.ref.tenantId);
     if (!tenant) {
       throw new Error(`Tenant ${context.ref.tenantId} not found`);
     }

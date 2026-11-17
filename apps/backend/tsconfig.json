@@ -1,9 +1,8 @@
 {
-  "extends": "@vendeya/tsconfig/backend.json",
+  "extends": "@vendeya/tsconfig/base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "."
+    "types": ["node", "@cloudflare/vitest-plugin/types"]
   },
-  "include": ["."],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src", "tests", "scripts", "worker-configuration.d.ts", "*.ts"],
+  "exclude": ["node_modules"]
 }

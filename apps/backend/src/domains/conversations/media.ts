@@ -1,14 +1,12 @@
-import { db } from "../../db/index.ts";
 import { logAction } from "../../platform/audit/logger.ts";
 import { eventBus, createEvent } from "../../shared/events/index.ts";
 import { AssetService } from "../assets/index.ts";
 import { storableContentType } from "../assets/content-types.ts";
-import {
-  privateFileStorage,
-  privateStorageKey,
-} from "../../adapters/storage/private-files.ts";
+import { privateFileStorage } from "../../adapters/storage/private-files.ts";
+import { privateStorageKey } from "../../lib/storage-paths.ts";
 import { createLogger } from "../../lib/logger.ts";
 import type { Asset, ConversationRef } from "@vendeya/types";
+import { run } from "../../db/index.ts";
 
 const logger = createLogger("conversation-media");
 
@@ -26,8 +24,8 @@ const FALLBACK_EXTENSION = { contract: "pdf", recording: "mp3" } as const;
 
 /**
  * Contracts and call recordings are private assets. They are written under the
- * tenant's private storage prefix, never the statically served uploads
- * directory, and are reachable only through /api/assets/:id.
+ * tenant's private storage prefix, which `/media` never serves, and are
+ * reachable only through /api/assets/:id.
  */
 async function storeUpload(
   ref: ConversationRef,
@@ -42,13 +40,13 @@ async function storeUpload(
 
   const storageKey = privateStorageKey(
     ref.tenantId,
-    "contracts",
+    kind === "contract" ? "contracts" : "recordings",
     ref.channelAccountId,
     ref.phoneNumber,
     `${assetId}.${extension}`,
   );
 
-  const bytes = Buffer.from(await file.arrayBuffer());
+  const bytes = new Uint8Array(await file.arrayBuffer());
   await privateFileStorage.write(storageKey, bytes);
 
   // `file.type` is whatever the uploading browser declared, so it is recorded
@@ -64,7 +62,7 @@ async function storeUpload(
     );
   }
 
-  return AssetService.create({
+  return await AssetService.create({
     id: assetId,
     tenantId: ref.tenantId,
     kind,
@@ -92,20 +90,21 @@ export async function uploadContract(input: UploadContractInput): Promise<{
   const audioAsset = await storeUpload(ref, userId, "recording", audioFile);
 
   const now = Date.now();
-  db.prepare(
+  await run(
     `UPDATE conversations
      SET recording_contract_asset_id = ?, recording_audio_asset_id = ?, recording_uploaded_at = ?
      WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-  ).run(
-    contractAsset.id,
-    audioAsset.id,
-    now,
-    ref.tenantId,
-    ref.channelAccountId,
-    ref.phoneNumber,
+    [
+      contractAsset.id,
+      audioAsset.id,
+      now,
+      ref.tenantId,
+      ref.channelAccountId,
+      ref.phoneNumber,
+    ],
   );
 
-  logAction(
+  await logAction(
     { userId, tenantId: ref.tenantId },
     "upload_contract",
     "conversation",
@@ -118,7 +117,7 @@ export async function uploadContract(input: UploadContractInput): Promise<{
     },
   );
 
-  eventBus.emit(
+  await eventBus.emit(
     createEvent(
       "contract_uploaded",
       {

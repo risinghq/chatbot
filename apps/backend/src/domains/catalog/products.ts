@@ -1,34 +1,40 @@
-import { db } from "../../db/index.ts";
-import { getOne, getAll, tenantPredicate } from "../../db/query.ts";
+import { tenantPredicate } from "../../db/query.ts";
 import type { Product } from "@vendeya/types";
-import type { SQLQueryBindings } from "bun:sqlite";
+import type { Binding } from "../../db/index.ts";
+import { getAll, getOne, run } from "../../db/index.ts";
 
 /**
  * `tenantId` null reads across tenants (platform operators only). Writes always
  * take a concrete tenant.
  */
 export const ProductService = {
-  getAll: (tenantId: string | null): Product[] =>
-    getAll<Product>(
+  getAll: async (tenantId: string | null): Promise<Product[]> =>
+    await getAll<Product>(
       `SELECT * FROM products WHERE ${tenantPredicate(tenantId)}
        ORDER BY category, name`,
       tenantId ? [tenantId] : [],
     ),
 
-  getByCategory: (tenantId: string | null, category: string): Product[] =>
-    getAll<Product>(
+  getByCategory: async (
+    tenantId: string | null,
+    category: string,
+  ): Promise<Product[]> =>
+    await getAll<Product>(
       `SELECT * FROM products WHERE category = ? AND ${tenantPredicate(tenantId)}
        ORDER BY name`,
       tenantId ? [category, tenantId] : [category],
     ),
 
-  getById: (tenantId: string | null, id: string): Product | null =>
-    getOne<Product>(
+  getById: async (
+    tenantId: string | null,
+    id: string,
+  ): Promise<Product | null> =>
+    (await getOne<Product>(
       `SELECT * FROM products WHERE id = ? AND ${tenantPredicate(tenantId)}`,
       tenantId ? [id, tenantId] : [id],
-    ) ?? null,
+    )) ?? null,
 
-  create: (data: {
+  create: async (data: {
     id: string;
     tenantId: string;
     name: string;
@@ -36,29 +42,30 @@ export const ProductService = {
     brand?: string;
     model?: string;
     specs_json?: string;
-  }): Product => {
-    db.prepare(
+  }): Promise<Product> => {
+    await run(
       `INSERT INTO products (id, tenant_id, name, category, brand, model, specs_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      data.id,
-      data.tenantId,
-      data.name,
-      data.category,
-      data.brand || null,
-      data.model || null,
-      data.specs_json || null,
+      [
+        data.id,
+        data.tenantId,
+        data.name,
+        data.category,
+        data.brand || null,
+        data.model || null,
+        data.specs_json || null,
+      ],
     );
-    return ProductService.getById(data.tenantId, data.id)!;
+    return (await ProductService.getById(data.tenantId, data.id))!;
   },
 
-  update: (
+  update: async (
     tenantId: string,
     id: string,
     data: Partial<Product>,
-  ): Product | null => {
+  ): Promise<Product | null> => {
     const fields: string[] = [];
-    const values: SQLQueryBindings[] = [];
+    const values: Binding[] = [];
 
     if (data.name !== undefined) {
       fields.push("name = ?");
@@ -81,17 +88,18 @@ export const ProductService = {
       values.push(data.specs_json);
     }
 
-    if (fields.length === 0) return ProductService.getById(tenantId, id);
+    if (fields.length === 0) return await ProductService.getById(tenantId, id);
 
     values.push(id, tenantId);
-    db.prepare(
+    await run(
       `UPDATE products SET ${fields.join(", ")} WHERE id = ? AND tenant_id = ?`,
-    ).run(...values);
-    return ProductService.getById(tenantId, id);
+      values,
+    );
+    return await ProductService.getById(tenantId, id);
   },
 
-  getCategories: (tenantId: string | null): string[] => {
-    const rows = getAll<{ category: string }>(
+  getCategories: async (tenantId: string | null): Promise<string[]> => {
+    const rows = await getAll<{ category: string }>(
       `SELECT DISTINCT category FROM products
        WHERE ${tenantPredicate(tenantId)}
        ORDER BY category`,
@@ -104,11 +112,11 @@ export const ProductService = {
    * Get active categories for a segment based on available bundles
    * Only returns categories that have active, in-stock bundles
    */
-  getActiveCategoriesBySegment: (
+  getActiveCategoriesBySegment: async (
     tenantId: string,
     segment: "fnb" | "gaso",
-  ): string[] => {
-    const rows = getAll<{ category: string }>(
+  ): Promise<string[]> => {
+    const rows = await getAll<{ category: string }>(
       `SELECT DISTINCT b.primary_category as category
        FROM catalog_bundles b
        JOIN catalog_periods p ON b.period_id = p.id AND p.tenant_id = b.tenant_id
@@ -126,8 +134,8 @@ export const ProductService = {
   /**
    * Get all active brands from products involved in active, in-stock bundles.
    */
-  getActiveBrands: (tenantId: string): string[] => {
-    const rows = getAll<{ brand: string }>(
+  getActiveBrands: async (tenantId: string): Promise<string[]> => {
+    const rows = await getAll<{ brand: string }>(
       `SELECT DISTINCT p.brand
        FROM catalog_bundles b
        JOIN catalog_periods p_desc ON b.period_id = p_desc.id AND p_desc.tenant_id = b.tenant_id,

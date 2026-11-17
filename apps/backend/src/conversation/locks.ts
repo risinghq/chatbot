@@ -1,11 +1,14 @@
 /**
  * Messages of one conversation run sequentially. Different conversations run
- * in parallel. The queues live in this process's memory, which is sound
- * because one backend process serves a database.
+ * in parallel. Each `ConversationObject` owns the one `ConversationLock` of its
+ * conversation: every call for that conversation reaches that instance, and an
+ * instance is evicted only once nothing is running in it. The queue is never
+ * module state, because one isolate can host several objects, and an object
+ * that replaces an ended one must not wait on the ended one's promises.
  *
  * An acquisition moves only from waiting to holding to released. It holds once
- * every earlier acquisition on its key is released. It is released only through
- * the function it was handed.
+ * every earlier acquisition is released. It is released only through the
+ * function it was handed.
  */
 
 import { createLogger } from "../lib/logger.ts";
@@ -15,9 +18,6 @@ import type { ConversationRef } from "@vendeya/types";
 const logger = createLogger("locks");
 
 export type ReleaseLock = () => void;
-
-/** For each key, a promise that settles once its last queued acquisition is released. */
-const queueTails = new Map<string, Promise<void>>();
 
 const EXPIRED = Symbol("expired");
 
@@ -50,35 +50,38 @@ export class LockTimeoutError extends Error {
 
 /** The time ran out before the lock came free. `fn` never ran, so nothing was done. */
 export class ConversationBusyError extends Error {
-  constructor(key: string, timeoutMs: number) {
-    super(`Conversation ${key} was still locked after ${timeoutMs}ms`);
+  constructor(key: string, timeoutMs?: number) {
+    super(
+      timeoutMs === undefined
+        ? `Conversation ${key} is busy`
+        : `Conversation ${key} was still locked after ${timeoutMs}ms`,
+    );
     this.name = "ConversationBusyError";
   }
 }
 
-/**
- * Waits for this conversation's turn and resolves with the function that ends
- * it. Calling that function more than once is harmless.
- */
-export function acquireLock(ref: ConversationRef): Promise<ReleaseLock> {
-  const key = lockKey(ref);
-  // Reading the tail and replacing it happen in one synchronous step, so two
-  // callers can never both be next.
-  const previous = queueTails.get(key) ?? Promise.resolve();
+/** One conversation's queue of lock holders. */
+export class ConversationLock {
+  /** Settles once the last queued acquisition is released. */
+  #tail: Promise<void> = Promise.resolve();
 
-  let release!: ReleaseLock;
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  /**
+   * Waits for this conversation's turn and resolves with the function that
+   * ends it. Calling that function more than once is harmless.
+   */
+  acquire(): Promise<ReleaseLock> {
+    // Reading the tail and replacing it happen in one synchronous step, so two
+    // callers can never both be next.
+    const previous = this.#tail;
 
-  const tail = previous.then(() => released);
-  queueTails.set(key, tail);
+    let release!: ReleaseLock;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#tail = previous.then(() => released);
 
-  released.then(() => {
-    if (queueTails.get(key) === tail) queueTails.delete(key);
-  });
-
-  return previous.then(() => release);
+    return previous.then(() => release);
+  }
 }
 
 /**
@@ -88,11 +91,12 @@ export function acquireLock(ref: ConversationRef): Promise<ReleaseLock> {
  * @throws LockTimeoutError if `timeoutMs` passes while `fn` is running
  */
 export async function withLock<T>(
+  lock: ConversationLock,
   ref: ConversationRef,
   fn: () => Promise<T>,
   timeoutMs: number = TIMEOUTS.LOCK_DEFAULT,
 ): Promise<T> {
-  const acquiring = acquireLock(ref);
+  const acquiring = lock.acquire();
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline: Deadline = {

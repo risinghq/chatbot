@@ -1,4 +1,4 @@
-import { getFrontendUrl } from "@vendeya/utils";
+import { publicOrigin } from "../../config.ts";
 
 export type NotificationContext = {
   phoneNumber: string;
@@ -15,7 +15,7 @@ export type NotificationContext = {
 };
 
 function formatLink(suffix?: string): string {
-  const baseUrl = getFrontendUrl();
+  const baseUrl = publicOrigin();
   if (!suffix) return "";
   return `${baseUrl}/dashboard${suffix}`;
 }

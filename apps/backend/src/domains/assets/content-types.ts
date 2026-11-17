@@ -34,7 +34,7 @@ const ALLOWED_CONTENT_TYPES: Record<AssetKind, readonly string[]> = {
     "audio/x-wav",
     "audio/webm",
   ],
-  // Catalog images are re-encoded by sharp before they are stored, so the type
+  // Catalog images are re-encoded to JPEG before they are stored, so the type
   // is the one this codebase produced, not one a client declared.
   catalog_image: ["image/jpeg"],
 };

@@ -1,7 +1,8 @@
-import { getOne, getAll, tenantPredicate } from "../../db/query.ts";
-import type { SQLQueryBindings } from "bun:sqlite";
-import type { ConversationRef, Order } from "@vendeya/types";
-import type { OrderFilters, OrderMetrics } from "./types.ts";
+import { tenantPredicate } from "../../db/query.ts";
+import type { Binding } from "../../db/index.ts";
+import type { ConversationRef, Order, OrderMetrics } from "@vendeya/types";
+import type { OrderFilters } from "./types.ts";
+import { getAll, getOne } from "../../db/index.ts";
 
 /**
  * A sales agent's orders: the ones they created, and the ones from a
@@ -21,12 +22,12 @@ const AGENT_ORDERS = `(orders.assigned_agent = ? OR EXISTS (
  * A null `tenantId` reads across open tenants. Route handlers pass the caller's
  * scope, so only an unpinned platform operator reaches that case.
  */
-export function getOrders(
+export async function getOrders(
   tenantId: string | null,
   filters: OrderFilters = {},
-): Order[] {
+): Promise<Order[]> {
   let query = "SELECT * FROM orders WHERE 1=1";
-  const params: SQLQueryBindings[] = [];
+  const params: Binding[] = [];
 
   query += ` AND ${tenantPredicate(tenantId)}`;
   if (tenantId) params.push(tenantId);
@@ -63,33 +64,33 @@ export function getOrders(
   query += " LIMIT ? OFFSET ?";
   params.push(limit, offset);
 
-  const rows = getAll<Order>(query, params);
+  const rows = await getAll<Order>(query, params);
   return rows;
 }
 
 /** `conversationAgent` narrows to that sales agent's orders. */
-export function getOrderById(
+export async function getOrderById(
   tenantId: string | null,
   id: string,
   conversationAgent: string | null = null,
-): Order | null {
+): Promise<Order | null> {
   let query = `SELECT * FROM orders WHERE id = ? AND ${tenantPredicate(tenantId)}`;
-  const params: SQLQueryBindings[] = tenantId ? [id, tenantId] : [id];
+  const params: Binding[] = tenantId ? [id, tenantId] : [id];
 
   if (conversationAgent) {
     query += ` AND ${AGENT_ORDERS}`;
     params.push(conversationAgent, conversationAgent);
   }
 
-  return getOne<Order>(query, params) ?? null;
+  return (await getOne<Order>(query, params)) ?? null;
 }
 
 /** `conversationAgent` narrows to that sales agent's orders. */
-export function getOrderByConversation(
+export async function getOrderByConversation(
   ref: ConversationRef,
   conversationAgent: string | null = null,
-): Order | null {
-  const params: SQLQueryBindings[] = [
+): Promise<Order | null> {
+  const params: Binding[] = [
     ref.tenantId,
     ref.channelAccountId,
     ref.phoneNumber,
@@ -101,52 +102,60 @@ export function getOrderByConversation(
   }
 
   return (
-    getOne<Order>(
+    (await getOne<Order>(
       `SELECT * FROM orders
        WHERE tenant_id = ? AND channel_account_id = ? AND conversation_phone = ?${agentClause}
        ORDER BY created_at DESC LIMIT 1`,
       params,
-    ) ?? null
+    )) ?? null
   );
 }
 
 /** `conversationAgent` narrows to that sales agent's orders. */
-export function getOrderMetrics(
+export async function getOrderMetrics(
   tenantId: string | null,
   conversationAgent: string | null = null,
-): OrderMetrics {
+): Promise<OrderMetrics> {
   const now = Date.now();
   const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
   let scope = tenantPredicate(tenantId);
-  const scopeParams: SQLQueryBindings[] = tenantId ? [tenantId] : [];
+  const scopeParams: Binding[] = tenantId ? [tenantId] : [];
 
   if (conversationAgent) {
     scope += ` AND ${AGENT_ORDERS}`;
     scopeParams.push(conversationAgent, conversationAgent);
   }
 
-  const count = (extra: string, params: SQLQueryBindings[] = []): number =>
-    getOne<{ count: number }>(
+  const count = async (
+    extra: string,
+    params: Binding[] = [],
+  ): Promise<number> =>
+    (await getOne<{ count: number }>(
       `SELECT COUNT(*) as count FROM orders WHERE ${scope}${extra}`,
       [...scopeParams, ...params],
-    )!.count;
+    ))!.count;
 
-  const revenue = (extra: string, params: SQLQueryBindings[] = []): number =>
-    getOne<{ revenue: number }>(
+  const revenue = async (
+    extra: string,
+    params: Binding[] = [],
+  ): Promise<number> =>
+    (await getOne<{ revenue: number }>(
       `SELECT COALESCE(SUM(total_amount), 0) as revenue FROM orders WHERE ${scope}${extra}`,
       [...scopeParams, ...params],
-    )!.revenue;
+    ))!.revenue;
 
-  const totalOrders = count("");
-  const pendingCount = count(" AND status = 'pending'");
-  const supervisorApprovedCount = count(" AND status = 'supervisor_approved'");
-  const calidaApprovedCount = count(" AND status = 'calidda_approved'");
-  const deliveredCount = count(" AND status = 'delivered'");
-  const rejectedCount = count(" AND status LIKE '%rejected%'");
+  const totalOrders = await count("");
+  const pendingCount = await count(" AND status = 'pending'");
+  const supervisorApprovedCount = await count(
+    " AND status = 'supervisor_approved'",
+  );
+  const calidaApprovedCount = await count(" AND status = 'calidda_approved'");
+  const deliveredCount = await count(" AND status = 'delivered'");
+  const rejectedCount = await count(" AND status LIKE '%rejected%'");
 
-  const totalRevenue = revenue(" AND status = 'delivered'");
-  const revenueThisMonth = revenue(
+  const totalRevenue = await revenue(" AND status = 'delivered'");
+  const revenueThisMonth = await revenue(
     " AND status = 'delivered' AND created_at >= ?",
     [thirtyDaysAgo],
   );

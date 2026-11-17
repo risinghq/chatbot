@@ -5,4 +5,4 @@ export {
   getOrderByConversation,
   getOrderMetrics,
 } from "./read.ts";
-export type { CreateOrderInput, OrderFilters, OrderMetrics } from "./types.ts";
+export type { CreateOrderInput, OrderFilters } from "./types.ts";

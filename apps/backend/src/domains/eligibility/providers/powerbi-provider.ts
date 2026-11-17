@@ -44,7 +44,7 @@ export class PowerBIProvider implements EligibilityProvider {
     }
 
     // Check forced shutdown
-    if (isProviderForcedDown("gaso")) {
+    if (await isProviderForcedDown("gaso")) {
       logger.debug({ dni }, "Provider forced down");
       return Err(
         new ProviderError("PowerBI", "forced_down", "Provider forced down"),
@@ -52,7 +52,7 @@ export class PowerBIProvider implements EligibilityProvider {
     }
 
     // Check circuit breaker
-    if (!isAvailable("powerbi")) {
+    if (!(await isAvailable("powerbi"))) {
       logger.debug({ dni }, "Provider unavailable (circuit breaker)");
       return Err(
         new ProviderError("PowerBI", "unavailable", "Circuit breaker open"),
@@ -99,7 +99,7 @@ export class PowerBIProvider implements EligibilityProvider {
           msg.includes("401") ||
           msg.includes("403")
         ) {
-          markBlocked("powerbi", error.message);
+          await markBlocked("powerbi", error.message);
         }
       }
 

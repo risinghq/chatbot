@@ -3,7 +3,7 @@ import type { CliOperator } from "../platform/audit/logger.ts";
 
 /**
  * Bun takes the user name from $USER and answers "unknown" or an empty string
- * when the environment sets none, as under `docker exec` or cron. The uid comes
+ * when the environment sets none, as in a CI job or under cron. The uid comes
  * from the process, so it stands in for the name then.
  */
 export function operatorFrom(info: {

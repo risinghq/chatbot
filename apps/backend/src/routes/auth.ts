@@ -1,12 +1,11 @@
 import { Hono } from "hono";
-import bcrypt from "bcryptjs";
-import { db } from "../db/index.ts";
 import {
   activeTenantId,
   requireActiveTenant,
   requireAuth,
 } from "../middleware/auth.ts";
-import { rateLimiter } from "../middleware/security.ts";
+import { loginRateLimiter } from "../middleware/security.ts";
+import { verifyPassword } from "../platform/auth/password.ts";
 import { MembershipService } from "../domains/tenants/index.ts";
 import {
   createSession,
@@ -17,6 +16,7 @@ import {
   setSessionTokenCookie,
 } from "../platform/auth/session.ts";
 import { sessionRole } from "../platform/auth/scope.ts";
+import { getOne } from "../db/index.ts";
 
 /**
  * Logging in and out, and the caller's own account. Mounted at /api/auth ahead
@@ -24,12 +24,12 @@ import { sessionRole } from "../platform/auth/scope.ts";
  */
 const auth = new Hono();
 
-auth.post("/login", rateLimiter, async (c) => {
+auth.post("/login", loginRateLimiter, async (c) => {
   const { username, password } = await c.req.json();
 
-  const user = db
-    .prepare("SELECT * FROM users WHERE username = ?")
-    .get(username) as
+  const user = (await getOne("SELECT * FROM users WHERE username = ?", [
+    username,
+  ])) as
     | {
         id: string;
         username: string;
@@ -45,7 +45,10 @@ auth.post("/login", rateLimiter, async (c) => {
     return c.json({ error: "Invalid credentials" }, 401);
   }
 
-  if (!bcrypt.compareSync(password, user.password_hash)) {
+  if (
+    typeof password !== "string" ||
+    !(await verifyPassword(password, user.password_hash))
+  ) {
     return c.json({ error: "Invalid credentials" }, 401);
   }
 
@@ -56,7 +59,10 @@ auth.post("/login", rateLimiter, async (c) => {
   // A user whose tenants are all suspended logs in unpinned. That is the same
   // session `validateSessionToken` leaves after a tenant is suspended under a
   // logged-in user, so they can see that they have no business to act in.
-  if (!isPlatformOperator && MembershipService.countForUser(user.id) === 0) {
+  if (
+    !isPlatformOperator &&
+    (await MembershipService.countForUser(user.id)) === 0
+  ) {
     return c.json({ error: "Invalid credentials" }, 401);
   }
 
@@ -64,13 +70,16 @@ auth.post("/login", rateLimiter, async (c) => {
   // membership starts pinned to it. A platform operator, and a user with several
   // open memberships or none, starts unpinned and picks a tenant via
   // POST /api/tenants/active. Only open tenants can be pinned or picked.
-  const pinnedTenantId = defaultTenantForUser(user.id, isPlatformOperator);
+  const pinnedTenantId = await defaultTenantForUser(
+    user.id,
+    isPlatformOperator,
+  );
   const membership = pinnedTenantId
-    ? MembershipService.get(pinnedTenantId, user.id)
+    ? await MembershipService.get(pinnedTenantId, user.id)
     : null;
 
   const token = generateSessionToken();
-  const session = createSession(token, user.id, pinnedTenantId);
+  const session = await createSession(token, user.id, pinnedTenantId);
   setSessionTokenCookie(c, token, session.expiresAt);
 
   return c.json({
@@ -88,7 +97,7 @@ auth.post("/login", rateLimiter, async (c) => {
       activeTenantId: pinnedTenantId,
       isAvailable: membership?.is_available === 1,
     },
-    tenants: MembershipService.listForUser(user.id).map((m) => ({
+    tenants: (await MembershipService.listForUser(user.id)).map((m) => ({
       id: m.id,
       slug: m.slug,
       name: m.name,
@@ -99,7 +108,7 @@ auth.post("/login", rateLimiter, async (c) => {
 
 auth.post("/logout", requireAuth, async (c) => {
   const session = c.get("session");
-  invalidateSession(session.id);
+  await invalidateSession(session.id);
   deleteSessionTokenCookie(c);
   return c.json({ success: true });
 });
@@ -123,7 +132,9 @@ auth.patch("/availability", requireAuth, requireActiveTenant, async (c) => {
     return c.json({ error: "isAvailable must be boolean" }, 400);
   }
 
-  if (!MembershipService.setAvailability(tenantId, user.id, isAvailable)) {
+  if (
+    !(await MembershipService.setAvailability(tenantId, user.id, isAvailable))
+  ) {
     // A platform operator pinned to a tenant they are not a member of has no
     // rotation to be in.
     return c.json({ error: "No membership in the active tenant" }, 404);

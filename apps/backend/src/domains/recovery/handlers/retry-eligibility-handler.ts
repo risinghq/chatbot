@@ -33,7 +33,7 @@ export class RetryEligibilityHandler {
   async execute(
     tenantId: string | null = null,
   ): Promise<Result<RecoveryRun, Error>> {
-    const waitingResult = getWaitingConversations(tenantId);
+    const waitingResult = await getWaitingConversations(tenantId);
 
     if (!isOk(waitingResult)) {
       logger.error(

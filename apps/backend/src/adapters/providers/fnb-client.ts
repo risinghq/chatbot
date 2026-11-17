@@ -1,4 +1,5 @@
-import jwt from "jsonwebtoken";
+import { env } from "cloudflare:workers";
+import { decodeBase64urlIgnorePadding } from "@oslojs/encoding";
 import { config } from "../../config.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { createAbortTimeout, TIMEOUTS } from "../../config/timeouts.ts";
@@ -8,7 +9,6 @@ const logger = createLogger("fnb-client");
 type FNBSession = {
   token: string;
   allyId: string;
-  expiresAt: Date;
 };
 
 type FNBAuthResponse = {
@@ -31,12 +31,29 @@ type JwtPayload = {
   commercialAllyId: string;
 };
 
-let sessionCache: FNBSession | null = null;
+/**
+ * One FNB session serves every isolate: it is kept in KV for a little under
+ * the hour the token lives, so a login is not repeated per request.
+ */
+const SESSION_KEY = "fnb:session";
+const SESSION_TTL_S = 3500;
+
+/** The token's payload names the ally. Its signature is the issuer's to check. */
+function jwtPayload(token: string): JwtPayload | null {
+  const part = token.split(".")[1];
+  if (!part) return null;
+  try {
+    return JSON.parse(
+      new TextDecoder().decode(decodeBase64urlIgnorePadding(part)),
+    ) as JwtPayload;
+  } catch {
+    return null;
+  }
+}
 
 async function authenticate(): Promise<FNBSession> {
-  if (sessionCache && sessionCache.expiresAt > new Date()) {
-    return sessionCache;
-  }
+  const cached = await env.KV.get<FNBSession>(SESSION_KEY, "json");
+  if (cached) return cached;
 
   const authUrl = `${config.calidda.baseUrl}/FNB_Services/api/Seguridad/autenticar`;
 
@@ -74,19 +91,21 @@ async function authenticate(): Promise<FNBSession> {
       throw new Error(`FNB Auth Invalid: ${data.message || "No token"}`);
     }
 
-    const decoded = jwt.decode(data.data.authToken) as JwtPayload | null;
+    const decoded = jwtPayload(data.data.authToken);
     if (!decoded) {
       throw new Error("Failed to decode JWT token");
     }
 
-    sessionCache = {
+    const session: FNBSession = {
       token: data.data.authToken,
       allyId: decoded.commercialAllyId,
-      expiresAt: new Date(Date.now() + 3500 * 1000),
     };
+    await env.KV.put(SESSION_KEY, JSON.stringify(session), {
+      expirationTtl: SESSION_TTL_S,
+    });
 
     logger.debug("FNB authentication successful");
-    return sessionCache;
+    return session;
   } catch (error) {
     cleanup();
 

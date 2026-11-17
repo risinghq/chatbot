@@ -32,7 +32,7 @@ export class FNBProvider implements EligibilityProvider {
     }
 
     // Check forced shutdown
-    if (isProviderForcedDown("fnb")) {
+    if (await isProviderForcedDown("fnb")) {
       logger.debug({ dni }, "Provider forced down");
       return Err(
         new ProviderError("FNB", "forced_down", "Provider forced down"),
@@ -40,7 +40,7 @@ export class FNBProvider implements EligibilityProvider {
     }
 
     // Check circuit breaker
-    if (!isAvailable("fnb")) {
+    if (!(await isAvailable("fnb"))) {
       logger.debug({ dni }, "Provider unavailable (circuit breaker)");
       return Err(
         new ProviderError("FNB", "unavailable", "Circuit breaker open"),
@@ -71,7 +71,7 @@ export class FNBProvider implements EligibilityProvider {
           msg.includes("403") ||
           msg.includes("bloqueado")
         ) {
-          markBlocked("fnb", error.message);
+          await markBlocked("fnb", error.message);
         }
       }
 

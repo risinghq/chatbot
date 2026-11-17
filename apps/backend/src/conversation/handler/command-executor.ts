@@ -6,13 +6,14 @@ import type {
 } from "@vendeya/core";
 import type { ConversationRef } from "@vendeya/types";
 import { WhatsAppService } from "../../adapters/whatsapp/index.ts";
-import { trackEvent } from "../../domains/analytics/index.ts";
+import { trackEventStatement } from "../../domains/analytics/index.ts";
+import { batch } from "../../db/index.ts";
 import { BundleService } from "../../domains/catalog/index.ts";
 import { createLogger } from "../../lib/logger.ts";
-import { db } from "../../db/index.ts";
+import { catalogImageKey } from "../../lib/storage-paths.ts";
 import { sendBundleImages } from "../images.ts";
 import { markAsProcessed } from "../message-inbox.ts";
-import { getOrCreateConversation, updateConversation } from "../store.ts";
+import { conversationUpdate, getOrCreateConversation } from "../store.ts";
 import { sleep } from "./sleep.ts";
 
 const logger = createLogger("commands");
@@ -23,8 +24,9 @@ const logger = createLogger("commands");
  * mid-flight) and the queue replays the message once the number returns. The
  * replay is faithful only if nothing the transition records was written first.
  *
- * `inboxIds` are the queue rows this turn answers. The transaction records the
- * phase and marks these rows `processed` together.
+ * `inboxIds` are the queue rows this turn answers. One batch records the phase
+ * and marks these rows `processed` together.
+
  */
 export async function executeCommands(
   result: TransitionResult,
@@ -92,30 +94,33 @@ export async function executeCommands(
   }
 
   // No command in the batch threw, so only now does the conversation move on.
-  db.transaction(() => {
-    const stored = getOrCreateConversation(ref).phase;
-    if (JSON.stringify(stored) !== JSON.stringify(phase)) {
-      logger.info(
-        {
-          tenantId,
-          phoneNumber,
-          fromPhase: stored.phase,
-          toPhase: phase.phase,
-        },
-        "Phase transition",
-      );
-      updateConversation(ref, phase, metadata);
-    }
+  // The phase, the analytics and the settled inbox rows commit together.
+  const statements: D1PreparedStatement[] = [];
+  const stored = (await getOrCreateConversation(ref)).phase;
+  if (JSON.stringify(stored) !== JSON.stringify(phase)) {
+    logger.info(
+      {
+        tenantId,
+        phoneNumber,
+        fromPhase: stored.phase,
+        toPhase: phase.phase,
+      },
+      "Phase transition",
+    );
+    statements.push(await conversationUpdate(ref, phase, metadata));
+  }
 
-    for (const command of tracked) {
-      trackEvent(ref, command.event, {
+  for (const command of tracked) {
+    statements.push(
+      trackEventStatement(ref, command.event, {
         segment: metadata.segment,
         ...command.metadata,
-      });
-    }
+      }),
+    );
+  }
 
-    if (inboxIds) markAsProcessed(inboxIds);
-  })();
+  if (inboxIds) statements.push(markAsProcessed(inboxIds));
+  await batch(statements);
 }
 
 type TrackEventCommand = Extract<Command, { type: "TRACK_EVENT" }>;
@@ -126,7 +131,7 @@ async function sendMessage(
   isSimulation: boolean,
 ): Promise<void> {
   if (isSimulation) {
-    WhatsAppService.logMessage(ref, "outbound", "text", content, "sent");
+    await WhatsAppService.logMessage(ref, "outbound", "text", content, "sent");
     return;
   }
 
@@ -236,7 +241,7 @@ async function executeSingleBundle(
     return null;
   }
 
-  const bundle = BundleService.getById(ref.tenantId, command.bundleId);
+  const bundle = await BundleService.getById(ref.tenantId, command.bundleId);
 
   if (!bundle) {
     logger.warn(
@@ -258,10 +263,10 @@ async function executeSingleBundle(
 
   const caption = `${bundle.name}\nPrecio: S/ ${bundle.price.toFixed(2)}${installmentText ? `\n${installmentText}` : ""}`;
 
-  const imagePath = `images/${bundle.image_id}.jpg`;
+  const imagePath = catalogImageKey(ref.tenantId, bundle.image_id);
 
   if (isSimulation) {
-    WhatsAppService.logMessage(
+    await WhatsAppService.logMessage(
       ref,
       "outbound",
       "image",

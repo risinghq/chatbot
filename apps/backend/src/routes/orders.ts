@@ -63,7 +63,7 @@ function canUpdateOrderStatus(
 // Get order metrics
 app.get("/metrics", async (c) => {
   const scope = c.get("scope");
-  const metrics = ordersModule.getOrderMetrics(
+  const metrics = await ordersModule.getOrderMetrics(
     scope.tenantId,
     assignedAgentScope(scope),
   );
@@ -78,7 +78,7 @@ app.post("/", requireActiveTenant, async (c) => {
 
   // The order belongs to the conversation it came from, which fixes both the
   // tenant and the channel account. A phone number alone is not enough.
-  const lookup = lookupConversation(
+  const lookup = await lookupConversation(
     scope,
     body.conversationPhone,
     body.channelAccountId ?? null,
@@ -99,7 +99,7 @@ app.post("/", requireActiveTenant, async (c) => {
     return c.json({ error: "Conversation not found" }, 404);
   }
 
-  const order = ordersModule.createOrder({
+  const order = await ordersModule.createOrder({
     ref: refOf(lookup.conversation),
     clientName: body.clientName,
     clientDni: body.clientDni,
@@ -127,7 +127,7 @@ app.get("/", async (c) => {
   const offset = queryOffset(c);
 
   const scope = c.get("scope");
-  const ordersData = ordersModule.getOrders(scope.tenantId, {
+  const ordersData = await ordersModule.getOrders(scope.tenantId, {
     status,
     startMs,
     endMs,
@@ -143,7 +143,7 @@ app.get("/", async (c) => {
 // Get order by conversation phone
 app.get("/by-conversation/:phone", async (c) => {
   const scope = c.get("scope");
-  const lookup = lookupConversation(
+  const lookup = await lookupConversation(
     scope,
     pathParam(c, "phone"),
     c.req.query("channel") ?? null,
@@ -158,7 +158,7 @@ app.get("/by-conversation/:phone", async (c) => {
 
   // A sales agent may open an unassigned conversation, but its order is theirs
   // only once the conversation is assigned to them.
-  const order = ordersModule.getOrderByConversation(
+  const order = await ordersModule.getOrderByConversation(
     refOf(lookup.conversation),
     assignedAgentScope(scope),
   );
@@ -174,7 +174,7 @@ app.get("/by-conversation/:phone", async (c) => {
 app.get("/:id", async (c) => {
   const id = pathParam(c, "id");
   const scope = c.get("scope");
-  const order = ordersModule.getOrderById(
+  const order = await ordersModule.getOrderById(
     scope.tenantId,
     id,
     assignedAgentScope(scope),
@@ -200,11 +200,11 @@ app.patch("/:id/status", requireActiveTenant, async (c) => {
     return c.json({ error: permission.reason }, 403);
   }
 
-  if (!ordersModule.getOrderById(tenantId, id)) {
+  if (!(await ordersModule.getOrderById(tenantId, id))) {
     return c.json({ error: "Order not found" }, 404);
   }
 
-  const order = ordersModule.updateOrderStatus(
+  const order = await ordersModule.updateOrderStatus(
     tenantId,
     id,
     body.status,
@@ -212,10 +212,16 @@ app.patch("/:id/status", requireActiveTenant, async (c) => {
     body.noteType,
   );
 
-  logAction({ userId: user.id, tenantId }, "update_order_status", "order", id, {
-    newStatus: body.status,
-    notes: body.notes,
-  });
+  await logAction(
+    { userId: user.id, tenantId },
+    "update_order_status",
+    "order",
+    id,
+    {
+      newStatus: body.status,
+      notes: body.notes,
+    },
+  );
 
   return c.json(order);
 });

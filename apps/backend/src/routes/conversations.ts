@@ -3,10 +3,7 @@ import { pathParam } from "../lib/http.ts";
 import type { Context } from "hono";
 import type { Conversation } from "@vendeya/types";
 import * as ConversationRead from "../domains/conversations/read.ts";
-import {
-  ConversationBusyError,
-  LockTimeoutError,
-} from "../conversation/locks.ts";
+import { ConversationBusyError } from "../conversation/locks.ts";
 import { refOf } from "../conversation/store.ts";
 import * as ConversationWrite from "../domains/conversations/write.ts";
 import * as ConversationMedia from "../domains/conversations/media.ts";
@@ -24,10 +21,10 @@ conversations.use("/*", requireTenantScope);
  * tenant for an unpinned platform operator. A conversation outside that scope
  * is indistinguishable from one that does not exist.
  */
-function resolve(
+async function resolve(
   c: Context,
-): { conversation: Conversation } | { error: Response } {
-  const lookup = ConversationRead.lookupConversation(
+): Promise<{ conversation: Conversation } | { error: Response }> {
+  const lookup = await ConversationRead.lookupConversation(
     c.get("scope"),
     pathParam(c, "phone"),
     c.req.query("channel") ?? null,
@@ -61,14 +58,11 @@ function resolve(
 }
 
 /**
- * A lock wait that runs out is answered as busy. After `LockTimeoutError` the
+ * A lock wait that runs out is answered as busy. After a timed-out write the
  * change may still land, and repeating a takeover or a release is harmless.
  */
 function refuseIfBusy(c: Context, error: unknown): Response {
-  if (
-    error instanceof ConversationBusyError ||
-    error instanceof LockTimeoutError
-  ) {
+  if (error instanceof ConversationBusyError) {
     return c.json(
       { error: "The conversation is busy. Try again in a moment." },
       409,
@@ -77,23 +71,25 @@ function refuseIfBusy(c: Context, error: unknown): Response {
   throw error;
 }
 
-conversations.get("/", (c) => {
+conversations.get("/", async (c) => {
   const scope = c.get("scope");
   const status = c.req.query("status");
 
-  const rows = ConversationRead.listConversations(scope, status);
+  const rows = await ConversationRead.listConversations(scope, status);
   return c.json(rows);
 });
 
-conversations.get("/:phone", (c) => {
-  const found = resolve(c);
+conversations.get("/:phone", async (c) => {
+  const found = await resolve(c);
   if ("error" in found) return found.error;
 
-  return c.json(ConversationRead.getConversationDetail(found.conversation));
+  return c.json(
+    await ConversationRead.getConversationDetail(found.conversation),
+  );
 });
 
 conversations.post("/:phone/takeover", requireActiveTenant, async (c) => {
-  const found = resolve(c);
+  const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
 
@@ -114,7 +110,7 @@ conversations.post("/:phone/takeover", requireActiveTenant, async (c) => {
 });
 
 conversations.post("/:phone/message", requireActiveTenant, async (c) => {
-  const found = resolve(c);
+  const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
 
@@ -135,7 +131,7 @@ conversations.post("/:phone/message", requireActiveTenant, async (c) => {
 });
 
 conversations.post("/:phone/release", requireActiveTenant, async (c) => {
-  const found = resolve(c);
+  const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
 
@@ -156,7 +152,7 @@ conversations.post(
   "/:phone/decline-assignment",
   requireActiveTenant,
   async (c) => {
-    const found = resolve(c);
+    const found = await resolve(c);
     if ("error" in found) return found.error;
     const conv = found.conversation;
 
@@ -180,14 +176,14 @@ conversations.post(
 );
 
 conversations.patch("/:phone/agent-data", requireActiveTenant, async (c) => {
-  const found = resolve(c);
+  const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
 
   const user = c.get("user");
   const updates = await c.req.json();
 
-  const result = ConversationWrite.updateAgentData(
+  const result = await ConversationWrite.updateAgentData(
     refOf(conv),
     user.id,
     updates,
@@ -200,18 +196,18 @@ conversations.patch("/:phone/agent-data", requireActiveTenant, async (c) => {
   return c.json(result);
 });
 
-conversations.get("/:phone/replay", (c) => {
+conversations.get("/:phone/replay", async (c) => {
   const user = c.get("user");
 
   if (user.role !== "admin" && user.role !== "developer") {
     return c.json({ error: "Forbidden" }, 403);
   }
 
-  const found = resolve(c);
+  const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
 
-  const replayData = ConversationRead.getReplayData(conv, user.id);
+  const replayData = await ConversationRead.getReplayData(conv, user.id);
 
   if (!replayData) {
     return c.json({ error: "Conversation not found" }, 404);
@@ -224,7 +220,7 @@ conversations.post(
   "/:phone/upload-contract",
   requireActiveTenant,
   async (c) => {
-    const found = resolve(c);
+    const found = await resolve(c);
     if ("error" in found) return found.error;
     const conv = found.conversation;
 

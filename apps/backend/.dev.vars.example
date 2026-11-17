@@ -1,0 +1,36 @@
+# Local values for `wrangler dev`, the seed and the account CLI. Copy this file
+# to .dev.vars. In production each secret below is set with
+# `wrangler secret put <NAME>` and each variable lives in wrangler.jsonc.
+# docs/operations.md says what each one changes.
+
+# Variables. These override the production values in wrangler.jsonc.
+ENVIRONMENT=development
+PUBLIC_URL=http://localhost:5173
+LOG_LEVEL=debug
+# Point the Graph API at a fake server to run without Meta, as the tests do.
+GRAPH_API_BASE_URL=https://graph.facebook.com
+
+# Secrets.
+# Encrypts WhatsApp credentials in D1: 32 bytes as hex, base64 or base64url.
+# Generate it at the repository root with `bun scripts/generate-token.ts secrets`.
+SECRETS_KEY=
+# The Meta app secret. POST /api/webhook answers 503 without it.
+WHATSAPP_APP_SECRET=
+# The token Meta's verification handshake sends. Generate it at the repository
+# root with `bun scripts/generate-token.ts webhook`.
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=
+# Without it, a message the regexes miss gets no reply.
+OPENAI_API_KEY=
+# Cálidda FNB. Without them every FNB check fails.
+CALIDDA_USERNAME=
+CALIDDA_PASSWORD=
+# Cálidda Gaso (Power BI). Without them every Gaso check fails.
+POWERBI_RESOURCE_KEY=
+POWERBI_REPORT_ID=
+POWERBI_DATASET_ID=
+POWERBI_MODEL_ID=
+
+# Seed only. `bun run seed` gives the default tenant this number and token.
+# Without them the tenant gets a pending placeholder number.
+WHATSAPP_PHONE_ID=
+WHATSAPP_TOKEN=

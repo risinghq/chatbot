@@ -51,8 +51,8 @@ type SendTarget =
   | { account: ChannelAccount }
   | { unsendable: ChannelAccount | null; reason: string; recordable: boolean };
 
-function resolveAccount(ref: ConversationRef): SendTarget {
-  const account = ChannelAccountService.getById(ref.channelAccountId);
+async function resolveAccount(ref: ConversationRef): Promise<SendTarget> {
+  const account = await ChannelAccountService.getById(ref.channelAccountId);
 
   if (!account) {
     logger.error(
@@ -76,7 +76,7 @@ function resolveAccount(ref: ConversationRef): SendTarget {
     return { unsendable: null, reason: "tenant_mismatch", recordable: false };
   }
 
-  if (!TenantService.isOpen(account.tenant_id)) {
+  if (!(await TenantService.isOpen(account.tenant_id))) {
     // A suspended tenant sends nothing to customers. `sendDirect` skips this
     // check so platform alerts about a closed business still go out.
     logger.warn(
@@ -138,7 +138,7 @@ async function callAdapter(
 
 /**
  * Resolve the conversation's account and send, writing nothing to `messages`.
- * The outbox worker uses it, because it already owns the row a retry updates.
+ * The outbox sender uses it, because it already owns the row a retry updates.
  * A refusal `resolveAccount` reports comes back as a `permanent` outcome.
  *
  * @throws ChannelUnavailableError when the number is switched off
@@ -147,7 +147,7 @@ export async function sendResolved(
   ref: ConversationRef,
   message: OutboundMessage,
 ): Promise<SendOutcome> {
-  const target = resolveAccount(ref);
+  const target = await resolveAccount(ref);
   if (!("account" in target)) {
     if (target.unsendable) {
       throw new ChannelUnavailableError(ref, target.unsendable.status);
@@ -180,8 +180,8 @@ async function deliver(
   retry: boolean,
 ): Promise<SendResult> {
   const productId = message.type === "image" ? message.productId : undefined;
-  const store = (status: string, whatsappMessageId?: string) =>
-    MessageStore.log(
+  const store = async (status: string, whatsappMessageId?: string) =>
+    await MessageStore.log(
       ref,
       "outbound",
       message.type,
@@ -193,21 +193,21 @@ async function deliver(
 
   // Replies to one conversation go out in the order the bot produced them, so
   // once one is queued the rest of the turn queues behind it unattempted.
-  if (retry && hasQueuedReply(ref)) {
+  if (retry && (await hasQueuedReply(ref))) {
     const now = Date.now();
-    const messageId = store("queued");
-    enqueue({ ref, messageId, message, state: queuedBehind(now), now });
+    const messageId = await store("queued");
+    await enqueue({ ref, messageId, message, state: queuedBehind(now), now });
     return { ...QUEUED_BEHIND, queued: true };
   }
 
-  const target = resolveAccount(ref);
+  const target = await resolveAccount(ref);
 
   let outcome: SendOutcome;
   if ("account" in target) {
     outcome = await callAdapter(target.account, ref.phoneNumber, message);
 
     if (outcome.ok) {
-      store("sent", outcome.messageId);
+      await store("sent", outcome.messageId);
       return outcome;
     }
 
@@ -217,7 +217,7 @@ async function deliver(
       return { ok: false, kind: "permanent", reason: target.reason };
     }
     if (target.unsendable) {
-      store("failed");
+      await store("failed");
       throw new ChannelUnavailableError(ref, target.unsendable.status);
     }
     // `resolveAccount` logged the refusal.
@@ -225,7 +225,7 @@ async function deliver(
   }
 
   if (!retry) {
-    store("failed");
+    await store("failed");
     return outcome;
   }
 
@@ -237,8 +237,8 @@ async function deliver(
     now,
   );
   const queued = state.status === "pending";
-  const messageId = store(queued ? "queued" : "failed");
-  enqueue({ ref, messageId, message, state, now });
+  const messageId = await store(queued ? "queued" : "failed");
+  await enqueue({ ref, messageId, message, state, now });
 
   return queued ? { ...outcome, queued: true } : outcome;
 }
@@ -315,20 +315,20 @@ export const WhatsAppService = {
     messageId: string,
     options: { typing: boolean },
   ): Promise<void> {
-    const target = resolveAccount(ref);
+    const target = await resolveAccount(ref);
     if (!("account" in target)) return;
     await adapter.markAsRead(target.account, messageId, options);
   },
 
-  logMessage(
+  async logMessage(
     ref: ConversationRef,
     direction: "inbound" | "outbound",
     type: StoredMessageType,
     content: string,
     status: string = "sent",
     productId?: string,
-  ): void {
-    MessageStore.log(
+  ): Promise<void> {
+    await MessageStore.log(
       ref,
       direction,
       type,
@@ -339,28 +339,28 @@ export const WhatsAppService = {
     );
   },
 
-  getMessageHistory(
+  async getMessageHistory(
     ref: ConversationRef,
     limit: number = 50,
-  ): ConversationMessage[] {
-    return MessageStore.getHistory(ref, limit);
+  ): Promise<ConversationMessage[]> {
+    return await MessageStore.getHistory(ref, limit);
   },
 
-  clearMessageHistory(ref: ConversationRef): void {
-    MessageStore.clear(ref);
+  async clearMessageHistory(ref: ConversationRef): Promise<void> {
+    await MessageStore.clear(ref);
   },
 
-  findProductByQuotedMessage(
+  async findProductByQuotedMessage(
     ref: ConversationRef,
     whatsappMessageId: string,
-  ): string | null {
-    return MessageStore.findProductByMessageId(ref, whatsappMessageId);
+  ): Promise<string | null> {
+    return await MessageStore.findProductByMessageId(ref, whatsappMessageId);
   },
 
-  getMessageById(
+  async getMessageById(
     ref: ConversationRef,
     whatsappMessageId: string,
-  ): ConversationMessage | null {
-    return MessageStore.getMessageById(ref, whatsappMessageId);
+  ): Promise<ConversationMessage | null> {
+    return await MessageStore.getMessageById(ref, whatsappMessageId);
   },
 };

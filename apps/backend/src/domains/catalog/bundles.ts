@@ -1,14 +1,14 @@
-import { db } from "../../db/index.ts";
-import { getOne, getAll, tenantPredicate } from "../../db/query.ts";
-import type { SQLQueryBindings } from "bun:sqlite";
+import { tenantPredicate } from "../../db/query.ts";
+import type { Binding } from "../../db/index.ts";
 import type { Bundle } from "@vendeya/types";
 import { imageStorage } from "../../adapters/storage/images.ts";
 import { AssetService } from "../assets/index.ts";
+import { getAll, getOne, run } from "../../db/index.ts";
 
 /**
- * Drop a bundle's claim on its image. The asset row is this tenant's own
- * record and always goes. The image file goes only with its last reference.
- * `bundleId` still holds its old `image_id` when this runs, so the count of
+ * Drop a bundle's claim on its image. The asset row and the object both live
+ * under this tenant. The object goes only with the tenant's last reference to
+ * it. `bundleId` still holds its old `image_id` when this runs, so the count of
  * references excludes it.
  */
 async function releaseImage(
@@ -16,22 +16,20 @@ async function releaseImage(
   bundleId: string,
   imageId: string,
 ): Promise<void> {
-  AssetService.deleteByStorageKey(tenantId, imageStorage.storageKey(imageId));
+  await AssetService.deleteByStorageKey(
+    tenantId,
+    imageStorage.storageKey(tenantId, imageId),
+  );
 
-  // The bytes are shared. Tenants seeded from the base catalog get the same
-  // `image_id`s, so the seeded bundles of two businesses name the same image
-  // even though their bundle ids are tenant-scoped. Deleting the file while
-  // another row still points at it would blank that bundle for the other
-  // tenant, in the dashboard and on WhatsApp.
-  const others = getOne<{ count: number }>(
+  const others = await getOne<{ count: number }>(
     `SELECT COUNT(*) as count FROM catalog_bundles
-     WHERE image_id = ? AND NOT (id = ? AND tenant_id = ?)`,
-    [imageId, bundleId, tenantId],
+     WHERE tenant_id = ? AND image_id = ? AND id != ?`,
+    [tenantId, imageId, bundleId],
   );
 
   if ((others?.count ?? 0) > 0) return;
 
-  await imageStorage.delete(imageId);
+  await imageStorage.delete(tenantId, imageId);
 }
 
 const REQUIRED_TEXT_FIELDS = [
@@ -128,12 +126,12 @@ type BundleFilters = {
  */
 export const BundleService = {
   /** Get all bundles for a period (dashboard) */
-  getByPeriod: (
+  getByPeriod: async (
     tenantId: string | null,
     periodId: string,
     segment?: "gaso" | "fnb",
-  ): Bundle[] => {
-    const params: SQLQueryBindings[] = [periodId];
+  ): Promise<Bundle[]> => {
+    const params: Binding[] = [periodId];
     let sql = "SELECT * FROM catalog_bundles WHERE period_id = ?";
 
     sql += ` AND ${tenantPredicate(tenantId)}`;
@@ -144,11 +142,14 @@ export const BundleService = {
     }
 
     sql += " ORDER BY primary_category, price";
-    return getAll<Bundle>(sql, params);
+    return await getAll<Bundle>(sql, params);
   },
 
   /** Get available bundles for bot (active period, filters) */
-  getAvailable: (tenantId: string, filters: BundleFilters = {}): Bundle[] => {
+  getAvailable: async (
+    tenantId: string,
+    filters: BundleFilters = {},
+  ): Promise<Bundle[]> => {
     let query = `
       SELECT b.* FROM catalog_bundles b
       JOIN catalog_periods p ON b.period_id = p.id AND p.tenant_id = b.tenant_id
@@ -157,7 +158,7 @@ export const BundleService = {
         AND b.is_active = 1
         AND b.stock_status != 'out_of_stock'
     `;
-    const params: SQLQueryBindings[] = [tenantId];
+    const params: Binding[] = [tenantId];
 
     if (filters.segment) {
       query += " AND b.segment = ?";
@@ -188,17 +189,20 @@ export const BundleService = {
       params.push(filters.offset);
     }
 
-    const rows = getAll<Bundle>(query, params);
+    const rows = await getAll<Bundle>(query, params);
     return rows;
   },
 
-  getById: (tenantId: string | null, id: string): Bundle | null =>
-    getOne<Bundle>(
+  getById: async (
+    tenantId: string | null,
+    id: string,
+  ): Promise<Bundle | null> =>
+    (await getOne<Bundle>(
       `SELECT * FROM catalog_bundles WHERE id = ? AND ${tenantPredicate(tenantId)}`,
       tenantId ? [id, tenantId] : [id],
-    ) ?? null,
+    )) ?? null,
 
-  create: (data: {
+  create: async (data: {
     id: string;
     tenantId: string;
     period_id: string;
@@ -212,26 +216,30 @@ export const BundleService = {
     installments_json: string;
     notes?: string;
     created_by: string | null;
-  }): Bundle => {
-    db.prepare(`
+  }): Promise<Bundle> => {
+    await run(
+      `
       INSERT INTO catalog_bundles (id, tenant_id, period_id, segment, name, price, primary_category, categories_json, image_id, composition_json, installments_json, notes, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      data.id,
-      data.tenantId,
-      data.period_id,
-      data.segment,
-      data.name,
-      data.price,
-      data.primary_category,
-      data.categories_json,
-      data.image_id,
-      data.composition_json,
-      data.installments_json,
-      data.notes || "01 año de garantía, delivery gratuito, cero cuota inicial",
-      data.created_by,
+    `,
+      [
+        data.id,
+        data.tenantId,
+        data.period_id,
+        data.segment,
+        data.name,
+        data.price,
+        data.primary_category,
+        data.categories_json,
+        data.image_id,
+        data.composition_json,
+        data.installments_json,
+        data.notes ||
+          "01 año de garantía, delivery gratuito, cero cuota inicial",
+        data.created_by,
+      ],
     );
-    return BundleService.getById(data.tenantId, data.id)!;
+    return (await BundleService.getById(data.tenantId, data.id))!;
   },
 
   /**
@@ -239,7 +247,7 @@ export const BundleService = {
    * rejected. The type is the contract and this list is the enforcement. The
    * caller checks every field with `bundleFieldsError` first.
    */
-  update: (
+  update: async (
     tenantId: string,
     id: string,
     updates: Partial<
@@ -255,13 +263,13 @@ export const BundleService = {
         | "installments_json"
       >
     >,
-  ): Bundle | null => {
+  ): Promise<Bundle | null> => {
     const data = updates ?? {};
     // Callers hand this raw request bodies, so `tenant_id` must not reach the
     // SET clause. The WHERE still matches on the row's current tenant, so a
     // body that carried it would hand the row to another business.
     const fields: string[] = [];
-    const values: SQLQueryBindings[] = [];
+    const values: Binding[] = [];
 
     if (data.name !== undefined) {
       fields.push("name = ?");
@@ -296,24 +304,25 @@ export const BundleService = {
       values.push(data.installments_json);
     }
 
-    if (fields.length === 0) return BundleService.getById(tenantId, id);
+    if (fields.length === 0) return await BundleService.getById(tenantId, id);
 
-    db.prepare(
+    await run(
       `UPDATE catalog_bundles SET ${fields.join(", ")}, updated_at = unixepoch('now', 'subsec') * 1000
        WHERE id = ? AND tenant_id = ?`,
-    ).run(...values, id, tenantId);
-    return BundleService.getById(tenantId, id);
+      [...values, id, tenantId],
+    );
+    return await BundleService.getById(tenantId, id);
   },
 
   /** Same allowlist rule as `update`, applied to every id in the batch. */
-  bulkUpdate: (
+  bulkUpdate: async (
     tenantId: string,
     ids: string[],
     updates: Partial<Pick<Bundle, "is_active" | "stock_status">>,
-  ): number => {
+  ): Promise<number> => {
     const data = updates ?? {};
     const fields: string[] = [];
-    const values: SQLQueryBindings[] = [];
+    const values: Binding[] = [];
 
     if (data.is_active !== undefined) {
       fields.push("is_active = ?");
@@ -328,12 +337,11 @@ export const BundleService = {
 
     const placeholders = ids.map(() => "?").join(",");
 
-    const result = db
-      .prepare(
-        `UPDATE catalog_bundles SET ${fields.join(", ")}, updated_at = unixepoch('now', 'subsec') * 1000
+    const result = await run(
+      `UPDATE catalog_bundles SET ${fields.join(", ")}, updated_at = unixepoch('now', 'subsec') * 1000
          WHERE tenant_id = ? AND id IN (${placeholders})`,
-      )
-      .run(...values, tenantId, ...ids);
+      [...values, tenantId, ...ids],
+    );
     return result.changes;
   },
 
@@ -342,33 +350,35 @@ export const BundleService = {
     id: string,
     newImageId: string,
   ): Promise<Bundle> => {
-    const existing = BundleService.getById(tenantId, id);
+    const existing = await BundleService.getById(tenantId, id);
     if (!existing) throw new Error("Bundle not found");
 
     await releaseImage(tenantId, id, existing.image_id);
 
-    db.prepare(
+    await run(
       `UPDATE catalog_bundles SET image_id = ?, updated_at = unixepoch('now', 'subsec') * 1000
        WHERE id = ? AND tenant_id = ?`,
-    ).run(newImageId, id, tenantId);
-    return BundleService.getById(tenantId, id)!;
+      [newImageId, id, tenantId],
+    );
+    return (await BundleService.getById(tenantId, id))!;
   },
 
   delete: async (tenantId: string, id: string): Promise<void> => {
-    const bundle = BundleService.getById(tenantId, id);
+    const bundle = await BundleService.getById(tenantId, id);
     if (bundle) {
       await releaseImage(tenantId, id, bundle.image_id);
     }
-    db.prepare(
-      "DELETE FROM catalog_bundles WHERE id = ? AND tenant_id = ?",
-    ).run(id, tenantId);
+    await run("DELETE FROM catalog_bundles WHERE id = ? AND tenant_id = ?", [
+      id,
+      tenantId,
+    ]);
   },
 
-  getAvailableCategories: (
+  getAvailableCategories: async (
     tenantId: string,
     segment?: "gaso" | "fnb",
-  ): string[] => {
-    const params: SQLQueryBindings[] = [tenantId];
+  ): Promise<string[]> => {
+    const params: Binding[] = [tenantId];
     let sql = `SELECT DISTINCT b.primary_category as category FROM catalog_bundles b
        JOIN catalog_periods p ON b.period_id = p.id AND p.tenant_id = b.tenant_id
        WHERE b.tenant_id = ? AND p.status = 'active' AND b.is_active = 1
@@ -381,15 +391,17 @@ export const BundleService = {
 
     sql += " ORDER BY b.primary_category";
 
-    return getAll<{ category: string }>(sql, params).map((r) => r.category);
+    return (await getAll<{ category: string }>(sql, params)).map(
+      (r) => r.category,
+    );
   },
 
-  getAffordableCategories: (
+  getAffordableCategories: async (
     tenantId: string,
     segment: "gaso" | "fnb",
     creditLine: number,
-  ): string[] => {
-    const rows = getAll<{ category: string }>(
+  ): Promise<string[]> => {
+    const rows = await getAll<{ category: string }>(
       `SELECT DISTINCT b.primary_category as category FROM catalog_bundles b
        JOIN catalog_periods p ON b.period_id = p.id AND p.tenant_id = b.tenant_id
        WHERE b.tenant_id = ?
@@ -409,8 +421,8 @@ export const BundleService = {
    * regardless of whether they are currently active or in stock.
    * Used for "We don't have that right now" vs "We never have that" distinction.
    */
-  getAllCategories: (tenantId: string): string[] => {
-    const rows = getAll<{ category: string }>(
+  getAllCategories: async (tenantId: string): Promise<string[]> => {
+    const rows = await getAll<{ category: string }>(
       `SELECT DISTINCT primary_category as category FROM catalog_bundles
        WHERE tenant_id = ? ORDER BY primary_category`,
       [tenantId],
@@ -421,12 +433,12 @@ export const BundleService = {
   /**
    * Check if a specific product exists in the active catalog for a category.
    */
-  hasProduct: (
+  hasProduct: async (
     tenantId: string,
     category: string,
     productQuery: string,
-  ): boolean => {
-    const row = getOne<{ count: number }>(
+  ): Promise<boolean> => {
+    const row = await getOne<{ count: number }>(
       `SELECT COUNT(*) as count FROM catalog_bundles b
        JOIN catalog_periods p ON b.period_id = p.id AND p.tenant_id = b.tenant_id
        WHERE b.tenant_id = ?

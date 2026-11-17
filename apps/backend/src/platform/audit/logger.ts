@@ -1,7 +1,6 @@
-import { db } from "../../db/index.ts";
-import { getAll, tenantOrPlatformPredicate } from "../../db/query.ts";
-import type { Database, SQLQueryBindings } from "bun:sqlite";
+import { tenantOrPlatformPredicate } from "../../db/query.ts";
 import type { AuditLog } from "@vendeya/types";
+import { type Binding, getAll, stmt } from "../../db/index.ts";
 
 /**
  * Who did it and inside which tenant. `tenantId` is null only for actions taken
@@ -34,80 +33,78 @@ export function auditActorLabel(
   return resolvedName || actor;
 }
 
-/** Writes audit rows through one connection. */
-export function auditOn(database: Database) {
-  function insert(
-    actor: string,
-    userId: string | null,
-    tenantId: string | null,
-    action: string,
-    resourceType: string,
-    resourceId: string | null,
-    metadata: Record<string, any>,
-  ): void {
-    database
-      .prepare(
-        `INSERT INTO audit_log (id, tenant_id, user_id, actor, action, resource_type, resource_id, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        crypto.randomUUID(),
-        tenantId,
-        userId,
-        actor,
-        action,
-        resourceType,
-        resourceId,
-        JSON.stringify(metadata),
-      );
-  }
-
-  return {
-    logAction: (
-      actor: AuditActor,
-      action: string,
-      resourceType: string,
-      resourceId: string | null = null,
-      metadata: Record<string, any> = {},
-    ): void =>
-      insert(
-        `user:${actor.userId}`,
-        actor.userId,
-        actor.tenantId,
-        action,
-        resourceType,
-        resourceId,
-        metadata,
-      ),
-
-    logCliAction: (
-      operator: CliOperator,
-      tenantId: string | null,
-      action: string,
-      resourceType: string,
-      resourceId: string | null,
-      metadata: Record<string, any> = {},
-    ): void =>
-      insert(
-        `cli:${operator.name}`,
-        null,
-        tenantId,
-        action,
-        resourceType,
-        resourceId,
-        { ...metadata, uid: operator.uid },
-      ),
-  };
+function insert(
+  actor: string,
+  userId: string | null,
+  tenantId: string | null,
+  action: string,
+  resourceType: string,
+  resourceId: string | null,
+  metadata: Record<string, any>,
+): D1PreparedStatement {
+  return stmt(
+    `INSERT INTO audit_log (id, tenant_id, user_id, actor, action, resource_type, resource_id, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      crypto.randomUUID(),
+      tenantId,
+      userId,
+      actor,
+      action,
+      resourceType,
+      resourceId,
+      JSON.stringify(metadata),
+    ],
+  );
 }
 
-export function logAction(
+/** The audit row for a dashboard action, for a caller that batches it with the change. */
+export function auditStatement(
   actor: AuditActor,
   action: string,
   resourceType: string,
   resourceId: string | null = null,
   metadata: Record<string, any> = {},
-): void {
-  auditOn(db).logAction(actor, action, resourceType, resourceId, metadata);
+): D1PreparedStatement {
+  return insert(
+    `user:${actor.userId}`,
+    actor.userId,
+    actor.tenantId,
+    action,
+    resourceType,
+    resourceId,
+    metadata,
+  );
+}
+
+/** The audit row for a terminal command, for a caller that batches it with the change. */
+export function cliAuditStatement(
+  operator: CliOperator,
+  tenantId: string | null,
+  action: string,
+  resourceType: string,
+  resourceId: string | null,
+  metadata: Record<string, any> = {},
+): D1PreparedStatement {
+  return insert(
+    `cli:${operator.name}`,
+    null,
+    tenantId,
+    action,
+    resourceType,
+    resourceId,
+    { ...metadata, uid: operator.uid },
+  );
+}
+
+export async function logAction(
+  actor: AuditActor,
+  action: string,
+  resourceType: string,
+  resourceId: string | null = null,
+  metadata: Record<string, any> = {},
+): Promise<void> {
+  await auditStatement(actor, action, resourceType, resourceId, metadata).run();
 }
 
 /**
@@ -115,13 +112,13 @@ export function logAction(
  * own rows. The audit route passes null only for an unpinned platform operator.
  * A tenant-scoped caller sees their own tenant's entries.
  */
-export function getAuditTrail(
+export async function getAuditTrail(
   tenantId: string | null,
   userId?: string,
   limit: number = 100,
-): AuditLog[] {
+): Promise<AuditLog[]> {
   const conditions: string[] = [];
-  const params: SQLQueryBindings[] = [];
+  const params: Binding[] = [];
 
   conditions.push(tenantOrPlatformPredicate(tenantId));
   if (tenantId) params.push(tenantId);

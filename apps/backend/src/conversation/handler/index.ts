@@ -1,1 +1,1 @@
-export { handleMessage, type IncomingMessage } from "./orchestrator.ts";
+export { answerMessage, type IncomingMessage } from "./orchestrator.ts";

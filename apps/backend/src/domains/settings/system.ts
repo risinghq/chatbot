@@ -1,5 +1,4 @@
-import { db } from "../../db/index.ts";
-import { getAll, getOne } from "../../db/query.ts";
+import { getAll, getOne, run } from "../../db/index.ts";
 
 type SettingRow = {
   value: string;
@@ -45,51 +44,53 @@ export function isInternalTenantSettingKey(key: string): boolean {
 }
 
 export const SystemSettings = {
-  get(key: string): string | null {
-    const row = getOne<SettingRow>(
+  async get(key: string): Promise<string | null> {
+    const row = await getOne<SettingRow>(
       "SELECT value FROM system_settings WHERE key = ?",
       [key],
     );
     return row?.value ?? null;
   },
 
-  getAll(): Record<string, string> {
-    const rows = getAll<{ key: string; value: string }>(
+  async getAll(): Promise<Record<string, string>> {
+    const rows = await getAll<{ key: string; value: string }>(
       "SELECT key, value FROM system_settings",
     );
     return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   },
 
-  set(key: string, value: string): void {
-    db.prepare(
+  async set(key: string, value: string): Promise<void> {
+    await run(
       "INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)",
-    ).run(key, value, Date.now());
+      [key, value, Date.now()],
+    );
   },
 };
 
 export const TenantSettings = {
-  get(tenantId: string, key: string): string | null {
-    const row = getOne<SettingRow>(
+  async get(tenantId: string, key: string): Promise<string | null> {
+    const row = await getOne<SettingRow>(
       "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = ?",
       [tenantId, key],
     );
     return row?.value ?? null;
   },
 
-  getAll(tenantId: string): Record<string, string> {
-    const rows = getAll<{ key: string; value: string }>(
+  async getAll(tenantId: string): Promise<Record<string, string>> {
+    const rows = await getAll<{ key: string; value: string }>(
       "SELECT key, value FROM tenant_settings WHERE tenant_id = ?",
       [tenantId],
     );
     return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   },
 
-  set(tenantId: string, key: string, value: string): void {
-    db.prepare(
+  async set(tenantId: string, key: string, value: string): Promise<void> {
+    await run(
       `INSERT INTO tenant_settings (tenant_id, key, value, updated_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    ).run(tenantId, key, value, Date.now());
+      [tenantId, key, value, Date.now()],
+    );
   },
 };
 
@@ -97,7 +98,9 @@ export const TenantSettings = {
  * Calidda's FNB and GASO endpoints are shared platform integrations, not
  * per-tenant ones, so forcing them down is a platform-level switch.
  */
-export function isProviderForcedDown(provider: "fnb" | "gaso"): boolean {
+export async function isProviderForcedDown(
+  provider: "fnb" | "gaso",
+): Promise<boolean> {
   const key = provider === "fnb" ? "force_fnb_down" : "force_gaso_down";
-  return SystemSettings.get(key) === "true";
+  return (await SystemSettings.get(key)) === "true";
 }

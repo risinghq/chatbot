@@ -4,44 +4,43 @@
  * only a reference to the row.
  */
 
+import { env } from "cloudflare:workers";
 import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from "node:crypto";
-import process from "node:process";
+  decodeBase64,
+  decodeBase64urlIgnorePadding,
+  decodeHex,
+  encodeBase64,
+  encodeHexLowerCase,
+} from "@oslojs/encoding";
 
-const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
 
+/** `ciphertext` carries the 16-byte GCM tag at its end, as WebCrypto writes it. */
 export type EncryptedValue = {
   ciphertext: string;
   iv: string;
-  authTag: string;
   keyId: string;
 };
 
-function parseKey(raw: string): Buffer {
-  const hex = /^[0-9a-fA-F]{64}$/;
-  if (hex.test(raw)) {
-    return Buffer.from(raw, "hex");
-  }
+type Key = { key: CryptoKey; id: string };
 
-  const decoded = Buffer.from(raw, "base64");
-  if (decoded.length === 32) {
-    return decoded;
+function parseKey(raw: string): Uint8Array {
+  if (/^[0-9a-fA-F]{64}$/.test(raw)) return decodeHex(raw);
+
+  for (const decode of [decodeBase64, decodeBase64urlIgnorePadding]) {
+    try {
+      const decoded = decode(raw);
+      if (decoded.length === 32) return decoded;
+    } catch {}
   }
 
   throw new Error(
-    "SECRETS_KEY must be 32 bytes encoded as hex (64 chars) or base64",
+    "SECRETS_KEY must be 32 bytes encoded as hex (64 chars), base64 or base64url",
   );
 }
 
-function readKey(): Buffer {
-  // The key is read on each call, not at import. A deployment that never stores
-  // a credential (dev, tests that send to a fake Graph) needs no SECRETS_KEY.
-  const raw = process.env.SECRETS_KEY;
+function rawKey(): Uint8Array {
+  const raw = env.SECRETS_KEY;
   if (!raw) {
     throw new Error(
       "SECRETS_KEY is not set; channel credentials cannot be encrypted or read",
@@ -56,7 +55,7 @@ function readKey(): Buffer {
  */
 export function isEncryptionAvailable(): boolean {
   try {
-    readKey();
+    rawKey();
     return true;
   } catch {
     return false;
@@ -64,50 +63,51 @@ export function isEncryptionAvailable(): boolean {
 }
 
 /**
- * Short fingerprint of the key in use, stored alongside the ciphertext so a
+ * The key id is a short fingerprint of the key, stored with the ciphertext, so a
  * value encrypted under a retired key is reported as that instead of as a
  * generic authentication failure.
  */
-function keyId(key: Buffer): string {
-  return createHash("sha256").update(key).digest("hex").slice(0, 16);
+async function readKey(): Promise<Key> {
+  const raw = rawKey();
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+  const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, [
+    "encrypt",
+    "decrypt",
+  ]);
+  return { key, id: encodeHexLowerCase(digest).slice(0, 16) };
 }
 
-export function encryptSecret(plaintext: string): EncryptedValue {
-  const key = readKey();
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
-
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, "utf8"),
-    cipher.final(),
-  ]);
+export async function encryptSecret(
+  plaintext: string,
+): Promise<EncryptedValue> {
+  const { key, id } = await readKey();
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(plaintext),
+  );
 
   return {
-    ciphertext: ciphertext.toString("base64"),
-    iv: iv.toString("base64"),
-    authTag: cipher.getAuthTag().toString("base64"),
-    keyId: keyId(key),
+    ciphertext: encodeBase64(new Uint8Array(ciphertext)),
+    iv: encodeBase64(iv),
+    keyId: id,
   };
 }
 
-export function decryptSecret(value: EncryptedValue): string {
-  const key = readKey();
+export async function decryptSecret(value: EncryptedValue): Promise<string> {
+  const { key, id } = await readKey();
 
-  if (value.keyId !== keyId(key)) {
+  if (value.keyId !== id) {
     throw new Error(
       "Stored secret was encrypted with a different SECRETS_KEY than the one configured",
     );
   }
 
-  const decipher = createDecipheriv(
-    ALGORITHM,
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: decodeBase64(value.iv) },
     key,
-    Buffer.from(value.iv, "base64"),
+    decodeBase64(value.ciphertext),
   );
-  decipher.setAuthTag(Buffer.from(value.authTag, "base64"));
-
-  return Buffer.concat([
-    decipher.update(Buffer.from(value.ciphertext, "base64")),
-    decipher.final(),
-  ]).toString("utf8");
+  return new TextDecoder().decode(plaintext);
 }

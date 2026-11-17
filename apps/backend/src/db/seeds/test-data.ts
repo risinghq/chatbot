@@ -1,5 +1,5 @@
-import type { Database } from "bun:sqlite";
 import type { ConversationStatus, SaleStatus, Segment } from "@vendeya/types";
+import { batch, getOne, stmt } from "../index.ts";
 
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -128,44 +128,20 @@ export function testContextData(
   };
 }
 
-export async function seedTestData(
-  db: Database,
-  tenantId: string,
-  channelAccountId: string,
-) {
-  const exists = db
-    .prepare("SELECT count(*) as count FROM conversations WHERE tenant_id = ?")
-    .get(tenantId) as { count: number };
-
-  if (exists.count > 0) {
-    return;
-  }
+export async function seedTestData(tenantId: string, channelAccountId: string) {
+  const exists = await getOne(
+    "SELECT 1 FROM conversations WHERE tenant_id = ? LIMIT 1",
+    [tenantId],
+  );
+  if (exists) return;
 
   const now = Date.now();
-  const conversationStmt = db.prepare(
-    `INSERT INTO conversations (
-      tenant_id, channel_account_id, phone_number, client_name, dni, segment,
-      credit_line, status, assigned_agent, assignment_notified_at, is_simulation,
-      last_activity_at, context_data, sale_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-
-  const messageStmt = db.prepare(
-    `INSERT INTO messages (
-      id, tenant_id, channel_account_id, phone_number, direction, type, content, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
+  const statements: D1PreparedStatement[] = [];
 
   // The fixture names an agent by id. The seeds create no user accounts, so
   // link the agent only when that user exists.
-  const agentExists = (id: string): boolean =>
-    (
-      db
-        .prepare("SELECT count(*) as count FROM users WHERE id = ?")
-        .get(id) as {
-        count: number;
-      }
-    ).count > 0;
+  const agentExists = async (id: string): Promise<boolean> =>
+    Boolean(await getOne("SELECT 1 FROM users WHERE id = ?", [id]));
 
   for (const conversation of TEST_CONVERSATIONS) {
     const lastActivityAt =
@@ -177,25 +153,35 @@ export async function seedTestData(
     const contextData = testContextData(conversation, now, lastActivityAt);
 
     const assignedAgent =
-      conversation.assignedAgent && agentExists(conversation.assignedAgent)
+      conversation.assignedAgent &&
+      (await agentExists(conversation.assignedAgent))
         ? conversation.assignedAgent
         : null;
 
-    conversationStmt.run(
-      tenantId,
-      channelAccountId,
-      conversation.phoneNumber,
-      conversation.clientName,
-      conversation.dni,
-      conversation.segment,
-      conversation.creditLine,
-      conversation.status,
-      assignedAgent,
-      assignmentNotifiedAt,
-      0,
-      lastActivityAt,
-      JSON.stringify(contextData),
-      conversation.saleStatus || "pending",
+    statements.push(
+      stmt(
+        `INSERT INTO conversations (
+          tenant_id, channel_account_id, phone_number, client_name, dni, segment,
+          credit_line, status, assigned_agent, assignment_notified_at, is_simulation,
+          last_activity_at, context_data, sale_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          tenantId,
+          channelAccountId,
+          conversation.phoneNumber,
+          conversation.clientName,
+          conversation.dni,
+          conversation.segment,
+          conversation.creditLine,
+          conversation.status,
+          assignedAgent,
+          assignmentNotifiedAt,
+          0,
+          lastActivityAt,
+          JSON.stringify(contextData),
+          conversation.saleStatus || "pending",
+        ],
+      ),
     );
 
     for (const message of conversation.messages) {
@@ -203,16 +189,25 @@ export async function seedTestData(
       const direction = message.role === "incoming" ? "inbound" : "outbound";
       const createdAt = now + message.offsetMs;
 
-      messageStmt.run(
-        messageId,
-        tenantId,
-        channelAccountId,
-        conversation.phoneNumber,
-        direction,
-        "text",
-        message.text,
-        createdAt,
+      statements.push(
+        stmt(
+          `INSERT INTO messages (
+            id, tenant_id, channel_account_id, phone_number, direction, type, content, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            messageId,
+            tenantId,
+            channelAccountId,
+            conversation.phoneNumber,
+            direction,
+            "text",
+            message.text,
+            createdAt,
+          ],
+        ),
       );
     }
   }
+
+  await batch(statements);
 }

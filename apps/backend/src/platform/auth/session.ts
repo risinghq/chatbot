@@ -1,4 +1,3 @@
-import { db } from "../../db/index.ts";
 import {
   encodeBase32LowerCaseNoPadding,
   encodeHexLowerCase,
@@ -6,18 +5,17 @@ import {
 import { sha256 } from "@oslojs/crypto/sha2";
 import type { Context } from "hono";
 import { setCookie, deleteCookie } from "hono/cookie";
-import process from "node:process";
+import { publicOrigin } from "../../config.ts";
 import type { TenantMembership, TenantRole } from "@vendeya/types";
 import { MembershipService } from "../../domains/tenants/index.ts";
 import type { AuthScope } from "./scope.ts";
 import { sessionRole } from "./scope.ts";
+import { getOne, run } from "../../db/index.ts";
 
-const cookieSecure = (() => {
-  const flag = process.env.COOKIE_SECURE;
-  if (flag === "true") return true;
-  if (flag === "false") return false;
-  return process.env.NODE_ENV === "production";
-})();
+/** A browser drops a Secure cookie that an http origin sets. */
+function cookieSecure(): boolean {
+  return publicOrigin().startsWith("https:");
+}
 
 export interface Session {
   id: string;
@@ -75,21 +73,21 @@ export function generateSessionToken(): string {
  * chooses explicitly, and a user with several memberships is not put in
  * whichever tenant sorted first.
  */
-export function defaultTenantForUser(
+export async function defaultTenantForUser(
   userId: string,
   isPlatformOperator: boolean,
-): string | null {
+): Promise<string | null> {
   if (isPlatformOperator) return null;
 
-  const memberships = MembershipService.listForUser(userId);
+  const memberships = await MembershipService.listForUser(userId);
   return memberships.length === 1 ? memberships[0]!.id : null;
 }
 
-export function createSession(
+export async function createSession(
   token: string,
   userId: string,
   activeTenantId: string | null = null,
-): Session {
+): Promise<Session> {
   const sessionId = encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
   const session: Session = {
     id: sessionId,
@@ -97,13 +95,14 @@ export function createSession(
     activeTenantId,
     expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30), // 30 days
   };
-  db.prepare(
+  await run(
     "INSERT INTO session (id, user_id, active_tenant_id, expires_at) VALUES (?, ?, ?, ?)",
-  ).run(
-    session.id,
-    session.userId,
-    session.activeTenantId,
-    Math.floor(session.expiresAt.getTime() / 1000),
+    [
+      session.id,
+      session.userId,
+      session.activeTenantId,
+      Math.floor(session.expiresAt.getTime() / 1000),
+    ],
   );
   return session;
 }
@@ -112,20 +111,22 @@ export function createSession(
  * Repoint a session at another tenant. The caller must already have been
  * checked against the target (membership, or platform operator).
  */
-export function setSessionTenant(
+export async function setSessionTenant(
   sessionId: string,
   tenantId: string | null,
-): void {
-  db.prepare("UPDATE session SET active_tenant_id = ? WHERE id = ?").run(
+): Promise<void> {
+  await run("UPDATE session SET active_tenant_id = ? WHERE id = ?", [
     tenantId,
     sessionId,
-  );
+  ]);
 }
 
-export function validateSessionToken(token: string): SessionValidationResult {
+export async function validateSessionToken(
+  token: string,
+): Promise<SessionValidationResult> {
   const sessionId = encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
-  const row = db
-    .prepare(`
+  const row = (await getOne(
+    `
         SELECT s.id, s.user_id, s.active_tenant_id, s.expires_at,
                u.id as uid, u.username, u.role, u.name as uname,
                u.is_platform_operator, u.is_active,
@@ -134,8 +135,9 @@ export function validateSessionToken(token: string): SessionValidationResult {
         INNER JOIN users u ON u.id = s.user_id
         LEFT JOIN tenants t ON t.id = s.active_tenant_id
         WHERE s.id = ?
-    `)
-    .get(sessionId) as
+    `,
+    [sessionId],
+  )) as
     | {
         id: string;
         user_id: string;
@@ -163,7 +165,7 @@ export function validateSessionToken(token: string): SessionValidationResult {
   };
 
   if (Date.now() >= session.expiresAt.getTime()) {
-    db.prepare("DELETE FROM session WHERE id = ?").run(session.id);
+    await run("DELETE FROM session WHERE id = ?", [session.id]);
     return { session: null, user: null, scope: null, fresh: false };
   }
 
@@ -171,10 +173,10 @@ export function validateSessionToken(token: string): SessionValidationResult {
   if (Date.now() >= session.expiresAt.getTime() - 1000 * 60 * 60 * 24 * 15) {
     fresh = true;
     session.expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
-    db.prepare("UPDATE session SET expires_at = ? WHERE id = ?").run(
+    await run("UPDATE session SET expires_at = ? WHERE id = ?", [
       Math.floor(session.expiresAt.getTime() / 1000),
       session.id,
-    );
+    ]);
   }
 
   const isPlatformOperator = row.is_platform_operator === 1;
@@ -183,7 +185,7 @@ export function validateSessionToken(token: string): SessionValidationResult {
   // revoking one or suspending the other takes effect at once.
   let membership: TenantMembership | null = null;
   if (session.activeTenantId) {
-    membership = MembershipService.get(session.activeTenantId, row.uid);
+    membership = await MembershipService.get(session.activeTenantId, row.uid);
 
     // A suspended tenant is closed to everyone, platform operators included.
     // The pin is dropped, not the session, so the user stays logged in and can
@@ -197,7 +199,7 @@ export function validateSessionToken(token: string): SessionValidationResult {
     // db/query.ts, `canAccessTenant` in auth/scope.ts). POST /api/tenants/active
     // refuses a suspended tenant.
     if (!tenantIsOpen || !stillAMember) {
-      setSessionTenant(session.id, null);
+      await setSessionTenant(session.id, null);
       session.activeTenantId = null;
       membership = null;
     }
@@ -225,8 +227,8 @@ export function validateSessionToken(token: string): SessionValidationResult {
   return { session, user, scope, fresh };
 }
 
-export function invalidateSession(sessionId: string): void {
-  db.prepare("DELETE FROM session WHERE id = ?").run(sessionId);
+export async function invalidateSession(sessionId: string): Promise<void> {
+  await run("DELETE FROM session WHERE id = ?", [sessionId]);
 }
 
 export function setSessionTokenCookie(
@@ -239,13 +241,13 @@ export function setSessionTokenCookie(
     sameSite: "Lax",
     expires: expiresAt,
     path: "/",
-    secure: cookieSecure,
+    secure: cookieSecure(),
   });
 }
 
 export function deleteSessionTokenCookie(c: Context): void {
   deleteCookie(c, "session", {
     path: "/",
-    secure: cookieSecure,
+    secure: cookieSecure(),
   });
 }

@@ -1,7 +1,7 @@
-const RESPONSE_DELAY_MS = parseInt(
-  process.env.BOT_RESPONSE_DELAY_MS || "2300",
-  10,
-);
+import { env } from "cloudflare:workers";
+function responseDelayMs(): number {
+  return Number.parseInt(env.BOT_RESPONSE_DELAY_MS || "2300", 10);
+}
 const BACKLOG_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
 export function isBacklogged(messageTimestamp: number): boolean {
@@ -19,12 +19,13 @@ export function calculateResponseDelay(
     return 0;
   }
 
-  if (RESPONSE_DELAY_MS <= 0) {
+  const delay = responseDelayMs();
+  if (delay <= 0) {
     return 0;
   }
 
   const elapsed = processingStartTime - messageTimestamp;
-  const remainingDelay = Math.max(0, RESPONSE_DELAY_MS - elapsed);
+  const remainingDelay = Math.max(0, delay - elapsed);
 
   return remainingDelay;
 }

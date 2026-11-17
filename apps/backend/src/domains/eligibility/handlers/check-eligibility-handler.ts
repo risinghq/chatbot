@@ -121,10 +121,13 @@ export class CheckEligibilityHandler {
     //    is no catalog to draw from, so the tenant is null. An empty string
     //    would match no tenant and read as an empty catalog rather than as no
     //    question.
-    const enrichmentResult = mapEligibilityToEnrichment(ref?.tenantId ?? null, {
-      ...evaluation.value.result,
-      needsHuman: false,
-    });
+    const enrichmentResult = await mapEligibilityToEnrichment(
+      ref?.tenantId ?? null,
+      {
+        ...evaluation.value.result,
+        needsHuman: false,
+      },
+    );
 
     return { ok: true, value: enrichmentResult };
   }

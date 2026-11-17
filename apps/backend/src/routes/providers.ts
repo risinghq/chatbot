@@ -18,7 +18,7 @@ app.get("/:dni", requirePlatformOperator, async (c) => {
 
   try {
     const result = await eligibilityHandler.execute(dni);
-    const healthStatus = getAllStatus();
+    const healthStatus = await getAllStatus();
 
     let displayResult: any = result;
     if (isOk(result)) {
@@ -38,7 +38,7 @@ app.get("/:dni", requirePlatformOperator, async (c) => {
         ...(healthStatus.gaso.available ? ["gaso"] : []),
       ],
     });
-  } catch (error) {
+  } catch (_error) {
     return c.json({ error: "Error al consultar proveedor" }, 500);
   }
 });

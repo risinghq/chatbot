@@ -1,5 +1,5 @@
+import { isProduction } from "../config.ts";
 import type { Context } from "hono";
-import process from "node:process";
 import { InvalidPagingError } from "../lib/http.ts";
 import { createLogger } from "../lib/logger.ts";
 import { InvalidDateError } from "../db/query.ts";
@@ -29,7 +29,7 @@ export async function errorHandler(err: Error, c: Context) {
     "Unhandled error",
   );
 
-  const isDev = process.env.NODE_ENV !== "production";
+  const isDev = !isProduction();
 
   return c.json(
     {

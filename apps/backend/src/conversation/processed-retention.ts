@@ -10,8 +10,12 @@ const logger = createLogger("processed-retention");
  */
 export const PROCESSED_MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-export function purgeProcessedMessages(now: number = Date.now()): number {
-  const purged = purgeProcessedInbox(now - PROCESSED_MESSAGE_RETENTION_MS);
+export async function purgeProcessedMessages(
+  now: number = Date.now(),
+): Promise<number> {
+  const purged = await purgeProcessedInbox(
+    now - PROCESSED_MESSAGE_RETENTION_MS,
+  );
 
   if (purged > 0) {
     logger.info({ inbox: purged }, "Purged processed messages past retention");

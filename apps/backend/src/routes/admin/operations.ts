@@ -23,25 +23,31 @@ type SweepStats = Record<string, number>;
  * say which businesses were mutated. A run that reached nobody gets one entry
  * under the caller's scope, so a run that did nothing stays on record.
  */
-function logSweep(
+async function logSweep(
   userId: string,
   callerTenantId: string | null,
   action: string,
   totals: SweepStats,
   byTenant: Record<string, SweepStats>,
-): void {
+): Promise<void> {
   const affected = Object.entries(byTenant);
 
   if (affected.length === 0) {
-    logAction({ userId, tenantId: callerTenantId }, action, "system", null, {
-      ...totals,
-      tenantsAffected: 0,
-    });
+    await logAction(
+      { userId, tenantId: callerTenantId },
+      action,
+      "system",
+      null,
+      {
+        ...totals,
+        tenantsAffected: 0,
+      },
+    );
     return;
   }
 
   for (const [tenantId, stats] of affected) {
-    logAction({ userId, tenantId }, action, "system", null, {
+    await logAction({ userId, tenantId }, action, "system", null, {
       ...stats,
       // A tenant-scoped run is indistinguishable from a platform-wide sweep
       // once the entries are split up, so each one says which it came from.
@@ -50,8 +56,8 @@ function logSweep(
   }
 }
 
-operations.get("/outage-status", (c) => {
-  const waitingCount = countWaitingForRecovery(c.get("scope").tenantId);
+operations.get("/outage-status", async (c) => {
+  const waitingCount = await countWaitingForRecovery(c.get("scope").tenantId);
   return c.json({ waitingCount });
 });
 
@@ -65,7 +71,13 @@ operations.post("/retry-eligibility", async (c) => {
   if (isOk(result)) {
     const { byTenant, ...stats } = result.value;
 
-    logSweep(user.id, scope.tenantId, "retry_eligibility", stats, byTenant);
+    await logSweep(
+      user.id,
+      scope.tenantId,
+      "retry_eligibility",
+      stats,
+      byTenant,
+    );
 
     return c.json({
       success: true,

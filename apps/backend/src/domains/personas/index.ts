@@ -1,6 +1,5 @@
-import { db } from "../../db/index.ts";
-import { getAll, getOne } from "../../db/query.ts";
 import type { ProviderCheckResult } from "@vendeya/types";
+import { getAll, getOne, run } from "../../db/index.ts";
 
 type TestPersona = {
   id: string;
@@ -102,8 +101,8 @@ const INITIAL_PERSONAS: TestPersona[] = [
 
 /** Built-in personas remain available unless a tenant overrides their id. */
 export const PersonasService = {
-  getAll(tenantId: string): TestPersona[] {
-    const dbPersonas = getAll<TestPersona>(
+  async getAll(tenantId: string): Promise<TestPersona[]> {
+    const dbPersonas = await getAll<TestPersona>(
       `SELECT id, name, description, segment, client_name as clientName,
               dni, credit_line as creditLine, nse, is_active as isActive
        FROM test_personas
@@ -118,8 +117,11 @@ export const PersonasService = {
     return [...dbPersonas, ...hardcodedFiltered];
   },
 
-  getById(tenantId: string, id: string): TestPersona | undefined {
-    const dbPersona = getOne<{
+  async getById(
+    tenantId: string,
+    id: string,
+  ): Promise<TestPersona | undefined> {
+    const dbPersona = await getOne<{
       id: string;
       name: string;
       description: string | null;
@@ -174,31 +176,32 @@ export const PersonasService = {
     };
   },
 
-  create(
+  async create(
     tenantId: string,
     persona: Omit<TestPersona, "isActive">,
     createdBy: string,
-  ): TestPersona {
-    db.prepare(
+  ): Promise<TestPersona> {
+    await run(
       `INSERT INTO test_personas (id, tenant_id, name, description, segment, client_name, dni, credit_line, nse, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      persona.id,
-      tenantId,
-      persona.name,
-      persona.description,
-      persona.segment,
-      persona.clientName,
-      persona.dni,
-      persona.creditLine,
-      persona.nse || null,
-      createdBy,
+      [
+        persona.id,
+        tenantId,
+        persona.name,
+        persona.description,
+        persona.segment,
+        persona.clientName,
+        persona.dni,
+        persona.creditLine,
+        persona.nse || null,
+        createdBy,
+      ],
     );
 
     return { ...persona, isActive: true };
   },
 
-  update(
+  async update(
     tenantId: string,
     id: string,
     updates: Partial<Omit<TestPersona, "id" | "isActive">>,
@@ -238,14 +241,16 @@ export const PersonasService = {
     if (sets.length === 0) return;
 
     values.push(id, tenantId);
-    db.prepare(
+    await run(
       `UPDATE test_personas SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`,
-    ).run(...values);
+      values,
+    );
   },
 
-  delete(tenantId: string, id: string) {
-    db.prepare(
+  async delete(tenantId: string, id: string) {
+    await run(
       "UPDATE test_personas SET is_active = 0 WHERE id = ? AND tenant_id = ?",
-    ).run(id, tenantId);
+      [id, tenantId],
+    );
   },
 };

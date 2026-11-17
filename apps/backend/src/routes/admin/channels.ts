@@ -3,7 +3,6 @@ import { pathParam } from "../../lib/http.ts";
 import { ChannelAccountService } from "../../domains/channels/accounts.ts";
 import { isEncryptionAvailable } from "../../platform/crypto/secrets.ts";
 import { logAction } from "../../platform/audit/logger.ts";
-import { db } from "../../db/index.ts";
 import {
   activeTenantId,
   requireActiveTenant,
@@ -53,10 +52,12 @@ function malformedField(
   return null;
 }
 
-channels.get("/", (c) => {
+channels.get("/", async (c) => {
   const tenantId = activeTenantId(c);
   return c.json({
-    accounts: ChannelAccountService.listForTenant(tenantId).map(present),
+    accounts: (await ChannelAccountService.listForTenant(tenantId)).map(
+      present,
+    ),
   });
 });
 
@@ -94,25 +95,23 @@ channels.post("/", requirePlatformOperator, async (c) => {
     );
   }
 
-  const existing = ChannelAccountService.getByPhoneNumberId(phoneNumberId);
+  const existing =
+    await ChannelAccountService.getByPhoneNumberId(phoneNumberId);
   if (existing) {
     return c.json({ error: "That phone number id is already registered" }, 409);
   }
 
-  // The secrets and the account row are written together or not at all.
-  const account = db.transaction(() =>
-    ChannelAccountService.create({
-      tenantId,
-      phoneNumberId,
-      wabaId: wabaId ?? null,
-      displayPhoneNumber: displayPhoneNumber ?? null,
-      label: label ?? null,
-      accessToken: accessToken ?? null,
-      verifyToken: verifyToken ?? null,
-    }),
-  )();
+  const account = await ChannelAccountService.create({
+    tenantId,
+    phoneNumberId,
+    wabaId: wabaId ?? null,
+    displayPhoneNumber: displayPhoneNumber ?? null,
+    label: label ?? null,
+    accessToken: accessToken ?? null,
+    verifyToken: verifyToken ?? null,
+  });
 
-  logAction(
+  await logAction(
     { userId: user.id, tenantId },
     "create_channel_account",
     "channel_account",
@@ -128,7 +127,7 @@ channels.patch("/:id", async (c) => {
   const tenantId = activeTenantId(c);
   const id = pathParam(c, "id");
 
-  const account = ChannelAccountService.getById(id);
+  const account = await ChannelAccountService.getById(id);
   if (!account || account.tenant_id !== tenantId) {
     return c.json({ error: "Channel account not found" }, 404);
   }
@@ -137,8 +136,8 @@ channels.patch("/:id", async (c) => {
   const changed: string[] = [];
 
   // Every field is validated before the first write, so a refused PATCH leaves
-  // the account unchanged. The writes then run in one transaction, so a write
-  // that fails part way does not leave half of them behind either.
+  // the account unchanged. The writes then run in one batch, so a write that
+  // fails part way does not leave half of them behind either.
   const malformed = malformedField(body, [
     "accessToken",
     "verifyToken",
@@ -186,32 +185,24 @@ channels.patch("/:id", async (c) => {
     );
   }
 
-  db.transaction(() => {
-    if (body.accessToken) {
-      ChannelAccountService.setAccessToken(id, body.accessToken);
-      changed.push("access_token");
-    }
-
-    if (body.verifyToken) {
-      ChannelAccountService.setVerifyToken(id, body.verifyToken);
-      changed.push("verify_token");
-    }
-
-    if (body.status) {
-      ChannelAccountService.updateStatus(id, body.status);
-      changed.push("status");
-    }
-  })();
+  await ChannelAccountService.update(account, {
+    accessToken: body.accessToken || undefined,
+    verifyToken: body.verifyToken || undefined,
+    status: body.status || undefined,
+  });
+  if (body.accessToken) changed.push("access_token");
+  if (body.verifyToken) changed.push("verify_token");
+  if (body.status) changed.push("status");
 
   // Handing a pending account its first token activates it, so the status can
   // move without the request naming one. The audit entry records what the
   // account ended up as, not what was asked for.
-  const updated = ChannelAccountService.getById(id)!;
+  const updated = (await ChannelAccountService.getById(id))!;
   if (updated.status !== account.status && !changed.includes("status")) {
     changed.push("status");
   }
 
-  logAction(
+  await logAction(
     { userId: user.id, tenantId },
     "update_channel_account",
     "channel_account",

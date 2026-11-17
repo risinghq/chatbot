@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import type { Context, Next } from "hono";
 
 export async function securityHeaders(c: Context, next: Next) {
@@ -9,27 +10,17 @@ export async function securityHeaders(c: Context, next: Next) {
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
 }
 
-// in-memory rate limiter
-// application is internal, we don't need a complex algorithm
-const requestCounts = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = 100;
+/**
+ * Login attempts per client address, counted by the LOGIN_LIMITER binding so
+ * every isolate shares the count. Cloudflare sets `cf-connecting-ip` on every
+ * request that reaches the edge. A request without it, such as one in a test,
+ * is counted under one shared key.
+ */
+export async function loginRateLimiter(c: Context, next: Next) {
+  const client = c.req.header("cf-connecting-ip") || "unknown";
+  const { success } = await env.LOGIN_LIMITER.limit({ key: `login:${client}` });
 
-export async function rateLimiter(c: Context, next: Next) {
-  const clientId =
-    c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
-  const now = Date.now();
-
-  let record = requestCounts.get(clientId);
-
-  if (!record || now > record.resetAt) {
-    record = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
-    requestCounts.set(clientId, record);
-  }
-
-  record.count++;
-
-  if (record.count > MAX_REQUESTS_PER_WINDOW) {
+  if (!success) {
     return c.json({ error: "Rate limit exceeded" }, 429);
   }
 

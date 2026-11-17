@@ -15,10 +15,10 @@ type EligibilityResult = ProviderCheckResult & {
   nse?: number;
 };
 
-export function mapEligibilityToEnrichment(
+export async function mapEligibilityToEnrichment(
   tenantId: string | null,
   result: EligibilityResult,
-): Extract<EnrichmentResult, { type: "eligibility_result" }> {
+): Promise<Extract<EnrichmentResult, { type: "eligibility_result" }>> {
   if (result.needsHuman) {
     if (result.handoffReason === "both_providers_down") {
       return {
@@ -56,7 +56,7 @@ export function mapEligibilityToEnrichment(
       };
     }
 
-    const affordableCategories = BundleService.getAffordableCategories(
+    const affordableCategories = await BundleService.getAffordableCategories(
       tenantId,
       segment,
       credit,
@@ -87,7 +87,7 @@ export function mapEligibilityToEnrichment(
       return (order[aKey] ?? 99) - (order[bKey] ?? 99);
     });
 
-    const affordableBundles = BundleService.getAvailable(tenantId, {
+    const affordableBundles = await BundleService.getAvailable(tenantId, {
       segment,
       maxPrice: credit,
       strictPriceLimit: segment === "gaso", // gaso is strict, fnb is soft

@@ -1,27 +1,3 @@
-import { db } from "./connection.ts";
-import type { Database, SQLQueryBindings } from "bun:sqlite";
-
-/**
- * Binds the query helpers to a database passed in, so tests can run the seeds,
- * the account command and the tenant and channel services on a temporary file.
- * The exports below use the application database.
- */
-export function queriesOn(database: Database) {
-  return {
-    /** A query that matches no row gives `undefined`, not bun:sqlite's `null`. */
-    getOne: <T>(sql: string, params: SQLQueryBindings[] = []): T | undefined =>
-      (database.prepare(sql).get(...params) ?? undefined) as T | undefined,
-
-    getAll: <T>(sql: string, params: SQLQueryBindings[] = []): T[] =>
-      database.prepare(sql).all(...params) as T[],
-  };
-}
-
-const appQueries = queriesOn(db);
-
-export const getOne = appQueries.getOne;
-export const getAll = appQueries.getAll;
-
 /**
  * Cross-tenant reads of a tenant's rows span only active tenants. An operator's
  * session drops its pin when the tenant is suspended (platform/auth/session.ts),

@@ -1,67 +1,44 @@
 /**
- * Roots for every store that holds uploaded bytes. Nothing outside this module
- * builds a path under `data/uploads` or `data/private`.
- */
-
-import path from "node:path";
-import process from "node:process";
-
-/**
- * Base of every upload store. In production it is a persistent volume, and the
- * working directory is ephemeral. A root derived from the working directory
- * loses its files on redeploy and leaves `assets` rows that answer 404.
- */
-export const UPLOAD_DIR = process.env.UPLOAD_DIR || "./data/uploads";
-
-/**
- * The images root is always absolute. `adapters/storage/images.ts` and Hono's
- * `serveStatic` each resolve a relative path against their own working
- * directory, so a relative root could name two directories.
- */
-export function resolveImagesDir(uploadDir: string): string {
-  return path.join(path.resolve(uploadDir), "images");
-}
-
-/**
- * Catalog images are the only bytes served statically, because Meta fetches the
- * image link of an outgoing image message without credentials.
- */
-export const IMAGES_DIR = resolveImagesDir(UPLOAD_DIR);
-
-/**
- * The seeded catalog photos as tracked in git. That directory is IMAGES_DIR only
- * in development, so `db/seeds/images.ts` copies them into IMAGES_DIR on boot.
- */
-export const SEED_IMAGES_DIR = path.join(
-  // Resolved against this module, so it names the checkout wherever it runs.
-  import.meta.dir,
-  "..",
-  "..",
-  "data",
-  "uploads",
-  "images",
-);
-
-/**
- * The default is a sibling of the uploads directory, never a child, so the
- * private root stays outside the uploads directory that the HTTP server mounts.
- * PRIVATE_DIR overrides it. The result is absolute because `privateFilePath`
- * compares resolved paths against it.
- */
-export function resolvePrivateDir(env: {
-  uploadDir: string;
-  privateDir?: string | undefined;
-}): string {
-  if (env.privateDir) return path.resolve(env.privateDir);
-
-  return path.join(path.dirname(path.resolve(env.uploadDir)), "private");
-}
-
-/**
- * Files that are never served statically: signed contracts and call recordings,
+ * Keys of every object in the FILES bucket. Nothing outside this module builds
+ * one. Every key starts with the owning tenant's id.
+ *
+ * `<tenant>/images/<id>.jpg` is a catalog image. It is the only kind served
+ * without a session, at `/media/<key>`, because Meta fetches the link of an
+ * outgoing image with no credentials. Every other prefix is private and is
  * reachable only through /api/assets/:id, which checks tenant scope first.
  */
-export const PRIVATE_DIR = resolvePrivateDir({
-  uploadDir: UPLOAD_DIR,
-  privateDir: process.env.PRIVATE_DIR,
-});
+
+const CATALOG_IMAGE_KEY =
+  /^([^/]+)\/images\/([0-9a-f]{16}|[A-Za-z0-9_-]+)\.jpg$/;
+
+/** Strip anything that could climb out of the tenant's prefix. */
+function safeSegment(value: string): string {
+  const cleaned = value.replace(/[^A-Za-z0-9._+-]/g, "_");
+  return cleaned === "." || cleaned === ".." || cleaned === "" ? "_" : cleaned;
+}
+
+export function catalogImageKey(tenantId: string, imageId: string): string {
+  return `${safeSegment(tenantId)}/images/${safeSegment(imageId)}.jpg`;
+}
+
+/** Whether a key may be served publicly, which only a catalog image may. */
+export function isCatalogImageKey(key: string): boolean {
+  return CATALOG_IMAGE_KEY.test(key);
+}
+
+/** The path, under the public origin, that serves a catalog image. */
+export function catalogImagePath(tenantId: string, imageId: string): string {
+  return `/media/${catalogImageKey(tenantId, imageId)}`;
+}
+
+/**
+ * A private key never has `images` as its first segment after the tenant, so
+ * `/media` can never serve it.
+ */
+export function privateStorageKey(
+  tenantId: string,
+  kind: "contracts" | "recordings",
+  ...segments: string[]
+): string {
+  return [safeSegment(tenantId), kind, ...segments.map(safeSegment)].join("/");
+}

@@ -4,7 +4,6 @@ import { AssetService } from "../domains/assets/index.ts";
 import { servableContentType } from "../domains/assets/content-types.ts";
 import { privateFileStorage } from "../adapters/storage/private-files.ts";
 import { canAccessTenant } from "../platform/auth/scope.ts";
-import { imageStorage } from "../adapters/storage/images.ts";
 import { requireTenantScope } from "../middleware/auth.ts";
 import { createLogger } from "../lib/logger.ts";
 
@@ -19,29 +18,26 @@ assets.get("/:id", async (c) => {
   const scope = c.get("scope");
   const id = pathParam(c, "id");
 
-  const asset = AssetService.getById(null, id);
+  const asset = await AssetService.getById(null, id);
 
   // An asset owned by another tenant is reported as missing, not forbidden, so
   // the endpoint cannot be used to probe which ids exist elsewhere.
-  if (!asset || !canAccessTenant(scope, asset.tenant_id)) {
+  if (!asset || !(await canAccessTenant(scope, asset.tenant_id))) {
     return c.json({ error: "Asset not found" }, 404);
   }
 
   if (asset.visibility === "public") {
-    // Catalog images are served from the static /media mount so Meta can fetch
-    // them. Return the URL, not the bytes.
-    const imageId = asset.storage_key
-      .replace(/^images\//, "")
-      .replace(/\.jpg$/, "");
+    // Catalog images are served from /media so Meta can fetch them. Return the
+    // URL, not the bytes.
     return c.json({
       id: asset.id,
       kind: asset.kind,
       visibility: asset.visibility,
-      url: `/media${imageStorage.getUrl(imageId)}`,
+      url: `/media/${asset.storage_key}`,
     });
   }
 
-  const file = privateFileStorage.read(asset.storage_key);
+  const file = await privateFileStorage.read(asset.storage_key);
 
   if (!file) {
     logger.error(
@@ -55,7 +51,7 @@ assets.get("/:id", async (c) => {
   // an attachment with a content type from the allowlist for its kind, not the
   // one the uploader declared. Otherwise an .html or .svg uploaded as a
   // "contract" executes on this origin when its /api/assets/:id URL is opened.
-  return new Response(file.stream(), {
+  return new Response(file, {
     headers: {
       "Content-Type": servableContentType(asset),
       "Content-Disposition": `attachment; filename="${downloadName(asset)}"`,
@@ -78,7 +74,7 @@ function downloadName(asset: { id: string; storage_key: string }): string {
 }
 
 /** List the caller's tenant's assets, optionally filtered by kind. */
-assets.get("/", (c) => {
+assets.get("/", async (c) => {
   const scope = c.get("scope");
 
   if (!scope.tenantId) {
@@ -91,7 +87,9 @@ assets.get("/", (c) => {
     | "recording"
     | undefined;
 
-  return c.json({ assets: AssetService.listForTenant(scope.tenantId, kind) });
+  return c.json({
+    assets: await AssetService.listForTenant(scope.tenantId, kind),
+  });
 });
 
 export default assets;

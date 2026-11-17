@@ -6,7 +6,7 @@ import {
   bundleFieldsError,
 } from "../domains/catalog/index.ts";
 import { PeriodService } from "../domains/catalog/periods.ts";
-import { imageStorage } from "../adapters/storage/images.ts";
+import { imageStorage, isUnreadableImage } from "../adapters/storage/images.ts";
 import { AssetService } from "../domains/assets/index.ts";
 import { logAction } from "../platform/audit/logger.ts";
 import {
@@ -36,16 +36,16 @@ catalog.use("/*", requireTenantScope);
 
 // ============ PRODUCTS (base templates) ============
 
-catalog.get("/products", (c) => {
-  return c.json(ProductService.getAll(c.get("scope").tenantId));
+catalog.get("/products", async (c) => {
+  return c.json(await ProductService.getAll(c.get("scope").tenantId));
 });
 
-catalog.get("/products/categories", (c) => {
-  return c.json(ProductService.getCategories(c.get("scope").tenantId));
+catalog.get("/products/categories", async (c) => {
+  return c.json(await ProductService.getCategories(c.get("scope").tenantId));
 });
 
-catalog.get("/products/:id", (c) => {
-  const product = ProductService.getById(
+catalog.get("/products/:id", async (c) => {
+  const product = await ProductService.getById(
     c.get("scope").tenantId,
     pathParam(c, "id"),
   );
@@ -67,7 +67,7 @@ catalog.post(
     }
 
     const id = `prod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const product = ProductService.create({
+    const product = await ProductService.create({
       id,
       tenantId,
       name,
@@ -77,10 +77,16 @@ catalog.post(
       specs_json,
     });
 
-    logAction({ userId: user.id, tenantId }, "create_product", "product", id, {
-      name,
-      category,
-    });
+    await logAction(
+      { userId: user.id, tenantId },
+      "create_product",
+      "product",
+      id,
+      {
+        name,
+        category,
+      },
+    );
     return c.json(product);
   },
 );
@@ -95,10 +101,10 @@ catalog.patch(
     const tenantId = activeTenantId(c);
     const updates = await c.req.json();
 
-    const product = ProductService.update(tenantId, id, updates);
+    const product = await ProductService.update(tenantId, id, updates);
     if (!product) return c.json({ error: "Product not found" }, 404);
 
-    logAction(
+    await logAction(
       { userId: user.id, tenantId },
       "update_product",
       "product",
@@ -111,7 +117,7 @@ catalog.patch(
 
 // ============ BUNDLES ============
 
-catalog.get("/bundles", (c) => {
+catalog.get("/bundles", async (c) => {
   const scope = c.get("scope");
   const periodId = c.req.query("period_id");
   const maxPrice = c.req.query("max_price");
@@ -119,7 +125,9 @@ catalog.get("/bundles", (c) => {
   const segment = c.req.query("segment") as "gaso" | "fnb" | undefined;
 
   if (periodId) {
-    return c.json(BundleService.getByPeriod(scope.tenantId, periodId, segment));
+    return c.json(
+      await BundleService.getByPeriod(scope.tenantId, periodId, segment),
+    );
   }
 
   if (!scope.tenantId) {
@@ -132,7 +140,7 @@ catalog.get("/bundles", (c) => {
   }
 
   return c.json(
-    BundleService.getAvailable(scope.tenantId, {
+    await BundleService.getAvailable(scope.tenantId, {
       maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
       category: category || undefined,
       segment,
@@ -140,21 +148,39 @@ catalog.get("/bundles", (c) => {
   );
 });
 
-catalog.get("/bundles/categories", requireActiveTenant, (c) => {
+catalog.get("/bundles/categories", requireActiveTenant, async (c) => {
   const segment = c.req.query("segment") as "gaso" | "fnb" | undefined;
   return c.json(
-    BundleService.getAvailableCategories(activeTenantId(c), segment),
+    await BundleService.getAvailableCategories(activeTenantId(c), segment),
   );
 });
 
-catalog.get("/bundles/:id", (c) => {
-  const bundle = BundleService.getById(
+catalog.get("/bundles/:id", async (c) => {
+  const bundle = await BundleService.getById(
     c.get("scope").tenantId,
     pathParam(c, "id"),
   );
   if (!bundle) return c.json({ error: "Bundle not found" }, 404);
   return c.json(bundle);
 });
+
+const NOT_AN_IMAGE = "The file is not an image";
+
+/** The stored image, or null when the Images binding cannot read the file. */
+async function storeImage(
+  tenantId: string,
+  file: File,
+): Promise<{ imageId: string; byteSize: number } | null> {
+  try {
+    return await imageStorage.store(
+      tenantId,
+      new Uint8Array(await file.arrayBuffer()),
+    );
+  } catch (error) {
+    if (isUnreadableImage(error)) return null;
+    throw error;
+  }
+}
 
 catalog.post(
   "/bundles",
@@ -200,29 +226,30 @@ catalog.post(
       return c.json({ error: "segment must be gaso or fnb" }, 400);
     }
 
-    const period = PeriodService.getById(tenantId, periodId);
+    const period = await PeriodService.getById(tenantId, periodId);
     if (!period) return c.json({ error: "Period not found" }, 404);
     if (period.status !== "draft") {
       return c.json({ error: "Can only add bundles to draft periods" }, 400);
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const imageId = await imageStorage.store(buffer);
+    const stored = await storeImage(tenantId, file);
+    if (!stored) return c.json({ error: NOT_AN_IMAGE }, 400);
+    const { imageId, byteSize } = stored;
 
     // Catalog images are public by design because Meta fetches them when we
     // send an image message. The asset row still records who owns them.
-    AssetService.create({
+    await AssetService.create({
       tenantId,
       kind: "catalog_image",
       visibility: "public",
-      storageKey: imageStorage.storageKey(imageId),
+      storageKey: imageStorage.storageKey(tenantId, imageId),
       contentType: "image/jpeg",
-      byteSize: buffer.byteLength,
+      byteSize,
       createdBy: user.id,
     });
 
     const id = `bundle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const bundle = BundleService.create({
+    const bundle = await BundleService.create({
       id,
       tenantId,
       period_id: periodId,
@@ -237,12 +264,18 @@ catalog.post(
       created_by: user.id,
     });
 
-    logAction({ userId: user.id, tenantId }, "create_bundle", "bundle", id, {
-      name,
-      price,
-      primaryCategory,
-      segment,
-    });
+    await logAction(
+      { userId: user.id, tenantId },
+      "create_bundle",
+      "bundle",
+      id,
+      {
+        name,
+        price,
+        primaryCategory,
+        segment,
+      },
+    );
     return c.json(bundle);
   },
 );
@@ -261,10 +294,10 @@ catalog.patch(
     const fieldsError = bundleFieldsError(updates);
     if (fieldsError) return c.json({ error: fieldsError }, 400);
 
-    const bundle = BundleService.update(tenantId, id, updates);
+    const bundle = await BundleService.update(tenantId, id, updates);
     if (!bundle) return c.json({ error: "Bundle not found" }, 404);
 
-    logAction(
+    await logAction(
       { userId: user.id, tenantId },
       "update_bundle",
       "bundle",
@@ -288,30 +321,31 @@ catalog.post(
     const file = body.image as File;
     if (!file) return c.json({ error: "Image required" }, 400);
 
-    const existing = BundleService.getById(tenantId, id);
+    const existing = await BundleService.getById(tenantId, id);
     if (!existing) return c.json({ error: "Bundle not found" }, 404);
 
-    const period = PeriodService.getById(tenantId, existing.period_id);
+    const period = await PeriodService.getById(tenantId, existing.period_id);
     if (period && period.status !== "draft") {
       return c.json({ error: "Can only edit bundles in draft periods" }, 400);
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const imageId = await imageStorage.store(buffer);
+    const stored = await storeImage(tenantId, file);
+    if (!stored) return c.json({ error: NOT_AN_IMAGE }, 400);
+    const { imageId, byteSize } = stored;
 
-    AssetService.create({
+    await AssetService.create({
       tenantId,
       kind: "catalog_image",
       visibility: "public",
-      storageKey: imageStorage.storageKey(imageId),
+      storageKey: imageStorage.storageKey(tenantId, imageId),
       contentType: "image/jpeg",
-      byteSize: buffer.byteLength,
+      byteSize,
       createdBy: user.id,
     });
 
     const bundle = await BundleService.updateImage(tenantId, id, imageId);
 
-    logAction(
+    await logAction(
       { userId: user.id, tenantId },
       "update_bundle_image",
       "bundle",
@@ -330,12 +364,17 @@ catalog.delete(
     const user = c.get("user");
     const tenantId = activeTenantId(c);
 
-    if (!BundleService.getById(tenantId, id)) {
+    if (!(await BundleService.getById(tenantId, id))) {
       return c.json({ error: "Bundle not found" }, 404);
     }
 
     await BundleService.delete(tenantId, id);
-    logAction({ userId: user.id, tenantId }, "delete_bundle", "bundle", id);
+    await logAction(
+      { userId: user.id, tenantId },
+      "delete_bundle",
+      "bundle",
+      id,
+    );
     return c.json({ success: true });
   },
 );
@@ -378,8 +417,8 @@ catalog.post(
     const fieldsError = bundleFieldsError({ is_active, stock_status });
     if (fieldsError) return c.json({ error: fieldsError }, 400);
 
-    const count = BundleService.bulkUpdate(tenantId, ids, updates);
-    logAction(
+    const count = await BundleService.bulkUpdate(tenantId, ids, updates);
+    await logAction(
       { userId: user.id, tenantId },
       "bulk_update_bundles",
       "bundle",

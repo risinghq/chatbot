@@ -1,15 +1,14 @@
 import { Hono } from "hono";
 import { pathParam } from "../../lib/http.ts";
-import { db } from "../../db/index.ts";
-import { getAll, getOne } from "../../db/query.ts";
-import bcrypt from "bcryptjs";
-import { logAction } from "../../platform/audit/logger.ts";
+import { hashPassword } from "../../platform/auth/password.ts";
+import { auditStatement, logAction } from "../../platform/audit/logger.ts";
 import {
   MembershipService,
   isTenantRole,
 } from "../../domains/tenants/index.ts";
 import { activeTenantId, requireActiveTenant } from "../../middleware/auth.ts";
 import { MIN_PASSWORD_LENGTH, type TenantRole } from "@vendeya/types";
+import { batch, getAll, getOne, stmt } from "../../db/index.ts";
 
 const users = new Hono();
 
@@ -31,10 +30,10 @@ type UserRow = {
 users.use("/*", requireActiveTenant);
 
 // List members of the active tenant
-users.get("/", (c) => {
+users.get("/", async (c) => {
   const tenantId = activeTenantId(c);
 
-  const rows = getAll<UserRow & { role: TenantRole }>(
+  const rows = await getAll<UserRow & { role: TenantRole }>(
     `SELECT u.id, u.username, u.name, u.is_active, u.is_platform_operator,
             u.created_at, m.role as role
      FROM tenant_memberships m
@@ -66,11 +65,11 @@ function meetsPasswordMinimum(password: unknown): password is string {
   return typeof password === "string" && password.length >= MIN_PASSWORD_LENGTH;
 }
 
-function usernameIsTaken(username: string): boolean {
+async function usernameIsTaken(username: string): Promise<boolean> {
   return (
-    getOne<{ id: string }>("SELECT id FROM users WHERE username = ?", [
+    (await getOne<{ id: string }>("SELECT id FROM users WHERE username = ?", [
       username,
-    ]) !== undefined
+    ])) !== undefined
   );
 }
 
@@ -92,45 +91,55 @@ users.post("/", async (c) => {
     return c.json(PASSWORD_TOO_SHORT, 400);
   }
 
-  if (usernameIsTaken(username)) {
+  if (await usernameIsTaken(username)) {
     return c.json(USERNAME_UNAVAILABLE, 409);
   }
 
   const id = crypto.randomUUID();
-  const hash = bcrypt.hashSync(password, 10);
+  const hash = await hashPassword(password);
 
-  db.transaction(() => {
-    db.prepare(
+  await batch([
+    stmt(
       `INSERT INTO users (id, username, password_hash, role, name, phone_number, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, username, hash, role, name, phoneNumber || null, creator.id);
-
-    MembershipService.upsert({
+      [id, username, hash, role, name, phoneNumber || null, creator.id],
+    ),
+    ...MembershipService.upsertStatements({
       tenantId,
       userId: id,
       role,
       createdBy: creator.id,
-    });
-  })();
-
-  logAction({ userId: creator.id, tenantId }, "create_user", "user", id, {
-    username,
-    role,
-    name,
-  });
+    }),
+    auditStatement(
+      { userId: creator.id, tenantId },
+      "create_user",
+      "user",
+      id,
+      {
+        username,
+        role,
+        name,
+      },
+    ),
+  ]);
 
   return c.json({ id, username, role, name });
 });
 
-function memberOfActiveTenant(tenantId: string, userId: string): boolean {
-  return MembershipService.get(tenantId, userId) !== null;
+async function memberOfActiveTenant(
+  tenantId: string,
+  userId: string,
+): Promise<boolean> {
+  return (await MembershipService.get(tenantId, userId)) !== null;
 }
 
-function isPlatformOperator(userId: string): boolean {
+async function isPlatformOperator(userId: string): Promise<boolean> {
   return (
-    getOne<{ is_platform_operator: number }>(
-      "SELECT is_platform_operator FROM users WHERE id = ?",
-      [userId],
+    (
+      await getOne<{ is_platform_operator: number }>(
+        "SELECT is_platform_operator FROM users WHERE id = ?",
+        [userId],
+      )
     )?.is_platform_operator === 1
   );
 }
@@ -142,13 +151,13 @@ function isPlatformOperator(userId: string): boolean {
  * never for a platform operator, whose account reaches every tenant whatever
  * memberships it kept. Anything else needs a platform operator.
  */
-function globalAccountRefusal(
+async function globalAccountRefusal(
   scope: { isPlatformOperator: boolean },
   userId: string,
-): { error: string } | null {
+): Promise<{ error: string } | null> {
   if (scope.isPlatformOperator) return null;
-  if (isPlatformOperator(userId)) return PLATFORM_OPERATOR_ACCOUNT_ERROR;
-  if (MembershipService.countForUser(userId) > 1) {
+  if (await isPlatformOperator(userId)) return PLATFORM_OPERATOR_ACCOUNT_ERROR;
+  if ((await MembershipService.countForUser(userId)) > 1) {
     return CROSS_TENANT_ACCOUNT_ERROR;
   }
   return null;
@@ -168,22 +177,22 @@ const PLATFORM_OPERATOR_ACCOUNT_ERROR = {
  * `is_active` is on the global user record, so this route is gated by
  * `globalAccountRefusal`, like a password reset.
  */
-users.patch("/:id/status", (c) => {
+users.patch("/:id/status", async (c) => {
   const userId = pathParam(c, "id");
   const admin = c.get("user");
   const scope = c.get("scope");
   const tenantId = activeTenantId(c);
 
-  if (!memberOfActiveTenant(tenantId, userId)) {
+  if (!(await memberOfActiveTenant(tenantId, userId))) {
     return c.json({ error: "User not found" }, 404);
   }
 
-  const refusal = globalAccountRefusal(scope, userId);
+  const refusal = await globalAccountRefusal(scope, userId);
   if (refusal) {
     return c.json(refusal, 403);
   }
 
-  const user = getOne<{ is_active: number }>(
+  const user = await getOne<{ is_active: number }>(
     "SELECT is_active FROM users WHERE id = ?",
     [userId],
   );
@@ -194,30 +203,27 @@ users.patch("/:id/status", (c) => {
 
   const newStatus = user.is_active === 1 ? 0 : 1;
 
-  db.transaction(() => {
-    db.prepare("UPDATE users SET is_active = ? WHERE id = ?").run(
-      newStatus,
+  // A deactivated account loses its sessions and the conversations it held.
+  // Turning it back on does not return them.
+  await batch([
+    stmt("UPDATE users SET is_active = ? WHERE id = ?", [newStatus, userId]),
+    ...(newStatus === 0
+      ? [
+          stmt("DELETE FROM session WHERE user_id = ?", [userId]),
+          MembershipService.clearAllAssignments(userId),
+        ]
+      : []),
+    auditStatement(
+      { userId: admin.id, tenantId },
+      "toggle_user_status",
+      "user",
       userId,
-    );
-
-    // A deactivated account loses its sessions and the conversations it held.
-    // Turning it back on does not return them.
-    if (newStatus === 0) {
-      db.prepare("DELETE FROM session WHERE user_id = ?").run(userId);
-      MembershipService.clearAllAssignments(userId);
-    }
-  })();
-
-  logAction(
-    { userId: admin.id, tenantId },
-    "toggle_user_status",
-    "user",
-    userId,
-    {
-      newStatus: newStatus === 1 ? "active" : "inactive",
-      byPlatformOperator: scope.isPlatformOperator,
-    },
-  );
+      {
+        newStatus: newStatus === 1 ? "active" : "inactive",
+        byPlatformOperator: scope.isPlatformOperator,
+      },
+    ),
+  ]);
 
   return c.json({ success: true, is_active: newStatus });
 });
@@ -233,11 +239,11 @@ users.post("/:id/password", async (c) => {
   const scope = c.get("scope");
   const tenantId = activeTenantId(c);
 
-  if (!memberOfActiveTenant(tenantId, userId)) {
+  if (!(await memberOfActiveTenant(tenantId, userId))) {
     return c.json({ error: "User not found" }, 404);
   }
 
-  const refusal = globalAccountRefusal(scope, userId);
+  const refusal = await globalAccountRefusal(scope, userId);
   if (refusal) {
     return c.json(refusal, 403);
   }
@@ -246,19 +252,22 @@ users.post("/:id/password", async (c) => {
     return c.json(PASSWORD_TOO_SHORT, 400);
   }
 
-  const hash = bcrypt.hashSync(newPassword, 10);
+  const hash = await hashPassword(newPassword);
 
-  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
-    hash,
-    userId,
-  );
-
-  // Invalidate all sessions
-  db.prepare("DELETE FROM session WHERE user_id = ?").run(userId);
-
-  logAction({ userId: admin.id, tenantId }, "reset_password", "user", userId, {
-    byPlatformOperator: scope.isPlatformOperator,
-  });
+  // A new password ends every session the old one opened.
+  await batch([
+    stmt("UPDATE users SET password_hash = ? WHERE id = ?", [hash, userId]),
+    stmt("DELETE FROM session WHERE user_id = ?", [userId]),
+    auditStatement(
+      { userId: admin.id, tenantId },
+      "reset_password",
+      "user",
+      userId,
+      {
+        byPlatformOperator: scope.isPlatformOperator,
+      },
+    ),
+  ]);
 
   return c.json({ success: true });
 });
@@ -269,12 +278,14 @@ users.post("/:id/password", async (c) => {
  * game. VendeYa staff is not: the operator keeps their powers on the account,
  * but a tenant admin could still lock them out of this tenant.
  */
-function operatorMembershipRefusal(
+async function operatorMembershipRefusal(
   scope: { isPlatformOperator: boolean },
   userId: string,
-): { error: string } | null {
+): Promise<{ error: string } | null> {
   if (scope.isPlatformOperator) return null;
-  return isPlatformOperator(userId) ? PLATFORM_OPERATOR_ACCOUNT_ERROR : null;
+  return (await isPlatformOperator(userId))
+    ? PLATFORM_OPERATOR_ACCOUNT_ERROR
+    : null;
 }
 
 // Update a member's role inside the active tenant
@@ -289,17 +300,17 @@ users.patch("/:id/role", async (c) => {
     return c.json({ error: "Invalid role" }, 400);
   }
 
-  const membership = MembershipService.get(tenantId, userId);
+  const membership = await MembershipService.get(tenantId, userId);
   if (!membership) {
     return c.json({ error: "User not found" }, 404);
   }
 
-  const refusal = operatorMembershipRefusal(scope, userId);
+  const refusal = await operatorMembershipRefusal(scope, userId);
   if (refusal) return c.json(refusal, 403);
 
   const oldRole = membership.role;
 
-  MembershipService.upsert({
+  await MembershipService.upsert({
     tenantId,
     userId,
     role,
@@ -309,7 +320,7 @@ users.patch("/:id/role", async (c) => {
   // No session is touched. `validateSessionToken` re-reads the membership on
   // every request, so the user's next request already carries the new role.
 
-  logAction(
+  await logAction(
     { userId: admin.id, tenantId },
     "update_user_role",
     "user",
@@ -324,30 +335,32 @@ users.patch("/:id/role", async (c) => {
 });
 
 // Remove a user from the active tenant (the account itself is untouched)
-users.delete("/:id/membership", (c) => {
+users.delete("/:id/membership", async (c) => {
   const userId = pathParam(c, "id");
   const admin = c.get("user");
   const scope = c.get("scope");
   const tenantId = activeTenantId(c);
 
-  if (!memberOfActiveTenant(tenantId, userId)) {
+  if (!(await memberOfActiveTenant(tenantId, userId))) {
     return c.json({ error: "User not found" }, 404);
   }
 
-  const refusal = operatorMembershipRefusal(scope, userId);
+  const refusal = await operatorMembershipRefusal(scope, userId);
   if (refusal) return c.json(refusal, 403);
 
-  MembershipService.remove(tenantId, userId);
-  db.prepare(
-    "UPDATE session SET active_tenant_id = NULL WHERE user_id = ? AND active_tenant_id = ?",
-  ).run(userId, tenantId);
-
-  logAction(
-    { userId: admin.id, tenantId },
-    "remove_membership",
-    "user",
-    userId,
-  );
+  await batch([
+    ...MembershipService.removeStatements(tenantId, userId),
+    stmt(
+      "UPDATE session SET active_tenant_id = NULL WHERE user_id = ? AND active_tenant_id = ?",
+      [userId, tenantId],
+    ),
+    auditStatement(
+      { userId: admin.id, tenantId },
+      "remove_membership",
+      "user",
+      userId,
+    ),
+  ]);
 
   return c.json({ success: true });
 });

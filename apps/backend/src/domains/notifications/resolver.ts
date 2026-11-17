@@ -1,7 +1,8 @@
-import { getOne } from "../../db/query.ts";
+import { env } from "cloudflare:workers";
 import { createLogger } from "../../lib/logger.ts";
 import { TenantSettings } from "../settings/system.ts";
 import type { DomainEvent } from "@vendeya/types";
+import { getOne } from "../../db/index.ts";
 
 const logger = createLogger("notification-resolver");
 
@@ -9,10 +10,10 @@ const logger = createLogger("notification-resolver");
  * Group numbers configured for the deployment. These are VendeYa's own
  * operations groups.
  */
-const STATIC_ROLES: Record<string, string | undefined> = {
-  dev: process.env.WHATSAPP_GROUP_DEV,
-  sales: process.env.WHATSAPP_GROUP_AGENT,
-};
+const STATIC_ROLES = {
+  dev: () => env.WHATSAPP_GROUP_DEV,
+  sales: () => env.WHATSAPP_GROUP_AGENT,
+} as Record<string, () => string | undefined>;
 
 // A tenant that wants its own routing sets these keys in its tenant settings.
 const TENANT_ROLE_KEYS: Record<string, string> = {
@@ -20,12 +21,18 @@ const TENANT_ROLE_KEYS: Record<string, string> = {
   sales: "whatsapp_group_sales",
 };
 
-function staticTarget(target: string, tenantId?: string): string | undefined {
+async function staticTarget(
+  target: string,
+  tenantId?: string,
+): Promise<string | undefined> {
   if (tenantId && TENANT_ROLE_KEYS[target]) {
-    const configured = TenantSettings.get(tenantId, TENANT_ROLE_KEYS[target]!);
+    const configured = await TenantSettings.get(
+      tenantId,
+      TENANT_ROLE_KEYS[target]!,
+    );
     if (configured) return configured;
   }
-  return STATIC_ROLES[target];
+  return STATIC_ROLES[target]?.() || undefined;
 }
 
 export const NotificationResolver = {
@@ -39,7 +46,7 @@ export const NotificationResolver = {
     }
 
     if (target in STATIC_ROLES || target in TENANT_ROLE_KEYS) {
-      const number = staticTarget(target, event.tenantId);
+      const number = await staticTarget(target, event.tenantId);
       if (!number) {
         logger.warn(
           { role: target, tenantId: event.tenantId },
@@ -50,12 +57,12 @@ export const NotificationResolver = {
     }
 
     if (target === "agent") {
-      const assigned = resolveAssignedAgent(event);
-      return assigned || staticTarget("sales", event.tenantId);
+      const assigned = await resolveAssignedAgent(event);
+      return assigned || (await staticTarget("sales", event.tenantId));
     }
 
     if (target === "assigned_agent") {
-      return resolveAssignedAgent(event);
+      return await resolveAssignedAgent(event);
     }
 
     logger.warn(
@@ -67,7 +74,9 @@ export const NotificationResolver = {
 };
 
 /** The agent assigned to the conversation the event came from. */
-function resolveAssignedAgent(event: DomainEvent): string | undefined {
+async function resolveAssignedAgent(
+  event: DomainEvent,
+): Promise<string | undefined> {
   if (
     "phoneNumber" in event.payload &&
     typeof event.payload.phoneNumber === "string"
@@ -91,7 +100,7 @@ function resolveAssignedAgent(event: DomainEvent): string | undefined {
       return undefined;
     }
 
-    const result = getOne<{ phone_number: string }>(
+    const result = await getOne<{ phone_number: string }>(
       `SELECT u.phone_number
        FROM conversations c
        JOIN users u ON c.assigned_agent = u.id

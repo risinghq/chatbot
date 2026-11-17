@@ -1,0 +1,79 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vendeya-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  // The dashboard Worker owns the custom domain. These routes send the API, the
+  // webhook and the public catalog images straight to this Worker.
+  "routes": [
+    { "pattern": "vendeya.rising.sh/api/*", "zone_name": "rising.sh" },
+    { "pattern": "vendeya.rising.sh/media/*", "zone_name": "rising.sh" },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vendeya",
+      // First deploy: replace with the id `wrangler d1 create vendeya` prints.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      // First deploy: replace with the id `wrangler kv namespace create vendeya` prints.
+      "id": "00000000000000000000000000000000",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      // First deploy: create it with `wrangler r2 bucket create vendeya-files`.
+      "bucket_name": "vendeya-files",
+    },
+  ],
+  "images": { "binding": "IMAGES" },
+  "ratelimits": [
+    {
+      "name": "LOGIN_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 10, "period": 60 },
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "CONVERSATIONS", "class_name": "ConversationObject" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ConversationObject"] }],
+  "triggers": { "crons": ["* * * * *"] },
+  // docs/operations.md says what each variable and secret changes.
+  "vars": {
+    "ENVIRONMENT": "production",
+    "PUBLIC_URL": "https://vendeya.rising.sh",
+    "LOG_LEVEL": "info",
+    "GRAPH_API_VERSION": "v26.0",
+    "GRAPH_API_BASE_URL": "https://graph.facebook.com",
+    "CALIDDA_BASE_URL": "https://appweb.calidda.com.pe",
+    "BOT_RESPONSE_DELAY_MS": "2300",
+    "PLATFORM_OPS_PHONE_NUMBER_ID": "",
+    "WHATSAPP_GROUP_AGENT": "",
+    "WHATSAPP_GROUP_DEV": "",
+  },
+  // Set each with `wrangler secret put <NAME>`. Local values live in .dev.vars.
+  "secrets": {
+    "required": [
+      "SECRETS_KEY",
+      "WHATSAPP_APP_SECRET",
+      "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+      "OPENAI_API_KEY",
+      "CALIDDA_USERNAME",
+      "CALIDDA_PASSWORD",
+      "POWERBI_RESOURCE_KEY",
+      "POWERBI_REPORT_ID",
+      "POWERBI_DATASET_ID",
+      "POWERBI_MODEL_ID",
+    ],
+  },
+}

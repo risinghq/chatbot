@@ -43,7 +43,7 @@ export function setupEventSubscribers(): void {
         return;
       }
 
-      createOrder({
+      await createOrder({
         ref: {
           tenantId: event.tenantId,
           channelAccountId: event.channelAccountId,

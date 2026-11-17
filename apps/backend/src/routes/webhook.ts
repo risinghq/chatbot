@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import process from "node:process";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { env } from "cloudflare:workers";
+import { decodeHex } from "@oslojs/encoding";
 import type {
   ChannelAccount,
   ConversationRef,
@@ -14,6 +14,8 @@ import {
   storeIncomingMessage,
 } from "../conversation/message-inbox.ts";
 import { getOrCreateConversation } from "../conversation/store.ts";
+import { lockKey } from "../conversation/locks.ts";
+import { conversationStub } from "../conversation/stub.ts";
 import { TenantService } from "../domains/tenants/index.ts";
 import type {
   InboundRouting,
@@ -39,11 +41,13 @@ const limitWebhookBody = bodyLimit({
   },
 });
 
+const encoder = new TextEncoder();
+
 function constantTimeEquals(a: string, b: string): boolean {
-  const left = Buffer.from(a, "utf8");
-  const right = Buffer.from(b, "utf8");
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+  const left = encoder.encode(a);
+  const right = encoder.encode(b);
+  if (left.byteLength !== right.byteLength) return false;
+  return crypto.subtle.timingSafeEqual(left, right);
 }
 
 /**
@@ -52,15 +56,17 @@ function constantTimeEquals(a: string, b: string): boolean {
  * matches answers the challenge. The env var stays as the fallback for the
  * account seeded from it.
  */
-function verifyTokenMatches(token: string): ChannelAccount | "env" | null {
-  for (const account of ChannelAccountService.listWithVerifyToken()) {
-    const stored = ChannelAccountService.getVerifyToken(account);
+async function verifyTokenMatches(
+  token: string,
+): Promise<ChannelAccount | "env" | null> {
+  for (const account of await ChannelAccountService.listWithVerifyToken()) {
+    const stored = await ChannelAccountService.getVerifyToken(account);
     if (stored && constantTimeEquals(stored, token)) {
       return account;
     }
   }
 
-  const envToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  const envToken = env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
   if (envToken && constantTimeEquals(envToken, token)) {
     return "env";
   }
@@ -72,26 +78,38 @@ const SIGNATURE_PREFIX = "sha256=";
 const SIGNATURE_LENGTH = SIGNATURE_PREFIX.length + 64;
 const HEX_DIGEST = /^[0-9a-f]+$/;
 
-/** Why a signature header was refused, or null when it matches the raw body. */
-function signatureFailure(
+/**
+ * Why a signature header was refused, or null when it matches the raw body.
+ * `crypto.subtle.verify` compares the MAC in constant time.
+ */
+async function signatureFailure(
   rawBody: string,
   header: string | null,
   secret: string,
-): string | null {
+): Promise<string | null> {
   if (!header) return "missing_header";
   if (!header.startsWith(SIGNATURE_PREFIX)) return "bad_prefix";
   if (header.length !== SIGNATURE_LENGTH) return "bad_length";
-  if (!HEX_DIGEST.test(header.slice(SIGNATURE_PREFIX.length))) {
-    return "non_hex";
-  }
+  const digest = header.slice(SIGNATURE_PREFIX.length);
+  if (!HEX_DIGEST.test(digest)) return "non_hex";
 
-  const expected =
-    SIGNATURE_PREFIX +
-    createHmac("sha256", secret).update(rawBody).digest("hex");
-  return constantTimeEquals(header, expected) ? null : "mismatch";
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  const valid = await crypto.subtle.verify(
+    "HMAC",
+    key,
+    decodeHex(digest),
+    encoder.encode(rawBody),
+  );
+  return valid ? null : "mismatch";
 }
 
-webhook.get("/", (c) => {
+webhook.get("/", async (c) => {
   const mode = c.req.query("hub.mode");
   const token = c.req.query("hub.verify_token");
   const challenge = c.req.query("hub.challenge");
@@ -100,7 +118,7 @@ webhook.get("/", (c) => {
     return c.text("Forbidden", 403);
   }
 
-  const match = verifyTokenMatches(token);
+  const match = await verifyTokenMatches(token);
   if (!match) {
     logger.warn("Webhook verification rejected: no matching verify token");
     return c.text("Forbidden", 403);
@@ -123,7 +141,7 @@ webhook.get("/", (c) => {
  */
 type Target = { account: ChannelAccount } | { rejected: string };
 
-function resolveTarget(routing: InboundRouting): Target {
+async function resolveTarget(routing: InboundRouting): Promise<Target> {
   if (!routing.phoneNumberId) {
     logger.warn(
       { wabaId: routing.wabaId },
@@ -132,7 +150,7 @@ function resolveTarget(routing: InboundRouting): Target {
     return { rejected: "unroutable_no_phone_number_id" };
   }
 
-  const account = ChannelAccountService.getByPhoneNumberId(
+  const account = await ChannelAccountService.getByPhoneNumberId(
     routing.phoneNumberId,
   );
 
@@ -167,7 +185,7 @@ function resolveTarget(routing: InboundRouting): Target {
   // A suspended business is switched off, not merely barred from logging in:
   // its bot stops answering too, rather than serving customers on behalf of an
   // account that has been cut off.
-  const tenant = TenantService.getById(account.tenant_id);
+  const tenant = await TenantService.getById(account.tenant_id);
   if (tenant?.status !== "active") {
     logger.warn(
       {
@@ -183,22 +201,25 @@ function resolveTarget(routing: InboundRouting): Target {
   return { account };
 }
 
-/** Handle one message on the account it arrived on. Returns what became of it. */
+/**
+ * Handle one message on the account it arrived on. Returns what became of it,
+ * and the conversation to wake when it was queued.
+ */
 async function handleInbound(
   account: ChannelAccount,
   message: IncomingMessage,
-): Promise<string> {
+): Promise<{ status: string; queued?: ConversationRef }> {
   const phoneNumber = message.from;
 
   if (!phoneNumber || phoneNumber === "0") {
-    return "ignored_system_message";
+    return { status: "ignored_system_message" };
   }
 
   // Meta redelivers an entire batch when the response is a 5xx, so a message
   // that already landed can arrive again next to one that did not. Its id is
   // the key on the queue, and seeing it again means there is nothing to do.
-  if (isQueued(message.id)) {
-    return "duplicate";
+  if (await isQueued(message.id)) {
+    return { status: "duplicate" };
   }
 
   const ref: ConversationRef = {
@@ -208,7 +229,7 @@ async function handleInbound(
   };
 
   if (message.quotedContext) {
-    const quotedMessageContent = WhatsAppService.getMessageById(
+    const quotedMessageContent = await WhatsAppService.getMessageById(
       ref,
       message.quotedContext.id,
     );
@@ -240,11 +261,11 @@ async function handleInbound(
       },
       "Ignoring a non-text message",
     );
-    return "non_text_ignored";
+    return { status: "non_text_ignored" };
   }
 
   if (message.quotedContext) {
-    const quotedProductId = WhatsAppService.findProductByQuotedMessage(
+    const quotedProductId = await WhatsAppService.findProductByQuotedMessage(
       ref,
       message.quotedContext.id,
     );
@@ -264,29 +285,37 @@ async function handleInbound(
   // The message row belongs to a conversation, so the conversation has to
   // exist before it is written. Inbound text from a contact starts one, and the
   // handler's own get-or-create later is idempotent.
-  getOrCreateConversation(ref);
+  await getOrCreateConversation(ref);
 
-  WhatsAppService.logMessage(ref, "inbound", "text", message.body, "received");
+  await WhatsAppService.logMessage(
+    ref,
+    "inbound",
+    "text",
+    message.body,
+    "received",
+  );
 
-  storeIncomingMessage(ref, message);
+  await storeIncomingMessage(ref, message);
 
-  return "received";
+  return { status: "received", queued: ref };
 }
 
 /**
  * One POST, any number of messages. Each is routed and handled on its own
  * account so that a batch spanning two tenants delivers both, and so that one
- * failure cannot swallow the rest of the payload.
+ * failure cannot swallow the rest of the payload. A message is stored before
+ * the answer, so a 200 means it is durable. The turn runs after the answer, in
+ * the conversation's object.
  */
 webhook.post("/", limitWebhookBody, async (c) => {
-  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  const appSecret = env.WHATSAPP_APP_SECRET;
   if (!appSecret) {
     logger.warn("Webhook POST refused: WHATSAPP_APP_SECRET is not set");
     return c.json({ error: "webhook_not_configured" }, 503);
   }
 
   const rawBody = await c.req.text();
-  const failure = signatureFailure(
+  const failure = await signatureFailure(
     rawBody,
     c.req.header("X-Hub-Signature-256") ?? null,
     appSecret,
@@ -306,6 +335,7 @@ webhook.post("/", limitWebhookBody, async (c) => {
   }
 
   const results: Array<{ phoneNumberId: string | null; status: string }> = [];
+  const queued = new Map<string, ConversationRef>();
   let failed = false;
 
   for (const { routing, messages } of changes) {
@@ -316,7 +346,7 @@ webhook.post("/", limitWebhookBody, async (c) => {
       continue;
     }
 
-    const target = resolveTarget(routing);
+    const target = await resolveTarget(routing);
 
     if ("rejected" in target) {
       for (const _message of messages) {
@@ -327,10 +357,9 @@ webhook.post("/", limitWebhookBody, async (c) => {
 
     for (const message of messages) {
       try {
-        results.push({
-          phoneNumberId,
-          status: await handleInbound(target.account, message),
-        });
+        const handled = await handleInbound(target.account, message);
+        results.push({ phoneNumberId, status: handled.status });
+        if (handled.queued) queued.set(lockKey(handled.queued), handled.queued);
       } catch (error) {
         failed = true;
         logger.error(
@@ -345,6 +374,23 @@ webhook.post("/", limitWebhookBody, async (c) => {
         results.push({ phoneNumberId, status: "error" });
       }
     }
+  }
+
+  for (const ref of queued.values()) {
+    c.executionCtx.waitUntil(
+      conversationStub(ref)
+        .wake(ref)
+        .catch((error: unknown) =>
+          logger.error(
+            {
+              error,
+              tenantId: ref.tenantId,
+              channelAccountId: ref.channelAccountId,
+            },
+            "Waking the conversation failed; the sweep wakes it",
+          ),
+        ),
+    );
   }
 
   // Meta redelivers the whole batch after a 5xx, so the messages that did land

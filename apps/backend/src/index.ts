@@ -1,193 +1,98 @@
+import { env } from "cloudflare:workers";
 import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
-import process from "node:process";
-import { createLogger } from "./lib/logger.ts";
-import { getFrontendUrl } from "@vendeya/utils";
-import {
-  startAggregatorWorker,
-  stopAggregatorWorker,
-} from "./conversation/aggregator-worker.ts";
-import { purgeProcessedMessages } from "./conversation/processed-retention.ts";
-import { purgeFinishedOutbox } from "./conversation/outbox.ts";
-import {
-  startOutboxWorker,
-  stopOutboxWorker,
-} from "./conversation/outbox-worker.ts";
-
-const logger = createLogger("app");
-
-import { db } from "./db/index.ts";
-import { initializeDatabase } from "./db/init.ts";
-import { seedDatabase } from "./db/seed-sqlite.ts";
-import { accountsOn } from "./domains/accounts/index.ts";
-
+import { CATALOG_IMAGE_CACHE_CONTROL } from "./adapters/storage/images.ts";
+import { initializeApplication } from "./bootstrap/index.ts";
+import { isProduction, publicOrigin } from "./config.ts";
+import { isCatalogImageKey } from "./lib/storage-paths.ts";
 import { requireAuth, requireRole } from "./middleware/auth.ts";
 import { errorHandler } from "./middleware/error.ts";
 import { securityHeaders } from "./middleware/security.ts";
-
-import webhook from "./routes/webhook.ts";
-import auth from "./routes/auth.ts";
-import simulator from "./routes/simulator.ts";
-import conversations from "./routes/conversations.ts";
-import analytics from "./routes/analytics.ts";
-import reports from "./routes/reports.ts";
 import admin from "./routes/admin.ts";
+import analytics from "./routes/analytics.ts";
+import assets from "./routes/assets.ts";
+import auth from "./routes/auth.ts";
 import catalog from "./routes/catalog.ts";
-import periods from "./routes/periods.ts";
+import conversations from "./routes/conversations.ts";
+import health from "./routes/health.ts";
 import orders from "./routes/orders.ts";
+import periods from "./routes/periods.ts";
+import providerRoutes from "./routes/providers.ts";
+import reports from "./routes/reports.ts";
+import simulator from "./routes/simulator.ts";
 import systemLogs from "./routes/system-logs.ts";
 import tenants from "./routes/tenants.ts";
-import assets from "./routes/assets.ts";
-import providerRoutes from "./routes/providers.ts";
+import webhook from "./routes/webhook.ts";
+import { sweep } from "./sweep.ts";
 
-import { healthRoute } from "./routes/health.ts";
-import { checkAndReassignTimeouts } from "./domains/conversations/assignment.ts";
-import { initializeApplication } from "./bootstrap/index.ts";
-import { IMAGES_DIR } from "./lib/storage-paths.ts";
-import { assertGraphConfig } from "./config/graph.ts";
+export { ConversationObject } from "./conversation/object.ts";
+
+initializeApplication();
 
 const app = new Hono();
 
-assertGraphConfig();
-
-// Awaited so a seed that throws stops the boot before Bun binds the port.
-initializeDatabase(db);
-await seedDatabase(db);
-
-if (!accountsOn(db).hasPlatformOperator()) {
-  logger.warn(
-    "No platform operator can log in, so nobody can create a tenant or act " +
-      "across tenants. Run `bun run account create <username> " +
-      "--platform-operator`, or `bun run account promote <username>` for an " +
-      "existing account.",
-  );
-}
-
-if (!process.env.WHATSAPP_APP_SECRET) {
-  logger.warn(
-    "WHATSAPP_APP_SECRET is not set, so POST /api/webhook answers 503 and no " +
-      "inbound message is accepted. Set it to the Meta app secret.",
-  );
-}
-
-// event bus, subscribers
-initializeApplication();
-
-startAggregatorWorker();
-startOutboxWorker();
-
-// An error that escapes a timer callback ends the process, so a busy or full
-// database must cost one tick, not the server.
-function everyGuarded(name: string, ms: number, task: () => unknown): void {
-  setInterval(async () => {
-    try {
-      await task();
-    } catch (error) {
-      logger.error({ error, task: name }, "Scheduled task failed");
-    }
-  }, ms);
-}
-
-everyGuarded("reassign timed-out conversations", 60 * 1000, () =>
-  checkAndReassignTimeouts(),
-);
-everyGuarded("purge processed messages", 60 * 60 * 1000, () =>
-  purgeProcessedMessages(),
-);
-everyGuarded("purge finished outbox", 60 * 60 * 1000, () =>
-  purgeFinishedOutbox(),
-);
-
-// Global middleware
 app.use("/*", securityHeaders);
-app.use(
-  "/*",
-  cors({
-    origin: getFrontendUrl(),
-    credentials: true,
-  }),
-);
+app.use("/*", cors({ origin: () => publicOrigin(), credentials: true }));
 
-// Only catalog images are served statically, because Meta fetches the image
-// link with no credentials. Contracts and call recordings live outside this
-// directory and are reachable only through /api/assets/:id, which checks
-// tenant scope.
-app.use(
-  "/media/images/*",
-  serveStatic({
-    // The root derives from UPLOAD_DIR, like the store's write path. A relative
-    // literal would resolve against the working directory, where the store does
-    // not write.
-    root: IMAGES_DIR,
-    rewriteRequestPath: (p) => p.replace(/^\/media\/images/, ""),
-  }),
-);
+/**
+ * Only catalog images are public, because Meta fetches an outgoing image's
+ * link with no credentials. Contracts and recordings sit under other prefixes
+ * and are reachable only through /api/assets/:id, which checks tenant scope.
+ */
+app.get("/media/:key{.+}", async (c) => {
+  const key = c.req.param("key");
+  if (!isCatalogImageKey(key)) return c.notFound();
 
-// Unprotected routes
-app.route("/health", healthRoute(db));
+  const object = await env.FILES.get(key);
+  if (!object) return c.notFound();
 
+  return c.body(object.body, 200, {
+    "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg",
+    "Cache-Control": CATALOG_IMAGE_CACHE_CONTROL,
+    ETag: object.httpEtag,
+  });
+});
+
+app.route("/api/health", health);
 app.route("/api/webhook", webhook);
-
 app.route("/api/auth", auth);
 
-// The simulator plays customers against live tenant data, so production does not
-// serve it. This sits before requireAuth so the answer is 404 for everyone, not
-// 401 for a caller who is not signed in.
-const simulatorEnabled = process.env.NODE_ENV !== "production";
-if (!simulatorEnabled) {
-  app.all("/api/simulator/*", (c) => c.notFound());
-}
+// The simulator plays customers against live tenant data, so production does
+// not serve it. This sits before requireAuth so the answer is 404 for
+// everyone, not 401 for a caller who is not signed in.
+app.all("/api/simulator/*", async (c, next) =>
+  isProduction() ? c.notFound() : next(),
+);
 
-// Protected routes
 app.use("/api/*", requireAuth);
 app.route("/api/tenants", tenants);
 app.route("/api/assets", assets);
-if (simulatorEnabled) {
-  app.route("/api/simulator", simulator);
-}
+app.route("/api/simulator", simulator);
 app.route("/api/conversations", conversations);
 app.route("/api/catalog", catalog);
 app.route("/api/periods", periods);
 app.route("/api/orders", orders);
 
-// Analytics routes
 const requireAnalyticsAccess = requireRole("admin", "developer", "supervisor");
 app.use("/api/analytics/*", requireAnalyticsAccess);
 app.route("/api/analytics", analytics);
 
-// System logs routes
 app.use("/api/system/logs/*", requireAnalyticsAccess);
 app.route("/api/system/logs", systemLogs);
 
-// Admin-only routes
 app.use("/api/admin/*", requireRole("admin"));
 app.route("/api/admin", admin);
 
-// Reports
 app.route("/api/reports", reports);
-
 app.route("/api/providers", providerRoutes);
 
-// Error handler
 app.onError(errorHandler);
 
-// PORT lets a test that boots the real server, or a developer whose port 3000
-// is taken, listen elsewhere. Only one backend runs per database.
-const port = Number(process.env.PORT) || 3000;
+export { app };
 
-process.on("SIGINT", async () => {
-  logger.info("Shutting down (SIGINT)");
-  await stopAggregatorWorker();
-  await stopOutboxWorker();
-  process.exit(0);
-});
-
-process.on("SIGTERM", async () => {
-  logger.info("Shutting down (SIGTERM)");
-  await stopAggregatorWorker();
-  await stopOutboxWorker();
-  process.exit(0);
-});
-
-export default { port, fetch: app.fetch };
+export default {
+  fetch: app.fetch,
+  scheduled(controller, _env, ctx) {
+    ctx.waitUntil(sweep(controller.scheduledTime));
+  },
+} satisfies ExportedHandler<Env>;

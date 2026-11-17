@@ -1,16 +1,6 @@
-/**
- * Persistence layer for conversations-related data.
- * Stores ConversationPhase as discriminated union JSON.
- *
- * Every read and write is keyed by the full conversation identity: tenant,
- * channel account, and contact number. There is no lookup by phone number
- * alone, so the same contact in two tenants has two separate conversations.
- */
-
-import { db } from "../db/index.ts";
-import { getOne } from "../db/query.ts";
 import type { Conversation, ConversationRef } from "@vendeya/types";
 import type { ConversationPhase, ConversationMetadata } from "@vendeya/core";
+import { getOne, run, stmt } from "../db/index.ts";
 
 type ConversationData = {
   ref: ConversationRef;
@@ -29,20 +19,22 @@ function identityParams(ref: ConversationRef): [string, string, string] {
   return [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
 }
 
-export function findConversation(ref: ConversationRef): Conversation | null {
+export async function findConversation(
+  ref: ConversationRef,
+): Promise<Conversation | null> {
   return (
-    getOne<Conversation>(
+    (await getOne<Conversation>(
       `SELECT * FROM conversations WHERE ${IDENTITY_WHERE}`,
       identityParams(ref),
-    ) ?? null
+    )) ?? null
   );
 }
 
-export function getOrCreateConversation(
+export async function getOrCreateConversation(
   ref: ConversationRef,
   isSimulation = false,
-): ConversationData {
-  const conv = findConversation(ref);
+): Promise<ConversationData> {
+  const conv = await findConversation(ref);
 
   if (!conv) {
     const now = Date.now();
@@ -53,16 +45,17 @@ export function getOrCreateConversation(
       phoneNumber: ref.phoneNumber,
     };
 
-    db.prepare(
+    await run(
       `INSERT INTO conversations (tenant_id, channel_account_id, phone_number, context_data, status, is_simulation)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(
-      ref.tenantId,
-      ref.channelAccountId,
-      ref.phoneNumber,
-      JSON.stringify({ phase: initialPhase, metadata: initialMetadata }),
-      "active",
-      isSimulation ? 1 : 0,
+      [
+        ref.tenantId,
+        ref.channelAccountId,
+        ref.phoneNumber,
+        JSON.stringify({ phase: initialPhase, metadata: initialMetadata }),
+        "active",
+        isSimulation ? 1 : 0,
+      ],
     );
 
     return {
@@ -77,12 +70,24 @@ export function getOrCreateConversation(
   return parseConversation(conv);
 }
 
-export function updateConversation(
+export async function updateConversation(
   ref: ConversationRef,
   phase: ConversationPhase,
   metadata: Partial<ConversationMetadata>,
-): void {
-  const existing = findConversation(ref);
+): Promise<void> {
+  await (await conversationUpdate(ref, phase, metadata)).run();
+}
+
+/**
+ * The statement that writes the phase and merged metadata, for a caller's
+ * batch. It reads the row first, so the caller holds the conversation lock.
+ */
+export async function conversationUpdate(
+  ref: ConversationRef,
+  phase: ConversationPhase,
+  metadata: Partial<ConversationMetadata>,
+): Promise<D1PreparedStatement> {
+  const existing = await findConversation(ref);
 
   if (!existing) {
     throw new Error(
@@ -126,16 +131,17 @@ export function updateConversation(
     | null
   )[];
 
-  db.prepare(`UPDATE conversations SET ${fields} WHERE ${IDENTITY_WHERE}`).run(
-    ...values,
+  return stmt(
+    `UPDATE conversations SET ${fields} WHERE ${IDENTITY_WHERE}`,
+    values,
   );
 }
 
-export function escalateConversation(
+export async function escalateConversation(
   ref: ConversationRef,
   reason: string,
-): void {
-  updateConversation(ref, { phase: "escalated", reason }, {});
+): Promise<void> {
+  await updateConversation(ref, { phase: "escalated", reason }, {});
 }
 
 /**
@@ -143,15 +149,16 @@ export function escalateConversation(
  * valid JSON in `context_data` is left as it is, because `json_set` on NULL
  * returns NULL and would wipe the column.
  */
-export function refreshLastActivity(ref: ConversationRef): void {
+export async function refreshLastActivity(ref: ConversationRef): Promise<void> {
   const now = Date.now();
 
-  db.prepare(
+  await run(
     `UPDATE conversations
      SET context_data = json_set(context_data, '$.metadata.lastActivityAt', ?),
          last_activity_at = ?
      WHERE ${IDENTITY_WHERE} AND json_valid(context_data)`,
-  ).run(now, now, ...identityParams(ref));
+    [now, now, ...identityParams(ref)],
+  );
 }
 
 export function isSessionTimedOut(metadata: ConversationMetadata): boolean {
@@ -164,10 +171,10 @@ export function isSessionTimedOut(metadata: ConversationMetadata): boolean {
  * loses its agent, because nobody holds a conversation the bot answers. An
  * agent assigned to a bot-owned conversation keeps it.
  */
-export function resetSession(
+export async function resetSession(
   ref: ConversationRef,
   preserveCategory?: string,
-): void {
+): Promise<void> {
   const now = Date.now();
   const newMetadata: ConversationMetadata = {
     isReturningUser: true,
@@ -178,7 +185,7 @@ export function resetSession(
 
   // SQLite evaluates every SET expression against the row before the update,
   // so the CASE tests the status the conversation had.
-  db.prepare(
+  await run(
     `UPDATE conversations
      SET context_data = ?,
          assigned_agent = CASE WHEN status = 'human_takeover'
@@ -189,10 +196,11 @@ export function resetSession(
          handover_reason = NULL,
          last_activity_at = ?
      WHERE ${IDENTITY_WHERE}`,
-  ).run(
-    JSON.stringify({ phase: DEFAULT_PHASE, metadata: newMetadata }),
-    now,
-    ...identityParams(ref),
+    [
+      JSON.stringify({ phase: DEFAULT_PHASE, metadata: newMetadata }),
+      now,
+      ...identityParams(ref),
+    ],
   );
 }
 

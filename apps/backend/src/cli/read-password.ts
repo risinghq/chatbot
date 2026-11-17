@@ -1,28 +1,38 @@
 import process from "node:process";
 import { stripVTControlCharacters } from "node:util";
 
-/** On a terminal, a hidden prompt asked twice. Otherwise one line from stdin. */
-export async function readPassword(): Promise<string> {
-  if (!process.stdin.isTTY) return readFromStdin();
+/**
+ * A secret the operator types: on a terminal, a hidden prompt asked twice.
+ * Otherwise one line from stdin. Never an argument or a variable, which a
+ * shell history or a process list would keep.
+ */
+export async function readSecret(label = "Password"): Promise<string> {
+  if (!process.stdin.isTTY) return readFromStdin(label);
 
-  const password = await promptHidden("Password: ");
-  const confirmation = await promptHidden("Confirm password: ");
+  const secret = await promptHidden(`${label}: `);
+  const confirmation = await promptHidden(`Confirm ${label.toLowerCase()}: `);
 
-  if (password !== confirmation) {
-    throw new Error("The passwords do not match.");
+  if (secret !== confirmation) {
+    throw new Error(`The ${label.toLowerCase()} entries do not match.`);
   }
 
-  return password;
+  return secret;
 }
 
-async function readFromStdin(): Promise<string> {
-  const password = (await Bun.stdin.text()).replace(/\r?\n$/, "");
+async function readFromStdin(label: string): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  const secret = Buffer.concat(chunks)
+    .toString("utf8")
+    .replace(/\r?\n$/, "");
 
-  if (/[\r\n]/.test(password)) {
-    throw new Error("Expected the password on a single line of stdin.");
+  if (/[\r\n]/.test(secret)) {
+    throw new Error(
+      `Expected the ${label.toLowerCase()} on a single line of stdin.`,
+    );
   }
 
-  return password;
+  return secret;
 }
 
 function promptHidden(label: string): Promise<string> {

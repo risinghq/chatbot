@@ -1,8 +1,8 @@
-import { db } from "../db/index.ts";
-import { getAll, tenantPredicate } from "../db/query.ts";
-import type { SQLQueryBindings } from "bun:sqlite";
+import { tenantPredicate } from "../db/query.ts";
+import type { Binding } from "../db/index.ts";
 import type { ConversationRef } from "@vendeya/types";
 import { createLogger } from "../lib/logger.ts";
+import { getAll, run } from "../db/index.ts";
 
 const logger = createLogger("llm-tracker");
 
@@ -39,7 +39,7 @@ async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
     ? JSON.stringify(data.contextMetadata)
     : null;
 
-  db.prepare(
+  await run(
     `INSERT INTO llm_calls (
       id, tenant_id, channel_account_id, phone_number, operation, model,
       prompt, user_message, response,
@@ -47,33 +47,37 @@ async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
       latency_ms, tokens_prompt, tokens_completion, tokens_total,
       conversation_phase, context_metadata
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    data.ref.tenantId,
-    data.ref.channelAccountId,
-    data.ref.phoneNumber,
-    data.operation,
-    data.model,
-    data.prompt,
-    data.userMessage,
-    data.response || null,
-    data.status,
-    data.errorType || null,
-    data.errorMessage || null,
-    data.latencyMs,
-    data.tokensPrompt || null,
-    data.tokensCompletion || null,
-    data.tokensTotal || null,
-    data.conversationPhase || null,
-    contextJson,
+    [
+      id,
+      data.ref.tenantId,
+      data.ref.channelAccountId,
+      data.ref.phoneNumber,
+      data.operation,
+      data.model,
+      data.prompt,
+      data.userMessage,
+      data.response || null,
+      data.status,
+      data.errorType || null,
+      data.errorMessage || null,
+      data.latencyMs,
+      data.tokensPrompt || null,
+      data.tokensCompletion || null,
+      data.tokensTotal || null,
+      data.conversationPhase || null,
+      contextJson,
+    ],
   );
 }
 
 /** `tenantId` null spans tenants and is only reachable by platform operators. */
-export function getRecentLLMCalls(tenantId: string | null, limit: number = 50) {
-  const params: SQLQueryBindings[] = tenantId ? [tenantId, limit] : [limit];
+export async function getRecentLLMCalls(
+  tenantId: string | null,
+  limit: number = 50,
+) {
+  const params: Binding[] = tenantId ? [tenantId, limit] : [limit];
 
-  return getAll(
+  return await getAll(
     `SELECT * FROM llm_calls
      WHERE ${tenantPredicate(tenantId)}
      ORDER BY created_at DESC
@@ -85,17 +89,17 @@ export function getRecentLLMCalls(tenantId: string | null, limit: number = 50) {
 /**
  * Get error rate and performance stats by operation
  */
-export function getLLMErrorStats(
+export async function getLLMErrorStats(
   tenantId: string | null,
   hoursBack: number = 24,
 ) {
   const conditions = ["created_at > datetime('now', '-' || ? || ' hours')"];
-  const params: SQLQueryBindings[] = [hoursBack];
+  const params: Binding[] = [hoursBack];
 
   conditions.push(tenantPredicate(tenantId));
   if (tenantId) params.push(tenantId);
 
-  return getAll(
+  return await getAll(
     `SELECT
        operation,
        COUNT(*) as total_calls,

@@ -1,25 +1,8 @@
-import {
-  getAll,
-  tenantOrPlatformPredicate,
-  tenantPredicate,
-} from "../../db/query.ts";
-import type { SQLQueryBindings } from "bun:sqlite";
+import { tenantOrPlatformPredicate, tenantPredicate } from "../../db/query.ts";
+import type { Binding } from "../../db/index.ts";
 import { auditActorLabel } from "../../platform/audit/logger.ts";
-
-export type SystemLogSource = "llm" | "audit";
-export type SystemLogStatus = "success" | "error" | "info";
-
-export interface SystemLogEntry {
-  id: string;
-  timestamp: string;
-  source: SystemLogSource;
-  event: string;
-  status: SystemLogStatus;
-  actor: string;
-  summary: string;
-  metadata?: any;
-  original_data: any;
-}
+import { getAll } from "../../db/index.ts";
+import type { SystemLogEntry, SystemLogStatus } from "@vendeya/types";
 
 export const SystemLogService = {
   /**
@@ -27,16 +10,14 @@ export const SystemLogService = {
    * rows. An unpinned platform operator reaches it through
    * routes/system-logs.ts.
    */
-  getRecentLogs(
+  async getRecentLogs(
     tenantId: string | null,
     limit: number = 100,
-  ): SystemLogEntry[] {
-    const llmParams: SQLQueryBindings[] = tenantId
-      ? [tenantId, limit]
-      : [limit];
+  ): Promise<SystemLogEntry[]> {
+    const llmParams: Binding[] = tenantId ? [tenantId, limit] : [limit];
 
     // Get LLM Calls
-    const llmCalls = getAll<any>(
+    const llmCalls = await getAll<any>(
       `SELECT
          id, created_at, operation, status, phone_number, latency_ms,
          prompt, response, error_message, context_metadata
@@ -47,7 +28,7 @@ export const SystemLogService = {
     );
 
     // Get Audit Logs
-    const auditLogs = getAll<any>(
+    const auditLogs = await getAll<any>(
       `SELECT
          a.id, a.created_at, a.action, a.resource_type, a.resource_id, a.metadata,
          u.username as actor_name, a.user_id, a.actor

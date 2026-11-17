@@ -16,13 +16,13 @@ const requireCatalogWrite = requireRole("admin", "developer", "supervisor");
 periods.use("/*", requireTenantScope);
 
 // List all periods
-periods.get("/", (c) => {
-  return c.json(PeriodService.getAll(c.get("scope").tenantId));
+periods.get("/", async (c) => {
+  return c.json(await PeriodService.getAll(c.get("scope").tenantId));
 });
 
 // Get active period
-periods.get("/active", requireActiveTenant, (c) => {
-  const period = PeriodService.getActive(activeTenantId(c));
+periods.get("/active", requireActiveTenant, async (c) => {
+  const period = await PeriodService.getActive(activeTenantId(c));
   if (!period) {
     return c.json({ error: "No hay período activo" }, 404);
   }
@@ -30,9 +30,9 @@ periods.get("/active", requireActiveTenant, (c) => {
 });
 
 // Get period by ID
-periods.get("/:id", (c) => {
+periods.get("/:id", async (c) => {
   const id = pathParam(c, "id");
-  const period = PeriodService.getById(c.get("scope").tenantId, id);
+  const period = await PeriodService.getById(c.get("scope").tenantId, id);
   if (!period) {
     return c.json({ error: "Período no encontrado" }, 404);
   }
@@ -55,19 +55,19 @@ periods.post("/", requireActiveTenant, requireCatalogWrite, async (c) => {
   }
 
   // Uniqueness is per tenant: another business may already run this month.
-  const existing = PeriodService.getByYearMonth(tenantId, year_month);
+  const existing = await PeriodService.getByYearMonth(tenantId, year_month);
   if (existing) {
     return c.json({ error: "Ya existe un período para ese mes" }, 400);
   }
 
-  const period = PeriodService.create({
+  const period = await PeriodService.create({
     tenantId,
     name,
     year_month,
     created_by: user.id,
   });
 
-  logAction(
+  await logAction(
     { userId: user.id, tenantId },
     "create_period",
     "period",
@@ -93,7 +93,7 @@ periods.patch(
       return c.json({ error: "Estado inválido" }, 400);
     }
 
-    const period = PeriodService.getById(tenantId, id);
+    const period = await PeriodService.getById(tenantId, id);
     if (!period) {
       return c.json({ error: "Período no encontrado" }, 404);
     }
@@ -106,9 +106,9 @@ periods.patch(
       );
     }
 
-    const updated = PeriodService.updateStatus(tenantId, id, status);
+    const updated = await PeriodService.updateStatus(tenantId, id, status);
 
-    logAction(
+    await logAction(
       { userId: user.id, tenantId },
       "update_period_status",
       "period",
@@ -121,18 +121,18 @@ periods.patch(
 );
 
 // Delete period (only draft, no products)
-periods.delete("/:id", requireActiveTenant, requireCatalogWrite, (c) => {
+periods.delete("/:id", requireActiveTenant, requireCatalogWrite, async (c) => {
   const id = pathParam(c, "id");
   const user = c.get("user");
   const tenantId = activeTenantId(c);
 
-  const result = PeriodService.delete(tenantId, id);
+  const result = await PeriodService.delete(tenantId, id);
 
   if (!result.success) {
     return c.json({ error: result.message }, 400);
   }
 
-  logAction({ userId: user.id, tenantId }, "delete_period", "period", id);
+  await logAction({ userId: user.id, tenantId }, "delete_period", "period", id);
   return c.json({ success: true });
 });
 

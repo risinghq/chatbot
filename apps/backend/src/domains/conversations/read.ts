@@ -1,6 +1,6 @@
-import { getAll, tenantPredicate } from "../../db/query.ts";
+import { tenantPredicate } from "../../db/query.ts";
 import { refOf } from "../../conversation/store.ts";
-import type { SQLQueryBindings } from "bun:sqlite";
+import type { Binding } from "../../db/index.ts";
 import type { Conversation } from "@vendeya/types";
 import { WhatsAppService } from "../../adapters/whatsapp/index.ts";
 import { getEventsByConversation } from "../../domains/analytics/index.ts";
@@ -10,6 +10,7 @@ import {
   type AuthScope,
 } from "../../platform/auth/scope.ts";
 import type { ReplayData, ReplayMetadata } from "@vendeya/types";
+import { getAll } from "../../db/index.ts";
 
 /**
  * A sales agent reaches a conversation assigned to them or to nobody, never one
@@ -22,12 +23,12 @@ const AGENT_CONVERSATIONS = "(assigned_agent = ? OR assigned_agent IS NULL)";
  * Every tenant role may list conversations. A sales agent sees the ones
  * assigned to them or to nobody, the rule `lookupConversation` applies to one.
  */
-export function listConversations(
+export async function listConversations(
   scope: AuthScope,
   status: string | null | undefined,
 ) {
   const conditions = ["is_simulation = 0"];
-  const params: SQLQueryBindings[] = [];
+  const params: Binding[] = [];
 
   // A caller pinned to a tenant sees only that tenant's rows, whatever the role.
   conditions.push(tenantPredicate(scope.tenantId));
@@ -44,7 +45,7 @@ export function listConversations(
     params.push(status);
   }
 
-  return getAll<Conversation>(
+  return await getAll<Conversation>(
     `SELECT * FROM conversations WHERE ${conditions.join(" AND ")}
      ORDER BY last_activity_at DESC LIMIT 100`,
     params,
@@ -67,13 +68,13 @@ export type ConversationLookup =
  * agent gets one assigned to another agent reported the same way. An unpinned
  * platform operator can find a conversation in any open tenant.
  */
-export function lookupConversation(
+export async function lookupConversation(
   scope: AuthScope,
   phoneNumber: string,
   channelAccountId: string | null,
-): ConversationLookup {
+): Promise<ConversationLookup> {
   const conditions = ["phone_number = ?"];
-  const params: SQLQueryBindings[] = [phoneNumber];
+  const params: Binding[] = [phoneNumber];
 
   if (!scope.tenantId && !scope.isPlatformOperator) {
     // Neither pinned to a tenant nor platform staff: nothing is visible.
@@ -96,7 +97,7 @@ export function lookupConversation(
     params.push(channelAccountId);
   }
 
-  const matches = getAll<Conversation>(
+  const matches = await getAll<Conversation>(
     `SELECT * FROM conversations WHERE ${conditions.join(" AND ")}
      ORDER BY last_activity_at DESC`,
     params,
@@ -113,10 +114,10 @@ export function lookupConversation(
   return { status: "found", conversation: matches[0]! };
 }
 
-export function getConversationDetail(conv: Conversation) {
+export async function getConversationDetail(conv: Conversation) {
   const ref = refOf(conv);
-  const messages = WhatsAppService.getMessageHistory(ref, 100);
-  const events = getEventsByConversation(ref);
+  const messages = await WhatsAppService.getMessageHistory(ref, 100);
+  const events = await getEventsByConversation(ref);
 
   return {
     conversation: conv,
@@ -125,12 +126,12 @@ export function getConversationDetail(conv: Conversation) {
   };
 }
 
-export function getReplayData(
+export async function getReplayData(
   conv: Conversation,
   userId: string,
-): ReplayData | null {
+): Promise<ReplayData | null> {
   const ref = refOf(conv);
-  const messages = WhatsAppService.getMessageHistory(ref, 1000);
+  const messages = await WhatsAppService.getMessageHistory(ref, 1000);
   const initialContext = JSON.parse(conv.context_data || "{}");
 
   const metadata: ReplayMetadata = {
@@ -143,7 +144,7 @@ export function getReplayData(
     timestamp: new Date().toISOString(),
   };
 
-  logAction(
+  await logAction(
     { userId, tenantId: conv.tenant_id },
     "export_replay",
     "conversation",

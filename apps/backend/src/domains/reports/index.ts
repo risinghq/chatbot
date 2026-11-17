@@ -1,11 +1,10 @@
 import {
-  getAll,
-  getOne,
   limaDateString,
   limaDayBounds,
   tenantPredicate,
 } from "../../db/query.ts";
 import * as XLSX from "xlsx";
+import { getAll, getOne } from "../../db/index.ts";
 
 type ActivityReportParams = {
   /**
@@ -29,10 +28,10 @@ type OrderReportParams = {
 
 export const ReportService = {
   /** `date` is `YYYY-MM-DD` in Lima. Omitted, it is today there. */
-  generateDailyReport: (tenantId: string | null, date?: string) => {
+  generateDailyReport: async (tenantId: string | null, date?: string) => {
     const [start, end] = limaDayBounds(date);
 
-    const rows = getAll<Record<string, unknown>>(
+    const rows = await getAll<Record<string, unknown>>(
       `
             SELECT
               phone_number,
@@ -54,10 +53,13 @@ export const ReportService = {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, limaDateString(start));
 
-    return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    return XLSX.write(workbook, {
+      type: "array",
+      bookType: "xlsx",
+    }) as ArrayBuffer;
   },
 
-  generateActivityReport: (params: ActivityReportParams) => {
+  generateActivityReport: async (params: ActivityReportParams) => {
     const { tenantId, startDate, endDate, segments, saleStatuses } = params;
 
     const conditions: string[] = ["is_simulation = 0"];
@@ -89,7 +91,7 @@ export const ReportService = {
 
     const whereClause = conditions.join(" AND ");
 
-    const rows = getAll<Record<string, unknown>>(
+    const rows = await getAll<Record<string, unknown>>(
       `
         SELECT
           phone_number as "Teléfono",
@@ -182,13 +184,16 @@ export const ReportService = {
     const sheetName = limaDateString(startTimestamp);
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
 
-    return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    return XLSX.write(workbook, {
+      type: "array",
+      bookType: "xlsx",
+    }) as ArrayBuffer;
   },
 
-  getTodayContactCount: (tenantId: string | null) => {
+  getTodayContactCount: async (tenantId: string | null) => {
     const [startTimestamp] = limaDayBounds();
 
-    const result = getOne<{ count: number }>(
+    const result = await getOne<{ count: number }>(
       `
         SELECT COUNT(*) as count
         FROM conversations
@@ -201,7 +206,7 @@ export const ReportService = {
     return result?.count ?? 0;
   },
 
-  generateOrderReport: (params: OrderReportParams) => {
+  generateOrderReport: async (params: OrderReportParams) => {
     const { tenantId, startDate, endDate, status, assignedAgent } = params;
 
     const conditions: string[] = [];
@@ -230,7 +235,7 @@ export const ReportService = {
       values.push(assignedAgent);
     }
 
-    const rows = getAll<Record<string, unknown>>(
+    const rows = await getAll<Record<string, unknown>>(
       `
         SELECT 
           order_number as "Número de Orden",
@@ -315,6 +320,9 @@ export const ReportService = {
       : "Ordenes";
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
 
-    return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    return XLSX.write(workbook, {
+      type: "array",
+      bookType: "xlsx",
+    }) as ArrayBuffer;
   },
 };

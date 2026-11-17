@@ -1,6 +1,7 @@
 import type { ConversationRef, Segment } from "@vendeya/types";
 import { BundleService } from "../domains/catalog/index.ts";
 import { WhatsAppService } from "../adapters/whatsapp/index.ts";
+import { catalogImageKey } from "../lib/storage-paths.ts";
 
 export type SendBundleParams = {
   ref: ConversationRef;
@@ -35,7 +36,7 @@ export async function sendBundleImages(
 
   const strictPriceLimit = segment === "gaso";
 
-  const bundles = BundleService.getAvailable(ref.tenantId, {
+  const bundles = await BundleService.getAvailable(ref.tenantId, {
     maxPrice: creditLine,
     category,
     segment,
@@ -60,10 +61,10 @@ export async function sendBundleImages(
 
     const caption = `${bundle.name}\nPrecio: S/ ${bundle.price.toFixed(2)}${installmentText ? `\n${installmentText}` : ""}`;
 
-    const imagePath = `images/${bundle.image_id}.jpg`;
+    const imagePath = catalogImageKey(ref.tenantId, bundle.image_id);
 
     if (isSimulation) {
-      WhatsAppService.logMessage(
+      await WhatsAppService.logMessage(
         ref,
         "outbound",
         "image",
@@ -104,7 +105,7 @@ export async function sendBundleImages(
       : "¿Alguno te interesa?";
 
   if (isSimulation) {
-    WhatsAppService.logMessage(ref, "outbound", "text", followUp, "sent");
+    await WhatsAppService.logMessage(ref, "outbound", "text", followUp, "sent");
   } else {
     await WhatsAppService.sendMessage(ref, followUp, { retry: true });
   }

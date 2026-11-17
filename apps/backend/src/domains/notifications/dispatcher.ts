@@ -1,10 +1,10 @@
-import { db } from "../../db/index.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { WhatsAppService } from "../../adapters/whatsapp/index.ts";
 import { ChannelAccountService } from "../channels/accounts.ts";
 import { NotificationResolver } from "./resolver.ts";
 import type { NotificationDecision } from "./evaluator.ts";
 import type { ChannelAccount, DomainEvent } from "@vendeya/types";
+import { run } from "../../db/index.ts";
 
 const logger = createLogger("notification-dispatcher");
 
@@ -35,17 +35,19 @@ const adapters: Record<string, NotificationChannelAdapter> = {
  * account gets null and a failed trace. Only an event with no tenant, such as
  * both eligibility providers being down, uses the platform operations account.
  */
-export function accountForEvent(event: DomainEvent): ChannelAccount | null {
+export async function accountForEvent(
+  event: DomainEvent,
+): Promise<ChannelAccount | null> {
   if (event.channelAccountId) {
-    const account = ChannelAccountService.getById(event.channelAccountId);
+    const account = await ChannelAccountService.getById(event.channelAccountId);
     if (account) return account;
   }
 
   if (event.tenantId) {
-    return ChannelAccountService.getDefaultForTenant(event.tenantId);
+    return await ChannelAccountService.getDefaultForTenant(event.tenantId);
   }
 
-  return ChannelAccountService.getPlatformOps();
+  return await ChannelAccountService.getPlatformOps();
 }
 
 /** Reports whether at least one notification was delivered. */
@@ -61,22 +63,23 @@ export async function dispatchNotifications(
     const ruleId = decision.ruleId;
 
     try {
-      db.prepare(
+      await run(
         `INSERT INTO notification_traces
          (id, tenant_id, trace_id, event_type, rule_id, status, reason, content_snapshot, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        crypto.randomUUID(),
-        event.tenantId ?? null,
-        traceId,
-        event.type,
-        ruleId,
-        decision.status,
-        decision.status === "skipped" || decision.status === "failed"
-          ? decision.reason
-          : null,
-        decision.status === "sent" ? decision.content : null,
-        now,
+        [
+          crypto.randomUUID(),
+          event.tenantId ?? null,
+          traceId,
+          event.type,
+          ruleId,
+          decision.status,
+          decision.status === "skipped" || decision.status === "failed"
+            ? decision.reason
+            : null,
+          decision.status === "sent" ? decision.content : null,
+          now,
+        ],
       );
     } catch (error) {
       logger.error({ error, traceId }, "Failed to log notification trace");
@@ -95,11 +98,11 @@ export async function dispatchNotifications(
             "Resolution failed: Unknown recipient target",
           );
 
-          markFailed(traceId, ruleId, "recipient_resolution_failed");
+          await markFailed(traceId, ruleId, "recipient_resolution_failed");
           continue;
         }
 
-        const account = accountForEvent(event);
+        const account = await accountForEvent(event);
         if (!account) {
           logger.error(
             { ruleId, tenantId: event.tenantId, eventType: event.type },
@@ -108,7 +111,7 @@ export async function dispatchNotifications(
               : "Platform-wide alert has nowhere to go: set platform_ops_channel_account_id or PLATFORM_OPS_PHONE_NUMBER_ID",
           );
 
-          markFailed(traceId, ruleId, "no_channel_account");
+          await markFailed(traceId, ruleId, "no_channel_account");
           continue;
         }
 
@@ -118,7 +121,7 @@ export async function dispatchNotifications(
             { channel: decision.channel },
             "Channel not implemented yet",
           );
-          markFailed(traceId, ruleId, "channel_not_implemented");
+          await markFailed(traceId, ruleId, "channel_not_implemented");
           continue;
         }
 
@@ -141,7 +144,7 @@ export async function dispatchNotifications(
             "Notification was not delivered",
           );
 
-          markFailed(traceId, ruleId, "send_failed");
+          await markFailed(traceId, ruleId, "send_failed");
           continue;
         }
 
@@ -152,7 +155,7 @@ export async function dispatchNotifications(
           "Failed to dispatch notification",
         );
 
-        markFailed(traceId, ruleId, error?.message ?? "unknown_error");
+        await markFailed(traceId, ruleId, error?.message ?? "unknown_error");
       }
     }
   }
@@ -160,13 +163,18 @@ export async function dispatchNotifications(
   return delivered;
 }
 
-function markFailed(traceId: string, ruleId: string, reason: string): void {
+async function markFailed(
+  traceId: string,
+  ruleId: string,
+  reason: string,
+): Promise<void> {
   try {
-    db.prepare(
+    await run(
       `UPDATE notification_traces
        SET status = 'failed', reason = ?
        WHERE trace_id = ? AND rule_id = ?`,
-    ).run(reason, traceId, ruleId);
+      [reason, traceId, ruleId],
+    );
   } catch {
     // Trace bookkeeping is best-effort. The delivery failure is already logged.
   }

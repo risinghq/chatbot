@@ -25,7 +25,7 @@ export async function requireAuth(c: Context, next: Next) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  const { session, user, scope, fresh } = validateSessionToken(token);
+  const { session, user, scope, fresh } = await validateSessionToken(token);
 
   if (!session || !user || !scope) {
     deleteSessionTokenCookie(c);

@@ -1,40 +1,31 @@
-import { db } from "../../db/index.ts";
-import {
-  getAll,
-  getOne,
-  limaRangeEdge,
-  tenantPredicate,
-} from "../../db/query.ts";
-import type { SQLQueryBindings } from "bun:sqlite";
+import { limaRangeEdge, tenantPredicate } from "../../db/query.ts";
+import type { Binding } from "../../db/index.ts";
 import type { AnalyticsEvent, ConversationRef } from "@vendeya/types";
+import { getAll, stmt } from "../../db/index.ts";
 
-export function trackEvent(
+/** One analytics row, flagged a simulation when its conversation is one. */
+export function trackEventStatement(
   ref: ConversationRef,
   eventType: string,
-  metadata: Record<string, any> = {},
-): void {
-  const id = crypto.randomUUID();
-  const metadataJson = JSON.stringify(metadata);
-
-  const conv = getOne<{ is_simulation: number }>(
-    `SELECT is_simulation FROM conversations
-     WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-    [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-  );
-
-  const isSimulation = conv?.is_simulation || 0;
-
-  db.prepare(
+  metadata: Record<string, unknown> = {},
+): D1PreparedStatement {
+  return stmt(
     `INSERT INTO analytics_events (id, tenant_id, channel_account_id, phone_number, event_type, metadata, is_simulation)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    ref.tenantId,
-    ref.channelAccountId,
-    ref.phoneNumber,
-    eventType,
-    metadataJson,
-    isSimulation,
+     VALUES (?, ?, ?, ?, ?, ?, COALESCE((
+       SELECT is_simulation FROM conversations
+       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
+     ), 0))`,
+    [
+      crypto.randomUUID(),
+      ref.tenantId,
+      ref.channelAccountId,
+      ref.phoneNumber,
+      eventType,
+      JSON.stringify(metadata),
+      ref.tenantId,
+      ref.channelAccountId,
+      ref.phoneNumber,
+    ],
   );
 }
 
@@ -43,7 +34,7 @@ export function trackEvent(
  * operator reaches through the route.
  * A date-only bound covers that Lima day. A timestamp with a zone is exact.
  */
-export function getFunnelStats(
+export async function getFunnelStats(
   tenantId: string | null,
   startDate?: string,
   endDate?: string,
@@ -55,7 +46,7 @@ export function getFunnelStats(
   const end = endDate ? limaRangeEdge(endDate, "end", "end") : Date.now();
 
   const conditions = ["created_at BETWEEN ? AND ?"];
-  const params: SQLQueryBindings[] = [start, end];
+  const params: Binding[] = [start, end];
 
   if (!includeSimulations) {
     conditions.push("is_simulation = 0");
@@ -63,7 +54,7 @@ export function getFunnelStats(
   conditions.push(tenantPredicate(tenantId));
   if (tenantId) params.push(tenantId);
 
-  const events = getAll<{ event_type: string; count: number }>(
+  const events = await getAll<{ event_type: string; count: number }>(
     `SELECT event_type, COUNT(*) as count
      FROM analytics_events
      WHERE ${conditions.join(" AND ")}
@@ -86,13 +77,13 @@ export function getFunnelStats(
   };
 }
 
-export function getRecentEvents(
+export async function getRecentEvents(
   tenantId: string | null,
   limit: number = 50,
   includeSimulations = false,
-): AnalyticsEvent[] {
+): Promise<AnalyticsEvent[]> {
   const conditions: string[] = [];
-  const params: SQLQueryBindings[] = [];
+  const params: Binding[] = [];
 
   if (!includeSimulations) {
     conditions.push("is_simulation = 0");
@@ -102,7 +93,7 @@ export function getRecentEvents(
 
   params.push(limit);
 
-  return getAll<AnalyticsEvent>(
+  return await getAll<AnalyticsEvent>(
     `SELECT * FROM analytics_events
      WHERE ${conditions.join(" AND ")}
      ORDER BY created_at DESC
@@ -111,10 +102,10 @@ export function getRecentEvents(
   );
 }
 
-export function getEventsByConversation(
+export async function getEventsByConversation(
   ref: ConversationRef,
-): AnalyticsEvent[] {
-  return getAll<AnalyticsEvent>(
+): Promise<AnalyticsEvent[]> {
+  return await getAll<AnalyticsEvent>(
     `SELECT * FROM analytics_events
      WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
      ORDER BY created_at ASC`,
