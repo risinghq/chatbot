@@ -18,15 +18,29 @@ import { createLogger } from "./lib/logger.ts";
 const logger = createLogger("sweep");
 
 /**
+ * Waking a conversation is a call into its Durable Object, one subrequest
+ * each, and one invocation on the Workers paid plan may make 10,000
+ * subrequests
+ * (https://developers.cloudflare.com/workers/platform/limits/#subrequests).
+ * A due set bigger than the bound would fail its tail every minute, so a
+ * sweep wakes at most this many; the rest stay due and the next sweep takes
+ * them.
+ */
+export const MAX_WAKES_PER_SWEEP = 1_000;
+
+/**
  * The cron trigger's minute. Each conversation's own alarm does its work on
  * time; the sweep wakes the ones whose alarm cannot know they are due: a
  * number or tenant switched back on, a wake that was lost, a row an ended
  * object left mid-flight. It also hands timed-out assignments to the next
  * agent, and once an hour deletes rows past retention.
  */
-export async function sweep(scheduledTime: number): Promise<void> {
+export async function sweep(
+  scheduledTime: number,
+  maxWakes: number = MAX_WAKES_PER_SWEEP,
+): Promise<void> {
   await Promise.all([
-    guarded("wake conversations", () => wakeDue(scheduledTime)),
+    guarded("wake conversations", () => wakeDue(scheduledTime, maxWakes)),
     guarded("reassign timed-out conversations", () =>
       checkAndReassignTimeouts(scheduledTime),
     ),
@@ -42,7 +56,7 @@ export async function sweep(scheduledTime: number): Promise<void> {
   }
 }
 
-async function wakeDue(now: number): Promise<void> {
+async function wakeDue(now: number, maxWakes: number): Promise<void> {
   const refs = new Map<string, ConversationRef>();
   for (const ref of [
     ...(await conversationsNeedingOutbox(now)),
@@ -54,8 +68,16 @@ async function wakeDue(now: number): Promise<void> {
     refs.set(lockKey(ref), ref);
   }
 
+  const due = [...refs.values()];
+  if (due.length > maxWakes) {
+    logger.warn(
+      { due: due.length, maxWakes },
+      "More conversations are due than one sweep wakes; the rest wait for the next sweep",
+    );
+  }
+
   await Promise.all(
-    [...refs.values()].map((ref) =>
+    due.slice(0, maxWakes).map((ref) =>
       conversationStub(ref)
         .wake(ref)
         .catch((error: unknown) =>

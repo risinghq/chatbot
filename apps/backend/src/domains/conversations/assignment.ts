@@ -21,6 +21,14 @@ const AGENT_INDEX_KEY = "last_agent_index";
 
 const ACCEPT_WINDOW_MS = 5 * 60 * 1000;
 
+/**
+ * A reassignment is a call into the conversation's object, one subrequest
+ * each inside the sweep's invocation, which shares the subrequest budget
+ * `MAX_WAKES_PER_SWEEP` in sweep.ts is sized against. Past this bound the
+ * rest stay timed out for the next minute's sweep.
+ */
+const MAX_REASSIGNS_PER_SWEEP = 1_000;
+
 const ASSIGNED_REASON = "agent_assigned";
 
 const IDENTITY_WHERE =
@@ -143,6 +151,7 @@ function isEscalated(contextData: string | null): boolean {
  */
 export async function checkAndReassignTimeouts(
   now: number = Date.now(),
+  maxReassigns: number = MAX_REASSIGNS_PER_SWEEP,
 ): Promise<void> {
   const cutoff = now - ACCEPT_WINDOW_MS;
 
@@ -161,8 +170,10 @@ export async function checkAndReassignTimeouts(
        AND assignment_notified_at < ?
        AND status = 'human_takeover'
        AND ${openTenantsOnly()}
-       AND ${activeChannelAccountsOnly()}`,
-    [cutoff],
+       AND ${activeChannelAccountsOnly()}
+     ORDER BY assignment_notified_at
+     LIMIT ?`,
+    [cutoff, maxReassigns],
   );
 
   await Promise.all(
