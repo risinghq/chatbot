@@ -13,20 +13,6 @@ updates:
           - minor
           - patch
 
-  - package-ecosystem: docker
-    directories:
-      - /deploy/backup
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      all:
-        update-types:
-          - major
-          - minor
-          - patch
-
   - package-ecosystem: github-actions
     directories:
       - /

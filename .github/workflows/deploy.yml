@@ -1,4 +1,4 @@
-name: Deploy images
+name: Deploy
 
 on:
   push:
@@ -12,15 +12,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Lists the images whose inputs this push changed. A push compares against
+  # No deploy job starts unless the check passes, so a red commit never runs
+  # the remote migrations.
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  # Lists the Workers whose inputs this push changed. A push compares against
   # the commit before it, so a push of several commits is judged as a whole.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      images: ${{ steps.filter.outputs.changes }}
+      backend: ${{ steps.filter.outputs.backend }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
@@ -30,71 +38,65 @@ jobs:
               - apps/backend/**
               - packages/core/**
               - packages/intelligence/**
-              - packages/logger/**
               - packages/types/**
               - packages/utils/**
               - packages/tsconfig/**
               - package.json
               - bun.lock
               - mise.toml
-              - .dockerignore
-              - deploy/backend.Dockerfile
-            web:
+            dashboard:
               - apps/frontend/**
               - packages/types/**
-              - packages/utils/**
               - packages/tsconfig/**
               - package.json
               - bun.lock
               - mise.toml
-              - .dockerignore
-              - deploy/web.Dockerfile
-            backup:
-              - deploy/backup/**
 
-  images:
-    name: image (${{ matrix.image }})
-    needs: changes
-    if: needs.changes.outputs.images != '[]'
+  # Migrations run before the new code, so the code never reads a column the
+  # database does not have yet.
+  backend:
+    needs: [check, changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        image: ${{ fromJSON(needs.changes.outputs.images) }}
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # mise.toml is the one place that pins the Bun version.
-      - id: pins
-        run: |
-          {
-            echo "bun=$(sed -n 's/^bun = "\(.*\)"/\1/p' mise.toml)"
-            echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}"
-            echo "tag=sha-${GITHUB_SHA::7}"
-          } >> "$GITHUB_OUTPUT"
-
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run --cwd apps/backend db:migrate:remote
+
+      - run: bun run --cwd apps/backend deploy
+
+  # The dashboard's service binding names the backend Worker, which must exist
+  # first, so this job waits for the backend job when both run.
+  dashboard:
+    needs: [check, changes, backend]
+    if: >-
+      always() && needs.check.result == 'success' &&
+      needs.changes.outputs.dashboard == 'true' && needs.backend.result !=
+      'failure' && needs.backend.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          context: ${{ matrix.image == 'backup' && 'deploy/backup' || '.' }}
-          file:
-            ${{ matrix.image == 'backup' && 'deploy/backup/Dockerfile' ||
-            format('deploy/{0}.Dockerfile', matrix.image) }}
-          build-args: BUN_VERSION=${{ steps.pins.outputs.bun }}
-          tags:
-            ${{ steps.pins.outputs.repository }}/${{ matrix.image }}:${{
-            steps.pins.outputs.tag }}
-          push: true
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          persist-credentials: false
+
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run --cwd apps/frontend build
+
+      - run: bun run --cwd apps/frontend deploy
