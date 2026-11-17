@@ -36,9 +36,9 @@ Change these values in both configuration files before the first deploy:
 
 ## Create the resources
 
-`apps/backend/wrangler.jsonc` holds the ids of the database and the KV
-namespace on the rising account. A deploy to another account creates its own
-database, KV namespace and bucket:
+`apps/backend/wrangler.jsonc` holds the ids of the database and the KV namespace
+on the rising account. A deploy to another account creates its own database, KV
+namespace and bucket:
 
 ```sh
 bunx wrangler d1 create vendeya
