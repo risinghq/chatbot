@@ -1,27 +1,5 @@
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { db } from "../../src/db/index.ts";
-import { initializeDatabase } from "../../src/db/init.ts";
 import type { ConversationRef } from "@vendeya/types";
-
-// The fixtures write through the application's own connection, so it must be
-// a throwaway database. `tests/setup.ts` points DB_PATH at a temp file before
-// the connection opens. Another way of running the tests could skip that
-// preload, and then nothing here may touch a developer's real database.
-const dbPath = path.resolve(db.filename);
-
-if (!dbPath.startsWith(path.resolve(tmpdir()) + path.sep)) {
-  throw new Error(
-    `Refusing to run tests against ${dbPath}: it is not a temporary database. ` +
-      "Run them from apps/backend so bunfig.toml preloads tests/setup.ts, " +
-      "or set DB_PATH to a throwaway file.",
-  );
-}
-
-/** Migrates the shared test database; every test file may call it. */
-export function applySchema(): void {
-  initializeDatabase(db);
-}
+import { run } from "../../src/db/index.ts";
 
 export type TenantFixture = {
   tenantId: string;
@@ -32,50 +10,56 @@ export type TenantFixture = {
 
 /**
  * A tenant with one WhatsApp number, ready to hang conversations off. Ids are
- * random per call so test files never collide in the shared database.
+ * random per call so the tests of one file never collide in its database. A
+ * test that replaces the number sets `channelAccountId`, and `ref` follows it.
  */
-export function createTenantFixture(slug: string): TenantFixture {
+export async function createTenantFixture(
+  slug: string,
+): Promise<TenantFixture> {
   const tenantId = `tn-${crypto.randomUUID()}`;
   const channelAccountId = `ch-${crypto.randomUUID()}`;
   const phoneNumberId = `pnid-${crypto.randomUUID().slice(0, 8)}`;
 
-  db.prepare(
+  await run(
     "INSERT INTO tenants (id, slug, name, status) VALUES (?, ?, ?, 'active')",
-  ).run(tenantId, `${slug}-${tenantId.slice(3, 11)}`, slug);
-
-  db.prepare(
+    [tenantId, `${slug}-${tenantId.slice(3, 11)}`, slug],
+  );
+  await run(
     `INSERT INTO channel_accounts (id, tenant_id, channel_type, phone_number_id, status)
      VALUES (?, ?, 'whatsapp', ?, 'active')`,
-  ).run(channelAccountId, tenantId, phoneNumberId);
+    [channelAccountId, tenantId, phoneNumberId],
+  );
 
-  return {
+  const fixture: TenantFixture = {
     tenantId,
     channelAccountId,
     phoneNumberId,
     ref: (phoneNumber: string) => ({
       tenantId,
-      channelAccountId,
+      channelAccountId: fixture.channelAccountId,
       phoneNumber,
     }),
   };
+  return fixture;
 }
 
 /**
  * A second WhatsApp number for the same tenant. One contact writing to both is
  * two conversations, which is what the ambiguity guards are about.
  */
-export function addChannelAccount(fixture: TenantFixture): {
+export async function addChannelAccount(fixture: TenantFixture): Promise<{
   channelAccountId: string;
   phoneNumberId: string;
   ref(phoneNumber: string): ConversationRef;
-} {
+}> {
   const channelAccountId = `ch-${crypto.randomUUID()}`;
   const phoneNumberId = `pnid-${crypto.randomUUID().slice(0, 8)}`;
 
-  db.prepare(
+  await run(
     `INSERT INTO channel_accounts (id, tenant_id, channel_type, phone_number_id, status)
      VALUES (?, ?, 'whatsapp', ?, 'active')`,
-  ).run(channelAccountId, fixture.tenantId, phoneNumberId);
+    [channelAccountId, fixture.tenantId, phoneNumberId],
+  );
 
   return {
     channelAccountId,
@@ -88,38 +72,8 @@ export function addChannelAccount(fixture: TenantFixture): {
   };
 }
 
-/** Remove a fixture tenant and everything hanging off it. */
-export function dropTenantFixture(fixture: TenantFixture | undefined): void {
-  if (!fixture) return;
-  const { tenantId } = fixture;
-  for (const table of [
-    "outbox",
-    "messages",
-    "message_inbox",
-    "analytics_events",
-    "llm_calls",
-    "notification_traces",
-    "orders",
-    "unread_alerts",
-    "conversations",
-    "catalog_bundles",
-    "catalog_periods",
-    "products",
-    "test_personas",
-    "assets",
-    "audit_log",
-    "tenant_settings",
-    "tenant_memberships",
-    "channel_accounts",
-    "channel_secrets",
-  ]) {
-    db.prepare(`DELETE FROM ${table} WHERE tenant_id = ?`).run(tenantId);
-  }
-  db.prepare("DELETE FROM tenants WHERE id = ?").run(tenantId);
-}
-
 /** Insert a conversation row directly, bypassing the handler. */
-export function insertConversation(
+export async function insertConversation(
   ref: ConversationRef,
   overrides: {
     contextData?: unknown;
@@ -128,44 +82,46 @@ export function insertConversation(
     assignedAgent?: string | null;
     isSimulation?: boolean;
   } = {},
-): void {
-  db.prepare(
+): Promise<void> {
+  await run(
     `INSERT INTO conversations
        (tenant_id, channel_account_id, phone_number, context_data, status, client_name, assigned_agent, is_simulation)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    ref.tenantId,
-    ref.channelAccountId,
-    ref.phoneNumber,
-    JSON.stringify(
-      overrides.contextData ?? {
-        phase: { phase: "greeting" },
-        metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-      },
-    ),
-    overrides.status ?? "active",
-    overrides.clientName ?? null,
-    overrides.assignedAgent ?? null,
-    overrides.isSimulation ? 1 : 0,
+    [
+      ref.tenantId,
+      ref.channelAccountId,
+      ref.phoneNumber,
+      JSON.stringify(
+        overrides.contextData ?? {
+          phase: { phase: "greeting" },
+          metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
+        },
+      ),
+      overrides.status ?? "active",
+      overrides.clientName ?? null,
+      overrides.assignedAgent ?? null,
+      overrides.isSimulation ? 1 : 0,
+    ],
   );
 }
 
 /** A user with a membership in one tenant, plus the scope they act under. */
-export function createMember(
+export async function createMember(
   fixture: TenantFixture,
   role: "admin" | "developer" | "supervisor" | "sales_agent" = "admin",
 ) {
   const userId = `u-${crypto.randomUUID()}`;
 
-  db.prepare(
+  await run(
     `INSERT INTO users (id, username, password_hash, role, name)
      VALUES (?, ?, 'x', ?, ?)`,
-  ).run(userId, `user-${userId.slice(2, 10)}`, role, "Test User");
-
-  db.prepare(
+    [userId, `user-${userId.slice(2, 10)}`, role, "Test User"],
+  );
+  await run(
     `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
      VALUES (?, ?, ?, ?)`,
-  ).run(crypto.randomUUID(), fixture.tenantId, userId, role);
+    [crypto.randomUUID(), fixture.tenantId, userId, role],
+  );
 
   return {
     userId,
@@ -176,4 +132,15 @@ export function createMember(
       isPlatformOperator: false,
     } as const,
   };
+}
+
+/** Parks a number in a status, the way an operator's PATCH would. */
+export async function setChannelStatus(
+  channelAccountId: string,
+  status: "active" | "pending" | "disabled",
+): Promise<void> {
+  await run("UPDATE channel_accounts SET status = ? WHERE id = ?", [
+    status,
+    channelAccountId,
+  ]);
 }

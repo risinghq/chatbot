@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { createMockProvider } from "@vendeya/intelligence";
 
 const TEST_CONTEXT = {

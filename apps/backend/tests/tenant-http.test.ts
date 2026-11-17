@@ -1,24 +1,21 @@
 /**
  * Authorization at the HTTP layer, through the real routers, the real
- * `requireAuth` and a real session cookie. `src/index.ts` is not imported,
- * because importing it starts the aggregator worker and reassignment timers.
+ * `requireAuth` and a real session cookie.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { readFileSync } from "node:fs";
-import process from "node:process";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import bcrypt from "bcryptjs";
-import { db } from "../src/db/index.ts";
+import { hashPassword } from "../src/platform/auth/password.ts";
+import { frontendPath, importFrontend } from "./helpers/frontend.ts";
+import { getOne, run } from "../src/db/index.ts";
 import type { Bundle } from "@vendeya/types";
 
 import {
   addChannelAccount,
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
+  setChannelStatus,
 } from "./helpers/tenancy.ts";
 
 import {
@@ -53,10 +50,20 @@ import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { createOrder } from "../src/domains/orders/write.ts";
-import { assignNextAgent } from "../src/domains/conversations/assignment.ts";
+import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 
 const SHARED_PHONE = "51987654321";
+
+const ORDER_PAGE = frontendPath(
+  "routes/dashboard/orders/[orderId]/+page.svelte",
+);
+const { renderComponent } = await importFrontend<{
+  renderComponent: (
+    path: string,
+    props: Record<string, unknown>,
+  ) => Promise<string>;
+}>("lib/testing/render.ts");
 
 function buildApp() {
   const app = new Hono();
@@ -78,38 +85,40 @@ function buildApp() {
 }
 
 /** A logged-in user, as a cookie the app will accept. */
-function login(
+async function login(
   userId: string,
   activeTenantId: string | null,
-): { cookie: string; token: string } {
+): Promise<{ cookie: string; token: string }> {
   const token = generateSessionToken();
-  createSession(token, userId, activeTenantId);
+  await createSession(token, userId, activeTenantId);
   return { cookie: `session=${token}`, token };
 }
 
-function createUser(options: {
+async function createUser(options: {
   tenantId?: string;
   role?: "admin" | "developer" | "supervisor" | "sales_agent";
   isPlatformOperator?: boolean;
-}): string {
+}): Promise<string> {
   const userId = `u-${crypto.randomUUID()}`;
   const role = options.role ?? "admin";
 
-  db.prepare(
+  await run(
     `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
      VALUES (?, ?, 'x', ?, 'Test User', ?)`,
-  ).run(
-    userId,
-    `user-${userId.slice(2, 12)}`,
-    role,
-    options.isPlatformOperator ? 1 : 0,
+    [
+      userId,
+      `user-${userId.slice(2, 12)}`,
+      role,
+      options.isPlatformOperator ? 1 : 0,
+    ],
   );
 
   if (options.tenantId) {
-    db.prepare(
+    await run(
       `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
        VALUES (?, ?, ?, ?)`,
-    ).run(crypto.randomUUID(), options.tenantId, userId, role);
+      [crypto.randomUUID(), options.tenantId, userId, role],
+    );
   }
 
   return userId;
@@ -123,26 +132,27 @@ describe("HTTP authorization", () => {
   let alphaAdmin: { cookie: string; token: string };
   let betaAdmin: { cookie: string; token: string };
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = buildApp();
 
-    alpha = createTenantFixture("alpha-http");
-    beta = createTenantFixture("beta-http");
+    alpha = await createTenantFixture("alpha-http");
+    beta = await createTenantFixture("beta-http");
 
-    alphaAdmin = login(
-      createUser({ tenantId: alpha.tenantId }),
+    alphaAdmin = await login(
+      await createUser({ tenantId: alpha.tenantId }),
       alpha.tenantId,
     );
-    betaAdmin = login(createUser({ tenantId: beta.tenantId }), beta.tenantId);
+    betaAdmin = await login(
+      await createUser({ tenantId: beta.tenantId }),
+      beta.tenantId,
+    );
 
-    insertConversation(alpha.ref(SHARED_PHONE), { clientName: "Alpha Client" });
-    insertConversation(beta.ref(SHARED_PHONE), { clientName: "Beta Client" });
-  });
-
-  afterEach(() => {
-    dropTenantFixture(alpha);
-    dropTenantFixture(beta);
+    await insertConversation(alpha.ref(SHARED_PHONE), {
+      clientName: "Alpha Client",
+    });
+    await insertConversation(beta.ref(SHARED_PHONE), {
+      clientName: "Beta Client",
+    });
   });
 
   function get(path: string, auth?: { cookie: string }) {
@@ -156,7 +166,7 @@ describe("HTTP authorization", () => {
     path: string,
     auth?: { cookie: string },
   ): Promise<T> {
-    return (await get(path, auth)).json() as Promise<T>;
+    return (await (await get(path, auth)).json()) as Promise<T>;
   }
 
   function patch(path: string, auth: { cookie: string }, body: unknown) {
@@ -210,7 +220,7 @@ describe("HTTP authorization", () => {
 
   it("404s a conversation that exists only in another tenant", async () => {
     const onlyInBeta = "51900000001";
-    insertConversation(beta.ref(onlyInBeta), { clientName: "Beta Only" });
+    await insertConversation(beta.ref(onlyInBeta), { clientName: "Beta Only" });
 
     const response = await get(`/api/conversations/${onlyInBeta}`, alphaAdmin);
 
@@ -219,13 +229,13 @@ describe("HTTP authorization", () => {
   });
 
   it("does not leak another tenant's catalog", async () => {
-    const betaPeriod = PeriodService.create({
+    const betaPeriod = await PeriodService.create({
       tenantId: beta.tenantId,
       name: "Septiembre",
       year_month: "2026-09",
       created_by: null,
     });
-    ProductService.create({
+    await ProductService.create({
       id: `prod-${crypto.randomUUID()}`,
       tenantId: beta.tenantId,
       name: "Beta Product",
@@ -273,8 +283,8 @@ describe("HTTP authorization", () => {
   }
 
   /** The row as stored, read without a tenant filter so a moved row is still found. */
-  function storedBundle(id: string) {
-    return db.prepare("SELECT * FROM catalog_bundles WHERE id = ?").get(id) as
+  async function storedBundle(id: string) {
+    return (await getOne("SELECT * FROM catalog_bundles WHERE id = ?", [id])) as
       | Bundle
       | undefined;
   }
@@ -285,7 +295,10 @@ describe("HTTP authorization", () => {
    * `tenant_id` would move the row to another business.
    */
   it("ignores off-list fields in a bundle PATCH instead of moving the row", async () => {
-    const bundle = createAlphaBundle(createAlphaPeriod().id, "Alpha Bundle");
+    const bundle = await createAlphaBundle(
+      (await createAlphaPeriod()).id,
+      "Alpha Bundle",
+    );
 
     const response = await patch(
       `/api/catalog/bundles/${bundle.id}`,
@@ -295,7 +308,7 @@ describe("HTTP authorization", () => {
 
     // Checked before the response is read: whatever the route answers, the row
     // must not have left the tenant that owns it.
-    const stored = storedBundle(bundle.id);
+    const stored = await storedBundle(bundle.id);
     expect(stored?.tenant_id).toBe(alpha.tenantId);
 
     // Dropped, not rejected: the request succeeds and the rename still lands.
@@ -323,16 +336,16 @@ describe("HTTP authorization", () => {
     );
 
     expect(second.status).toBe(200);
-    const after = storedBundle(bundle.id);
+    const after = await storedBundle(bundle.id);
     expect(after?.id).toBe(bundle.id);
     expect(after?.period_id).toBe(bundle.period_id);
     expect(after?.notes).toBe("Nota nueva");
   });
 
   it("ignores off-list fields in a bundle bulk-update", async () => {
-    const period = createAlphaPeriod();
-    const first = createAlphaBundle(period.id, "Bulk One");
-    const second = createAlphaBundle(period.id, "Bulk Two");
+    const period = await createAlphaPeriod();
+    const first = await createAlphaBundle(period.id, "Bulk One");
+    const second = await createAlphaBundle(period.id, "Bulk Two");
 
     const response = await post(
       "/api/catalog/bundles/bulk-update",
@@ -347,14 +360,14 @@ describe("HTTP authorization", () => {
     expect(await response.json()).toMatchObject({ count: 2 });
 
     for (const bundle of [first, second]) {
-      const stored = storedBundle(bundle.id);
+      const stored = await storedBundle(bundle.id);
       expect(stored?.tenant_id).toBe(alpha.tenantId);
       expect(stored?.is_active).toBe(0);
     }
   });
 
   it("does not leak another tenant's orders", async () => {
-    const betaOrder = createOrder({
+    const betaOrder = await createOrder({
       ref: beta.ref(SHARED_PHONE),
       clientName: "Beta Client",
       clientDni: "87654321",
@@ -384,7 +397,7 @@ describe("HTTP authorization", () => {
   });
 
   it("does not resolve another tenant's private asset", async () => {
-    const betaAsset = AssetService.create({
+    const betaAsset = await AssetService.create({
       tenantId: beta.tenantId,
       kind: "contract",
       visibility: "private",
@@ -398,7 +411,7 @@ describe("HTTP authorization", () => {
   });
 
   it("refuses a logged-in user who belongs to no tenant", async () => {
-    const orphan = login(createUser({}), null);
+    const orphan = await login(await createUser({}), null);
 
     const conversations = await get("/api/conversations", orphan);
     expect(conversations.status).toBe(403);
@@ -408,14 +421,15 @@ describe("HTTP authorization", () => {
   });
 
   it("drops the tenant pin when a membership is revoked", async () => {
-    const userId = createUser({ tenantId: alpha.tenantId });
-    const session = login(userId, alpha.tenantId);
+    const userId = await createUser({ tenantId: alpha.tenantId });
+    const session = await login(userId, alpha.tenantId);
 
     expect((await get("/api/conversations", session)).status).toBe(200);
 
-    db.prepare(
+    await run(
       "DELETE FROM tenant_memberships WHERE tenant_id = ? AND user_id = ?",
-    ).run(alpha.tenantId, userId);
+      [alpha.tenantId, userId],
+    );
 
     // Same cookie, no membership: the scope is gone on the very next request.
     expect((await get("/api/conversations", session)).status).toBe(403);
@@ -428,17 +442,19 @@ describe("HTTP authorization", () => {
    * unpinned membership (see the frontend's showTenantSelector).
    */
   it("lets a member whose pin was dropped select the membership they keep", async () => {
-    const userId = createUser({ tenantId: alpha.tenantId });
-    db.prepare(
+    const userId = await createUser({ tenantId: alpha.tenantId });
+    await run(
       `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
        VALUES (?, ?, ?, 'admin')`,
-    ).run(crypto.randomUUID(), beta.tenantId, userId);
+      [crypto.randomUUID(), beta.tenantId, userId],
+    );
 
-    const session = login(userId, alpha.tenantId);
+    const session = await login(userId, alpha.tenantId);
 
-    db.prepare(
+    await run(
       "DELETE FROM tenant_memberships WHERE tenant_id = ? AND user_id = ?",
-    ).run(alpha.tenantId, userId);
+      [alpha.tenantId, userId],
+    );
 
     expect((await get("/api/conversations", session)).status).toBe(403);
 
@@ -511,9 +527,9 @@ describe("HTTP authorization", () => {
       await createMember(alphaAdmin, username);
 
       expect(
-        db
-          .prepare("SELECT COUNT(*) as c FROM users WHERE username = ?")
-          .get(username),
+        await getOne("SELECT COUNT(*) as c FROM users WHERE username = ?", [
+          username,
+        ]),
       ).toEqual({ c: 1 });
     });
   });
@@ -524,11 +540,11 @@ describe("HTTP authorization", () => {
    * access everywhere, which is a cross-tenant account takeover.
    */
   describe("password reset cannot become cross-tenant access", () => {
-    function hashOf(userId: string): string {
+    async function hashOf(userId: string): Promise<string> {
       return (
-        db
-          .prepare("SELECT password_hash FROM users WHERE id = ?")
-          .get(userId) as { password_hash: string }
+        (await getOne("SELECT password_hash FROM users WHERE id = ?", [
+          userId,
+        ])) as { password_hash: string }
       ).password_hash;
     }
 
@@ -541,73 +557,79 @@ describe("HTTP authorization", () => {
     }
 
     it("refuses when the target also belongs to another tenant", async () => {
-      const shared = createUser({
+      const shared = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
-      db.prepare(
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, shared);
+        [crypto.randomUUID(), beta.tenantId, shared],
+      );
 
-      const before = hashOf(shared);
+      const before = await hashOf(shared);
       const response = await resetPassword(alphaAdmin, shared);
 
       expect(response.status).toBe(403);
-      expect(hashOf(shared)).toBe(before);
+      expect(await hashOf(shared)).toBe(before);
     });
 
     it("still allows it for a user whose only tenant is this one", async () => {
-      const own = createUser({ tenantId: alpha.tenantId, role: "sales_agent" });
-      const before = hashOf(own);
+      const own = await createUser({
+        tenantId: alpha.tenantId,
+        role: "sales_agent",
+      });
+      const before = await hashOf(own);
 
       const response = await resetPassword(alphaAdmin, own);
 
       expect(response.status).toBe(200);
-      expect(hashOf(own)).not.toBe(before);
+      expect(await hashOf(own)).not.toBe(before);
     });
 
     it("counts a membership in a suspended tenant too", async () => {
-      const shared = createUser({
+      const shared = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
-      db.prepare(
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, shared);
-      // A suspended tenant can be reactivated, so the account still reaches it.
-      db.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").run(
-        beta.tenantId,
+        [crypto.randomUUID(), beta.tenantId, shared],
       );
+      // A suspended tenant can be reactivated, so the account still reaches it.
+      await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
+        beta.tenantId,
+      ]);
 
-      const before = hashOf(shared);
+      const before = await hashOf(shared);
       expect((await resetPassword(alphaAdmin, shared)).status).toBe(403);
-      expect(hashOf(shared)).toBe(before);
+      expect(await hashOf(shared)).toBe(before);
     });
 
     it("lets a platform operator reset a multi-tenant user's password", async () => {
-      const shared = createUser({
+      const shared = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
-      db.prepare(
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, shared);
+        [crypto.randomUUID(), beta.tenantId, shared],
+      );
 
-      const operator = login(
-        createUser({ isPlatformOperator: true }),
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
         alpha.tenantId,
       );
 
-      const before = hashOf(shared);
+      const before = await hashOf(shared);
       expect((await resetPassword(operator, shared)).status).toBe(200);
-      expect(hashOf(shared)).not.toBe(before);
+      expect(await hashOf(shared)).not.toBe(before);
     });
 
     it("still refuses a user who is not in the acting tenant at all", async () => {
-      const betaOnly = createUser({ tenantId: beta.tenantId });
+      const betaOnly = await createUser({ tenantId: beta.tenantId });
       expect((await resetPassword(alphaAdmin, betaOnly)).status).toBe(404);
     });
   });
@@ -618,9 +640,11 @@ describe("HTTP authorization", () => {
    * rule is the same as for the password reset above.
    */
   describe("deactivation cannot reach another tenant", () => {
-    function isActive(userId: string): number {
+    async function isActive(userId: string): Promise<number> {
       return (
-        db.prepare("SELECT is_active FROM users WHERE id = ?").get(userId) as {
+        (await getOne("SELECT is_active FROM users WHERE id = ?", [
+          userId,
+        ])) as {
           is_active: number;
         }
       ).is_active;
@@ -634,30 +658,31 @@ describe("HTTP authorization", () => {
     }
 
     /** A user who works for both businesses. */
-    function sharedUser(): string {
-      const userId = createUser({
+    async function sharedUser(): Promise<string> {
+      const userId = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
-      db.prepare(
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, userId);
+        [crypto.randomUUID(), beta.tenantId, userId],
+      );
       return userId;
     }
 
     it("refuses to deactivate a user who also belongs to another tenant", async () => {
-      const shared = sharedUser();
+      const shared = await sharedUser();
 
       const response = await toggleStatus(alphaAdmin, shared);
 
       expect(response.status).toBe(403);
-      expect(isActive(shared)).toBe(1);
+      expect(await isActive(shared)).toBe(1);
     });
 
     it("leaves the shared user's session in the other tenant alone", async () => {
-      const shared = sharedUser();
-      const theirSession = login(shared, beta.tenantId);
+      const shared = await sharedUser();
+      const theirSession = await login(shared, beta.tenantId);
 
       await toggleStatus(alphaAdmin, shared);
 
@@ -666,53 +691,56 @@ describe("HTTP authorization", () => {
     });
 
     it("refuses to reactivate one either", async () => {
-      const shared = sharedUser();
-      db.prepare("UPDATE users SET is_active = 0 WHERE id = ?").run(shared);
+      const shared = await sharedUser();
+      await run("UPDATE users SET is_active = 0 WHERE id = ?", [shared]);
 
       const response = await toggleStatus(alphaAdmin, shared);
 
       expect(response.status).toBe(403);
-      expect(isActive(shared)).toBe(0);
+      expect(await isActive(shared)).toBe(0);
     });
 
     it("counts a membership in a suspended tenant too", async () => {
-      const shared = sharedUser();
-      db.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").run(
+      const shared = await sharedUser();
+      await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
         beta.tenantId,
-      );
+      ]);
 
       expect((await toggleStatus(alphaAdmin, shared)).status).toBe(403);
-      expect(isActive(shared)).toBe(1);
+      expect(await isActive(shared)).toBe(1);
     });
 
     it("still allows it for a user whose only tenant is this one", async () => {
-      const own = createUser({ tenantId: alpha.tenantId, role: "sales_agent" });
+      const own = await createUser({
+        tenantId: alpha.tenantId,
+        role: "sales_agent",
+      });
 
       const response = await toggleStatus(alphaAdmin, own);
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ success: true, is_active: 0 });
-      expect(isActive(own)).toBe(0);
+      expect(await isActive(own)).toBe(0);
     });
 
     it("lets a platform operator deactivate a multi-tenant user", async () => {
-      const shared = sharedUser();
-      const operator = login(
-        createUser({ isPlatformOperator: true }),
+      const shared = await sharedUser();
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
         alpha.tenantId,
       );
 
       expect((await toggleStatus(operator, shared)).status).toBe(200);
-      expect(isActive(shared)).toBe(0);
+      expect(await isActive(shared)).toBe(0);
     });
 
     it("still refuses a user who is not in the acting tenant at all", async () => {
-      const betaOnly = createUser({ tenantId: beta.tenantId });
+      const betaOnly = await createUser({ tenantId: beta.tenantId });
       expect((await toggleStatus(alphaAdmin, betaOnly)).status).toBe(404);
     });
 
     it("removing the membership is the tenant-scoped alternative", async () => {
-      const shared = sharedUser();
+      const shared = await sharedUser();
 
       const removed = await app.request(
         `/api/admin/users/${shared}/membership`,
@@ -721,9 +749,9 @@ describe("HTTP authorization", () => {
 
       expect(removed.status).toBe(200);
       // Gone from this tenant, account and other tenant untouched.
-      expect(MembershipService.get(alpha.tenantId, shared)).toBeNull();
-      expect(MembershipService.get(beta.tenantId, shared)).not.toBeNull();
-      expect(isActive(shared)).toBe(1);
+      expect(await MembershipService.get(alpha.tenantId, shared)).toBeNull();
+      expect(await MembershipService.get(beta.tenantId, shared)).not.toBeNull();
+      expect(await isActive(shared)).toBe(1);
     });
   });
 
@@ -735,30 +763,32 @@ describe("HTTP authorization", () => {
   describe("session renewal reaches the browser", () => {
     const DAY_MS = 24 * 60 * 60 * 1000;
 
-    function withDaysLeft(days: number): { cookie: string; id: string } {
+    async function withDaysLeft(
+      days: number,
+    ): Promise<{ cookie: string; id: string }> {
       const token = generateSessionToken();
-      const session = createSession(
+      const session = await createSession(
         token,
-        createUser({ tenantId: alpha.tenantId }),
+        await createUser({ tenantId: alpha.tenantId }),
         alpha.tenantId,
       );
-      db.prepare("UPDATE session SET expires_at = ? WHERE id = ?").run(
+      await run("UPDATE session SET expires_at = ? WHERE id = ?", [
         Math.floor((Date.now() + days * DAY_MS) / 1000),
         session.id,
-      );
+      ]);
       return { cookie: `session=${token}`, id: session.id };
     }
 
-    function storedExpiry(sessionId: string): number {
+    async function storedExpiry(sessionId: string): Promise<number> {
       return (
-        db
-          .prepare("SELECT expires_at FROM session WHERE id = ?")
-          .get(sessionId) as { expires_at: number }
+        (await getOne("SELECT expires_at FROM session WHERE id = ?", [
+          sessionId,
+        ])) as { expires_at: number }
       ).expires_at;
     }
 
     it("sets the cookie again, about 30 days out, when it renews", async () => {
-      const session = withDaysLeft(10);
+      const session = await withDaysLeft(10);
 
       const response = await get("/api/conversations", session);
 
@@ -773,23 +803,23 @@ describe("HTTP authorization", () => {
       );
       // The cookie and the row agree, to the second the cookie is rounded to.
       expect(
-        Math.abs(cookieExpiry - storedExpiry(session.id) * 1000),
+        Math.abs(cookieExpiry - (await storedExpiry(session.id)) * 1000),
       ).toBeLessThan(2_000);
     });
 
     it("sends no cookie while more than 15 days remain", async () => {
-      const session = withDaysLeft(20);
-      const before = storedExpiry(session.id);
+      const session = await withDaysLeft(20);
+      const before = await storedExpiry(session.id);
 
       const response = await get("/api/conversations", session);
 
       expect(response.status).toBe(200);
       expect(response.headers.get("set-cookie")).toBeNull();
-      expect(storedExpiry(session.id)).toBe(before);
+      expect(await storedExpiry(session.id)).toBe(before);
     });
 
     it("sends no cookie on the request after a renewal", async () => {
-      const session = withDaysLeft(10);
+      const session = await withDaysLeft(10);
 
       await get("/api/conversations", session);
       const again = await get("/api/conversations", session);
@@ -805,8 +835,11 @@ describe("HTTP authorization", () => {
    * powers live on the account, but a tenant admin could still lock them out.
    */
   describe("a tenant admin and VendeYa staff's membership", () => {
-    function roleOf(tenantId: string, userId: string): string | undefined {
-      return MembershipService.get(tenantId, userId)?.role;
+    async function roleOf(
+      tenantId: string,
+      userId: string,
+    ): Promise<string | undefined> {
+      return (await MembershipService.get(tenantId, userId))?.role;
     }
 
     function changeRole(
@@ -825,7 +858,7 @@ describe("HTTP authorization", () => {
     }
 
     /** A promoted member account: an operator who kept a membership. */
-    function operatorMember(): string {
+    function operatorMember(): Promise<string> {
       return createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
@@ -834,7 +867,7 @@ describe("HTTP authorization", () => {
     }
 
     it("refuses to change an operator's role and leaves the row alone", async () => {
-      const operator = operatorMember();
+      const operator = await operatorMember();
 
       const response = await changeRole(alphaAdmin, operator, "developer");
 
@@ -842,11 +875,11 @@ describe("HTTP authorization", () => {
       expect(((await response.json()) as { error: string }).error).toContain(
         "VendeYa staff",
       );
-      expect(roleOf(alpha.tenantId, operator)).toBe("sales_agent");
+      expect(await roleOf(alpha.tenantId, operator)).toBe("sales_agent");
     });
 
     it("refuses to remove an operator's membership and leaves the row alone", async () => {
-      const operator = operatorMember();
+      const operator = await operatorMember();
 
       const response = await removeMembership(alphaAdmin, operator);
 
@@ -854,51 +887,52 @@ describe("HTTP authorization", () => {
       expect(((await response.json()) as { error: string }).error).toContain(
         "VendeYa staff",
       );
-      expect(roleOf(alpha.tenantId, operator)).toBe("sales_agent");
+      expect(await roleOf(alpha.tenantId, operator)).toBe("sales_agent");
     });
 
     it("refuses an operator who also belongs to another tenant, all the same", async () => {
-      const operator = operatorMember();
-      db.prepare(
+      const operator = await operatorMember();
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, operator);
+        [crypto.randomUUID(), beta.tenantId, operator],
+      );
 
       expect((await changeRole(alphaAdmin, operator, "developer")).status).toBe(
         403,
       );
       expect((await removeMembership(alphaAdmin, operator)).status).toBe(403);
-      expect(roleOf(alpha.tenantId, operator)).toBe("sales_agent");
+      expect(await roleOf(alpha.tenantId, operator)).toBe("sales_agent");
     });
 
     it("lets a platform operator change the role of another operator", async () => {
-      const target = operatorMember();
-      const caller = login(
-        createUser({ isPlatformOperator: true }),
+      const target = await operatorMember();
+      const caller = await login(
+        await createUser({ isPlatformOperator: true }),
         alpha.tenantId,
       );
 
       const response = await changeRole(caller, target, "developer");
 
       expect(response.status).toBe(200);
-      expect(roleOf(alpha.tenantId, target)).toBe("developer");
+      expect(await roleOf(alpha.tenantId, target)).toBe("developer");
     });
 
     it("lets a platform operator remove an operator's membership", async () => {
-      const target = operatorMember();
-      const caller = login(
-        createUser({ isPlatformOperator: true }),
+      const target = await operatorMember();
+      const caller = await login(
+        await createUser({ isPlatformOperator: true }),
         alpha.tenantId,
       );
 
       const response = await removeMembership(caller, target);
 
       expect(response.status).toBe(200);
-      expect(MembershipService.get(alpha.tenantId, target)).toBeNull();
+      expect(await MembershipService.get(alpha.tenantId, target)).toBeNull();
     });
 
     it("still lets a tenant admin change an ordinary member's role", async () => {
-      const member = createUser({
+      const member = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
@@ -906,11 +940,11 @@ describe("HTTP authorization", () => {
       const response = await changeRole(alphaAdmin, member, "supervisor");
 
       expect(response.status).toBe(200);
-      expect(roleOf(alpha.tenantId, member)).toBe("supervisor");
+      expect(await roleOf(alpha.tenantId, member)).toBe("supervisor");
     });
 
     it("still lets a tenant admin remove an ordinary member", async () => {
-      const member = createUser({
+      const member = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
@@ -918,24 +952,25 @@ describe("HTTP authorization", () => {
       const response = await removeMembership(alphaAdmin, member);
 
       expect(response.status).toBe(200);
-      expect(MembershipService.get(alpha.tenantId, member)).toBeNull();
+      expect(await MembershipService.get(alpha.tenantId, member)).toBeNull();
     });
 
     it("still lets a tenant admin change the role of a multi-tenant member", async () => {
-      const member = createUser({
+      const member = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
-      db.prepare(
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, member);
+        [crypto.randomUUID(), beta.tenantId, member],
+      );
 
       expect((await changeRole(alphaAdmin, member, "supervisor")).status).toBe(
         200,
       );
-      expect(roleOf(alpha.tenantId, member)).toBe("supervisor");
-      expect(roleOf(beta.tenantId, member)).toBe("sales_agent");
+      expect(await roleOf(alpha.tenantId, member)).toBe("supervisor");
+      expect(await roleOf(beta.tenantId, member)).toBe("sales_agent");
     });
 
     /**
@@ -945,11 +980,11 @@ describe("HTTP authorization", () => {
      */
     describe("a role change and the user's session", () => {
       it("shows the new role on the next request with the same session", async () => {
-        const member = createUser({
+        const member = await createUser({
           tenantId: alpha.tenantId,
           role: "sales_agent",
         });
-        const session = login(member, alpha.tenantId);
+        const session = await login(member, alpha.tenantId);
 
         expect((await get("/api/admin/users", session)).status).toBe(403);
 
@@ -965,16 +1000,17 @@ describe("HTTP authorization", () => {
       });
 
       it("keeps the user logged in, in this tenant and in the others", async () => {
-        const member = createUser({
+        const member = await createUser({
           tenantId: alpha.tenantId,
           role: "sales_agent",
         });
-        db.prepare(
+        await run(
           `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
            VALUES (?, ?, ?, 'sales_agent')`,
-        ).run(crypto.randomUUID(), beta.tenantId, member);
-        const inAlpha = login(member, alpha.tenantId);
-        const inBeta = login(member, beta.tenantId);
+          [crypto.randomUUID(), beta.tenantId, member],
+        );
+        const inAlpha = await login(member, alpha.tenantId);
+        const inBeta = await login(member, beta.tenantId);
 
         await changeRole(alphaAdmin, member, "supervisor");
 
@@ -990,11 +1026,11 @@ describe("HTTP authorization", () => {
    * numbers, so the API must refuse to guess which thread is meant.
    */
   describe("a contact on two of the tenant's numbers", () => {
-    let second: ReturnType<typeof addChannelAccount>;
+    let second: Awaited<ReturnType<typeof addChannelAccount>>;
 
-    beforeEach(() => {
-      second = addChannelAccount(alpha);
-      insertConversation(second.ref(SHARED_PHONE), {
+    beforeEach(async () => {
+      second = await addChannelAccount(alpha);
+      await insertConversation(second.ref(SHARED_PHONE), {
         clientName: "Alpha Client, second number",
       });
     });
@@ -1086,7 +1122,7 @@ describe("HTTP authorization", () => {
 
     it("a still-unambiguous contact needs no channel account", async () => {
       const onlyOnce = "51900000009";
-      insertConversation(alpha.ref(onlyOnce), { clientName: "Single" });
+      await insertConversation(alpha.ref(onlyOnce), { clientName: "Single" });
 
       const detail = await getJson(
         `/api/conversations/${onlyOnce}`,
@@ -1098,11 +1134,11 @@ describe("HTTP authorization", () => {
     /**
      * The dashboard's own links have to name the thread, or they land on the
      * 409 above. The order records the channel account it came in on, so the
-     * order page links with both values. The test reads the link out of the
-     * template and drives it through the API the way a click would.
+     * order page links with both values. The test renders the page with the
+     * order the API returns and follows its link the way a click would.
      */
     it("the order page links to the thread the order belongs to", async () => {
-      const order = createOrder({
+      const order = await createOrder({
         ref: second.ref(SHARED_PHONE),
         clientName: "Alpha Client, second number",
         clientDni: "12345678",
@@ -1111,28 +1147,14 @@ describe("HTTP authorization", () => {
         deliveryAddress: "Lima",
       });
 
-      const template = readFileSync(
-        new URL(
-          "../../frontend/src/routes/dashboard/orders/[orderId]/+page.svelte",
-          import.meta.url,
-        ),
-        "utf-8",
-      );
-
-      const href = /href="(\/dashboard\/conversations\/[^"]+)"/.exec(
-        template,
-      )?.[1];
-      expect(href).toBeDefined();
-
-      const link = href!
-        .replaceAll("{order.conversation_phone}", order.conversation_phone)
-        .replaceAll("{order.channel_account_id}", order.channel_account_id);
-
-      // Every placeholder in the template is one of the two above.
-      expect(link).not.toContain("{");
+      const page = await renderComponent(ORDER_PAGE, {
+        data: { order: await getJson(`/api/orders/${order.id}`, alphaAdmin) },
+      });
+      const link = /href="(\/dashboard\/conversations\/[^"]+)"/.exec(page)?.[1];
+      expect(link).toBeDefined();
 
       const response = await get(
-        link.replace("/dashboard/conversations/", "/api/conversations/"),
+        link!.replace("/dashboard/conversations/", "/api/conversations/"),
         alphaAdmin,
       );
 
@@ -1152,16 +1174,16 @@ describe("HTTP authorization", () => {
    * once instead of keeping it for the rest of its lifetime.
    */
   describe("suspending a tenant", () => {
-    function suspend(tenantId: string): void {
-      db.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").run(
+    async function suspend(tenantId: string): Promise<void> {
+      await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
         tenantId,
-      );
+      ]);
     }
 
     it("cuts off a session that was already acting in it", async () => {
       expect((await get("/api/conversations", alphaAdmin)).status).toBe(200);
 
-      suspend(alpha.tenantId);
+      await suspend(alpha.tenantId);
 
       const response = await get("/api/conversations", alphaAdmin);
       expect(response.status).toBe(403);
@@ -1171,7 +1193,7 @@ describe("HTTP authorization", () => {
     });
 
     it("stops writes as well as reads", async () => {
-      suspend(alpha.tenantId);
+      await suspend(alpha.tenantId);
 
       const response = await app.request("/api/orders", {
         method: "POST",
@@ -1192,10 +1214,10 @@ describe("HTTP authorization", () => {
       expect(response.status).toBe(403);
     });
 
-    it("drops the pin rather than the session", () => {
-      suspend(alpha.tenantId);
+    it("drops the pin rather than the session", async () => {
+      await suspend(alpha.tenantId);
 
-      const { session, user } = validateSessionToken(alphaAdmin.token);
+      const { session, user } = await validateSessionToken(alphaAdmin.token);
 
       // Still logged in but acting nowhere. The user can select another
       // tenant, exactly as when a membership is revoked.
@@ -1204,7 +1226,7 @@ describe("HTTP authorization", () => {
     });
 
     it("leaves the other tenant working", async () => {
-      suspend(alpha.tenantId);
+      await suspend(alpha.tenantId);
 
       expect((await get("/api/conversations", betaAdmin)).status).toBe(200);
     });
@@ -1218,8 +1240,11 @@ describe("HTTP authorization", () => {
     describe("and an unpinned platform operator", () => {
       let operator: { cookie: string; token: string };
 
-      beforeEach(() => {
-        operator = login(createUser({ isPlatformOperator: true }), null);
+      beforeEach(async () => {
+        operator = await login(
+          await createUser({ isPlatformOperator: true }),
+          null,
+        );
       });
 
       function tenantsInList(rows: Array<{ tenant_id: string }>): string[] {
@@ -1233,7 +1258,7 @@ describe("HTTP authorization", () => {
         );
         expect(tenantsInList(before)).toContain(alpha.tenantId);
 
-        suspend(alpha.tenantId);
+        await suspend(alpha.tenantId);
 
         const after = await getJson<Array<{ tenant_id: string }>>(
           "/api/conversations",
@@ -1252,7 +1277,7 @@ describe("HTTP authorization", () => {
           (await get(`/api/conversations/${SHARED_PHONE}`, operator)).status,
         ).toBe(409);
 
-        suspend(alpha.tenantId);
+        await suspend(alpha.tenantId);
 
         const response = await get(
           `/api/conversations/${SHARED_PHONE}`,
@@ -1268,17 +1293,18 @@ describe("HTTP authorization", () => {
         // Written directly: `trackLLMCall` writes on a detached promise, and
         // the point here is the read, not the write.
         for (const fixture of [alpha, beta]) {
-          db.prepare(
+          await run(
             `INSERT INTO llm_calls
                (id, tenant_id, channel_account_id, phone_number, operation,
                 model, prompt, user_message, status, error_message)
              VALUES (?, ?, ?, ?, 'classify', 'test', 'p', 'u', 'error', ?)`,
-          ).run(
-            crypto.randomUUID(),
-            fixture.tenantId,
-            fixture.channelAccountId,
-            SHARED_PHONE,
-            `${fixture.tenantId} blew up`,
+            [
+              crypto.randomUUID(),
+              fixture.tenantId,
+              fixture.channelAccountId,
+              SHARED_PHONE,
+              `${fixture.tenantId} blew up`,
+            ],
           );
         }
 
@@ -1289,7 +1315,7 @@ describe("HTTP authorization", () => {
           `${alpha.tenantId} blew up`,
         );
 
-        suspend(alpha.tenantId);
+        await suspend(alpha.tenantId);
 
         const after = await getJson<{
           errors: Array<{ error_message: string }>;
@@ -1301,7 +1327,7 @@ describe("HTTP authorization", () => {
       });
 
       it("no longer serves the suspended tenant's assets", async () => {
-        const asset = AssetService.create({
+        const asset = await AssetService.create({
           tenantId: alpha.tenantId,
           kind: "catalog_image",
           visibility: "public",
@@ -1312,7 +1338,7 @@ describe("HTTP authorization", () => {
           200,
         );
 
-        suspend(alpha.tenantId);
+        await suspend(alpha.tenantId);
 
         // Reported as missing rather than forbidden, the same as any asset the
         // caller may not have.
@@ -1332,28 +1358,20 @@ describe("HTTP authorization", () => {
   describe("giving a pending number its credentials", () => {
     const TOKEN = "EAAG-admin-supplied-token";
 
-    let savedKey: string | undefined;
     let pendingId: string;
 
-    beforeEach(() => {
-      savedKey = process.env.SECRETS_KEY;
-      process.env.SECRETS_KEY = "c3".repeat(32);
+    beforeEach(async () => {
+      pendingId = (
+        await ChannelAccountService.create({
+          tenantId: alpha.tenantId,
+          phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
+          label: "Segunda línea",
+        })
+      ).id;
 
-      pendingId = ChannelAccountService.create({
-        tenantId: alpha.tenantId,
-        phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
-        label: "Segunda línea",
-      }).id;
-
-      expect(ChannelAccountService.getById(pendingId)?.status).toBe("pending");
-    });
-
-    afterEach(() => {
-      if (savedKey === undefined) {
-        delete process.env.SECRETS_KEY;
-      } else {
-        process.env.SECRETS_KEY = savedKey;
-      }
+      expect((await ChannelAccountService.getById(pendingId))?.status).toBe(
+        "pending",
+      );
     });
 
     it("activates the number the token arrives on", async () => {
@@ -1368,9 +1386,9 @@ describe("HTTP authorization", () => {
         "active",
       );
 
-      const account = ChannelAccountService.getById(pendingId)!;
+      const account = (await ChannelAccountService.getById(pendingId))!;
       expect(account.status).toBe("active");
-      expect(ChannelAccountService.getAccessToken(account)).toBe(TOKEN);
+      expect(await ChannelAccountService.getAccessToken(account)).toBe(TOKEN);
     });
 
     it("still honours a status the request names", async () => {
@@ -1386,13 +1404,15 @@ describe("HTTP authorization", () => {
     });
 
     it("does not bring a disabled number back", async () => {
-      ChannelAccountService.updateStatus(pendingId, "disabled");
+      await setChannelStatus(pendingId, "disabled");
 
       await patch(`/api/admin/channels/${pendingId}`, alphaAdmin, {
         accessToken: TOKEN,
       });
 
-      expect(ChannelAccountService.getById(pendingId)?.status).toBe("disabled");
+      expect((await ChannelAccountService.getById(pendingId))?.status).toBe(
+        "disabled",
+      );
     });
 
     it("does not touch another tenant's number", async () => {
@@ -1403,7 +1423,9 @@ describe("HTTP authorization", () => {
       );
 
       expect(response.status).toBe(404);
-      expect(ChannelAccountService.getById(pendingId)?.status).toBe("pending");
+      expect((await ChannelAccountService.getById(pendingId))?.status).toBe(
+        "pending",
+      );
     });
 
     /**
@@ -1431,7 +1453,7 @@ describe("HTTP authorization", () => {
           status: "active",
         });
 
-        expect(ChannelAccountService.getById(pendingId)?.status).toBe(
+        expect((await ChannelAccountService.getById(pendingId))?.status).toBe(
           "pending",
         );
       });
@@ -1445,7 +1467,8 @@ describe("HTTP authorization", () => {
         });
 
         expect(
-          ChannelAccountService.getById(pendingId)?.verify_token_secret_id,
+          (await ChannelAccountService.getById(pendingId))
+            ?.verify_token_secret_id,
         ).toBeNull();
       });
 
@@ -1465,8 +1488,12 @@ describe("HTTP authorization", () => {
       it("allows it when one is already stored", async () => {
         // Disabled by a person, then turned back on: the credential is there,
         // and this is the ordinary re-enable.
-        ChannelAccountService.setAccessToken(pendingId, TOKEN);
-        ChannelAccountService.updateStatus(pendingId, "disabled");
+        await ChannelAccountService.update(
+          (await ChannelAccountService.getById(pendingId))!,
+          { accessToken: TOKEN },
+        );
+
+        await setChannelStatus(pendingId, "disabled");
 
         const response = await patch(
           `/api/admin/channels/${pendingId}`,
@@ -1475,7 +1502,9 @@ describe("HTTP authorization", () => {
         );
 
         expect(response.status).toBe(200);
-        expect(ChannelAccountService.getById(pendingId)?.status).toBe("active");
+        expect((await ChannelAccountService.getById(pendingId))?.status).toBe(
+          "active",
+        );
       });
 
       it("still lets it be parked in a state it can honour", async () => {
@@ -1487,7 +1516,9 @@ describe("HTTP authorization", () => {
           );
 
           expect(response.status).toBe(200);
-          expect(ChannelAccountService.getById(pendingId)?.status).toBe(status);
+          expect((await ChannelAccountService.getById(pendingId))?.status).toBe(
+            status,
+          );
         }
       });
     });
@@ -1503,29 +1534,30 @@ describe("HTTP authorization", () => {
     let agentId: string;
     let agentSession: { cookie: string; token: string };
 
-    beforeEach(() => {
-      agentId = createUser({
+    beforeEach(async () => {
+      agentId = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
-      db.prepare(
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, agentId);
+        [crypto.randomUUID(), beta.tenantId, agentId],
+      );
 
       // A member of two tenants starts unpinned, which is the case at issue.
-      expect(MembershipService.listForUser(agentId)).toHaveLength(2);
-      expect(defaultTenantForUser(agentId, false)).toBeNull();
+      expect(await MembershipService.listForUser(agentId)).toHaveLength(2);
+      expect(await defaultTenantForUser(agentId, false)).toBeNull();
 
-      agentSession = login(agentId, null);
+      agentSession = await login(agentId, null);
     });
 
-    it("reports no role at all while unpinned", () => {
+    it("reports no role at all while unpinned", async () => {
       expect(
         sessionRole({ isPlatformOperator: false, membershipRole: null }),
       ).toBeNull();
 
-      const { user } = validateSessionToken(agentSession.token);
+      const { user } = await validateSessionToken(agentSession.token);
       expect(user?.role).toBeNull();
       expect(user?.activeTenantId).toBeNull();
       expect(user?.isPlatformOperator).toBe(false);
@@ -1542,13 +1574,16 @@ describe("HTTP authorization", () => {
       });
       expect(picked.status).toBe(200);
 
-      const { user } = validateSessionToken(agentSession.token);
+      const { user } = await validateSessionToken(agentSession.token);
       expect(user?.role).toBe("sales_agent");
     });
 
-    it("still reports admin for a platform operator", () => {
-      const operator = login(createUser({ isPlatformOperator: true }), null);
-      const { user } = validateSessionToken(operator.token);
+    it("still reports admin for a platform operator", async () => {
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
+      const { user } = await validateSessionToken(operator.token);
 
       expect(user?.role).toBe("admin");
       expect(user?.isPlatformOperator).toBe(true);
@@ -1582,24 +1617,24 @@ describe("HTTP authorization", () => {
   describe("a platform operator who is also a member of the pinned tenant", () => {
     let operatorSession: { cookie: string; token: string };
 
-    beforeEach(() => {
-      const operatorId = createUser({
+    beforeEach(async () => {
+      const operatorId = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
         isPlatformOperator: true,
       });
-      operatorSession = login(operatorId, alpha.tenantId);
+      operatorSession = await login(operatorId, alpha.tenantId);
     });
 
-    it("is reported as an admin", () => {
-      const { user, scope } = validateSessionToken(operatorSession.token);
+    it("is reported as an admin", async () => {
+      const { user, scope } = await validateSessionToken(operatorSession.token);
 
       expect(scope?.tenantId).toBe(alpha.tenantId);
       expect(user?.role).toBe("admin");
     });
 
-    it("holds admin authority in the role check", () => {
-      const { scope } = validateSessionToken(operatorSession.token);
+    it("holds admin authority in the role check", async () => {
+      const { scope } = await validateSessionToken(operatorSession.token);
       if (!scope) throw new Error("The operator's session did not validate");
 
       expect(hasRole(scope, ["admin"])).toBe(true);
@@ -1611,8 +1646,8 @@ describe("HTTP authorization", () => {
   });
 
   describe("a tenant admin and the platform's switches", () => {
-    afterEach(() => {
-      db.prepare("DELETE FROM system_settings").run();
+    afterEach(async () => {
+      await run("DELETE FROM system_settings");
     });
 
     it("does not let a tenant admin write platform-only switches", async () => {
@@ -1628,7 +1663,7 @@ describe("HTTP authorization", () => {
       expect(await response.json()).toMatchObject({
         rejected: ["force_fnb_down"],
       });
-      expect(SystemSettings.get("force_fnb_down")).toBeNull();
+      expect(await SystemSettings.get("force_fnb_down")).toBeNull();
     });
   });
 
@@ -1641,12 +1676,12 @@ describe("HTTP authorization", () => {
   describe("the platform values a tenant admin is shown", () => {
     const OPS_ACCOUNT_KEY = "platform_ops_channel_account_id";
 
-    afterEach(() => {
-      db.prepare("DELETE FROM system_settings").run();
+    afterEach(async () => {
+      await run("DELETE FROM system_settings");
     });
 
     it("does not include VendeYa's own deployment configuration", async () => {
-      SystemSettings.set(OPS_ACCOUNT_KEY, "ch-vendeya-internal");
+      await SystemSettings.set(OPS_ACCOUNT_KEY, "ch-vendeya-internal");
 
       const settings = await getJson<Record<string, string>>(
         "/api/admin/settings",
@@ -1659,8 +1694,8 @@ describe("HTTP authorization", () => {
     });
 
     it("still includes the switches the dashboard renders, read-only", async () => {
-      SystemSettings.set("force_fnb_down", "true");
-      SystemSettings.set("force_gaso_down", "false");
+      await SystemSettings.set("force_fnb_down", "true");
+      await SystemSettings.set("force_gaso_down", "false");
 
       const settings = await getJson<Record<string, string>>(
         "/api/admin/settings",
@@ -1680,9 +1715,9 @@ describe("HTTP authorization", () => {
      * `rejected` for a write nobody attempted.
      */
     it("rejects nothing when the page saves back exactly what it loaded", async () => {
-      SystemSettings.set("force_fnb_down", "true");
-      SystemSettings.set("force_gaso_down", "false");
-      TenantSettings.set(alpha.tenantId, "business_name", "Gas Perú");
+      await SystemSettings.set("force_fnb_down", "true");
+      await SystemSettings.set("force_gaso_down", "false");
+      await TenantSettings.set(alpha.tenantId, "business_name", "Gas Perú");
 
       const loaded = await getJson<Record<string, string>>(
         "/api/admin/settings",
@@ -1697,13 +1732,16 @@ describe("HTTP authorization", () => {
         updates: { business_name: "Gas Perú" },
       });
       // And the platform's values are where they were.
-      expect(SystemSettings.get("force_fnb_down")).toBe("true");
+      expect(await SystemSettings.get("force_fnb_down")).toBe("true");
     });
 
     /** An operator with no tenant selected owns these and sees all of them. */
     it("is not narrowed for a platform operator", async () => {
-      SystemSettings.set(OPS_ACCOUNT_KEY, "ch-vendeya-internal");
-      const operator = login(createUser({ isPlatformOperator: true }), null);
+      await SystemSettings.set(OPS_ACCOUNT_KEY, "ch-vendeya-internal");
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
 
       const settings = await getJson<Record<string, string>>(
         "/api/admin/settings",
@@ -1736,7 +1774,7 @@ describe("HTTP authorization", () => {
     }
 
     it("refuses a tenant admin writing the round-robin cursor", async () => {
-      TenantSettings.set(alpha.tenantId, ROUND_ROBIN_KEY, "2");
+      await TenantSettings.set(alpha.tenantId, ROUND_ROBIN_KEY, "2");
 
       const response = await writeSettings({ [ROUND_ROBIN_KEY]: "invalid" });
 
@@ -1744,7 +1782,9 @@ describe("HTTP authorization", () => {
         rejected: [ROUND_ROBIN_KEY],
         updates: {},
       });
-      expect(TenantSettings.get(alpha.tenantId, ROUND_ROBIN_KEY)).toBe("2");
+      expect(await TenantSettings.get(alpha.tenantId, ROUND_ROBIN_KEY)).toBe(
+        "2",
+      );
     });
 
     it("still takes the operator-owned keys in the same request", async () => {
@@ -1757,7 +1797,9 @@ describe("HTTP authorization", () => {
         rejected: [ROUND_ROBIN_KEY],
         updates: { whatsapp_group_sales: "51900000000" },
       });
-      expect(TenantSettings.get(alpha.tenantId, ROUND_ROBIN_KEY)).toBeNull();
+      expect(
+        await TenantSettings.get(alpha.tenantId, ROUND_ROBIN_KEY),
+      ).toBeNull();
     });
 
     /**
@@ -1765,8 +1807,12 @@ describe("HTTP authorization", () => {
      * is a key it resubmits on every save.
      */
     it("keeps it out of what the settings endpoint reports", async () => {
-      TenantSettings.set(alpha.tenantId, ROUND_ROBIN_KEY, "2");
-      TenantSettings.set(alpha.tenantId, "whatsapp_group_dev", "51900000001");
+      await TenantSettings.set(alpha.tenantId, ROUND_ROBIN_KEY, "2");
+      await TenantSettings.set(
+        alpha.tenantId,
+        "whatsapp_group_dev",
+        "51900000001",
+      );
 
       const settings = await getJson<Record<string, string>>(
         "/api/admin/settings",
@@ -1783,17 +1829,19 @@ describe("HTTP authorization", () => {
      * every assignment that followed.
      */
     it("assigns an agent even with a corrupt cursor already stored", async () => {
-      TenantSettings.set(alpha.tenantId, ROUND_ROBIN_KEY, "invalid");
+      await TenantSettings.set(alpha.tenantId, ROUND_ROBIN_KEY, "invalid");
 
-      const agentId = createUser({
+      const agentId = await createUser({
         tenantId: alpha.tenantId,
         role: "sales_agent",
       });
 
-      const assigned = await assignNextAgent(alpha.ref(SHARED_PHONE));
+      const assigned = await assignNextAgentHeld(alpha.ref(SHARED_PHONE));
 
       expect(assigned).toBe(agentId);
-      expect(TenantSettings.get(alpha.tenantId, ROUND_ROBIN_KEY)).toBe("0");
+      expect(await TenantSettings.get(alpha.tenantId, ROUND_ROBIN_KEY)).toBe(
+        "0",
+      );
     });
   });
 
@@ -1807,18 +1855,22 @@ describe("HTTP authorization", () => {
     const BETA_ONLY = "51900000002";
     let operator: { cookie: string };
 
-    beforeEach(() => {
-      operator = login(createUser({ isPlatformOperator: true }), null);
-      insertConversation(beta.ref(BETA_ONLY), { clientName: "Beta Only" });
+    beforeEach(async () => {
+      operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
+      await insertConversation(beta.ref(BETA_ONLY), {
+        clientName: "Beta Only",
+      });
     });
 
-    function conversationRow(phone: string, tenantId: string) {
-      return db
-        .prepare(
-          `SELECT status, assigned_agent, agent_notes FROM conversations
+    async function conversationRow(phone: string, tenantId: string) {
+      return (await getOne(
+        `SELECT status, assigned_agent, agent_notes FROM conversations
            WHERE tenant_id = ? AND phone_number = ?`,
-        )
-        .get(tenantId, phone) as {
+        [tenantId, phone],
+      )) as {
         status: string;
         assigned_agent: string | null;
         agent_notes: string | null;
@@ -1861,7 +1913,7 @@ describe("HTTP authorization", () => {
     });
 
     it("leaves the other tenant's conversation untouched", async () => {
-      const before = conversationRow(BETA_ONLY, beta.tenantId);
+      const before = await conversationRow(BETA_ONLY, beta.tenantId);
 
       await write("/takeover", operator);
       await write("/agent-data", operator, {
@@ -1869,7 +1921,7 @@ describe("HTTP authorization", () => {
         body: JSON.stringify({ agentNotes: "written from nowhere" }),
       });
 
-      expect(conversationRow(BETA_ONLY, beta.tenantId)).toEqual(before);
+      expect(await conversationRow(BETA_ONLY, beta.tenantId)).toEqual(before);
     });
 
     it("still reads across tenants while unpinned", async () => {
@@ -1889,19 +1941,20 @@ describe("HTTP authorization", () => {
       expect(picked.status).toBe(200);
 
       expect((await write("/takeover", operator)).status).toBe(200);
-      expect(conversationRow(BETA_ONLY, beta.tenantId).status).toBe(
+      expect((await conversationRow(BETA_ONLY, beta.tenantId)).status).toBe(
         "human_takeover",
       );
     });
 
     it("refuses a tenant member who has not picked one either", async () => {
-      const inBoth = createUser({ tenantId: alpha.tenantId });
-      db.prepare(
+      const inBoth = await createUser({ tenantId: alpha.tenantId });
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'admin')`,
-      ).run(crypto.randomUUID(), beta.tenantId, inBoth);
+        [crypto.randomUUID(), beta.tenantId, inBoth],
+      );
 
-      const unpinned = login(inBoth, null);
+      const unpinned = await login(inBoth, null);
 
       expect((await write("/takeover", unpinned)).status).toBe(403);
     });
@@ -1932,7 +1985,10 @@ describe("HTTP authorization", () => {
     }
 
     it("refuses an unpinned caller instead of failing open", async () => {
-      const operator = login(createUser({ isPlatformOperator: true }), null);
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
 
       const response = await post(operator);
 
@@ -1977,13 +2033,14 @@ describe("HTTP authorization", () => {
     });
 
     it("lets a member switch between their own tenants", async () => {
-      const userId = createUser({ tenantId: alpha.tenantId });
-      db.prepare(
+      const userId = await createUser({ tenantId: alpha.tenantId });
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'admin')`,
-      ).run(crypto.randomUUID(), beta.tenantId, userId);
+        [crypto.randomUUID(), beta.tenantId, userId],
+      );
 
-      const session = login(userId, alpha.tenantId);
+      const session = await login(userId, alpha.tenantId);
 
       const listed = await getJson<{ tenants: unknown[] }>(
         "/api/tenants",
@@ -2001,7 +2058,10 @@ describe("HTTP authorization", () => {
     });
 
     it("lets a platform operator pin to a tenant and unpin again", async () => {
-      const operator = login(createUser({ isPlatformOperator: true }), null);
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
 
       // Unpinned: reads span tenants.
       const across = await getJson<Array<{ tenant_id: string }>>(
@@ -2039,19 +2099,20 @@ describe("HTTP authorization", () => {
   describe("logging in", () => {
     const PASSWORD = "the-right-password";
 
-    function userWithPassword(tenantId?: string): string {
-      const userId = createUser({ tenantId });
-      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
-        bcrypt.hashSync(PASSWORD, 4),
+    async function userWithPassword(tenantId?: string): Promise<string> {
+      const userId = await createUser({ tenantId });
+      await run("UPDATE users SET password_hash = ? WHERE id = ?", [
+        await hashPassword(PASSWORD),
         userId,
-      );
+      ]);
       return userId;
     }
 
-    function logIn(userId: string, password = PASSWORD) {
-      const { username } = db
-        .prepare("SELECT username FROM users WHERE id = ?")
-        .get(userId) as { username: string };
+    async function logIn(userId: string, password = PASSWORD) {
+      const { username } = (await getOne(
+        "SELECT username FROM users WHERE id = ?",
+        [userId],
+      )) as { username: string };
 
       return app.request("/api/auth/login", {
         method: "POST",
@@ -2060,14 +2121,14 @@ describe("HTTP authorization", () => {
       });
     }
 
-    function suspend(tenantId: string): void {
-      db.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").run(
+    async function suspend(tenantId: string): Promise<void> {
+      await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
         tenantId,
-      );
+      ]);
     }
 
     it("pins a member to their one open business", async () => {
-      const response = await logIn(userWithPassword(alpha.tenantId));
+      const response = await logIn(await userWithPassword(alpha.tenantId));
 
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
@@ -2076,8 +2137,8 @@ describe("HTTP authorization", () => {
     });
 
     it("lets in a member whose only business is suspended, unpinned", async () => {
-      const userId = userWithPassword(alpha.tenantId);
-      suspend(alpha.tenantId);
+      const userId = await userWithPassword(alpha.tenantId);
+      await suspend(alpha.tenantId);
 
       const response = await logIn(userId);
 
@@ -2111,14 +2172,14 @@ describe("HTTP authorization", () => {
     });
 
     it("still refuses their wrong password", async () => {
-      const userId = userWithPassword(alpha.tenantId);
-      suspend(alpha.tenantId);
+      const userId = await userWithPassword(alpha.tenantId);
+      await suspend(alpha.tenantId);
 
       expect((await logIn(userId, "not-the-password")).status).toBe(401);
     });
 
     it("still refuses somebody who belongs to no business at all", async () => {
-      expect((await logIn(userWithPassword())).status).toBe(401);
+      expect((await logIn(await userWithPassword())).status).toBe(401);
     });
   });
 
@@ -2131,13 +2192,16 @@ describe("HTTP authorization", () => {
   describe("creating the second tenant", () => {
     const slug = "second-business";
 
-    afterEach(() => {
-      db.prepare("DELETE FROM tenants WHERE slug = ?").run(slug);
+    afterEach(async () => {
+      await run("DELETE FROM tenants WHERE slug = ?", [slug]);
     });
 
     it("is what the platform operator flag buys a migrated admin", async () => {
-      const operator = login(
-        createUser({ tenantId: alpha.tenantId, isPlatformOperator: true }),
+      const operator = await login(
+        await createUser({
+          tenantId: alpha.tenantId,
+          isPlatformOperator: true,
+        }),
         alpha.tenantId,
       );
 
@@ -2155,8 +2219,8 @@ describe("HTTP authorization", () => {
     });
 
     it("is closed to the same admin without it", async () => {
-      const admin = login(
-        createUser({ tenantId: alpha.tenantId }),
+      const admin = await login(
+        await createUser({ tenantId: alpha.tenantId }),
         alpha.tenantId,
       );
 

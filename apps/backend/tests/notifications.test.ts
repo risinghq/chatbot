@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { formatConversationDetails } from "../src/domains/conversations/notifications.ts";
 import type { ConversationMetadata, ConversationPhase } from "@vendeya/core";
 
@@ -13,7 +13,7 @@ describe("formatConversationDetails", () => {
 
   const phoneNumber = "51999999999";
 
-  it("should format details correctly with full metadata", () => {
+  it("should format details correctly with full metadata", async () => {
     const result = formatConversationDetails(baseMetadata, null, phoneNumber);
     expect(result).toContain("Nombre: Juan Perez");
     expect(result).toContain("DNI: 12345678");
@@ -21,7 +21,7 @@ describe("formatConversationDetails", () => {
     expect(result).toContain("Producto: No disponible");
   });
 
-  it("should fallback to phase data if metadata is missing", () => {
+  it("should fallback to phase data if metadata is missing", async () => {
     const phase: ConversationPhase = {
       phase: "confirming_client",
       name: "Maria Lopez",
@@ -33,13 +33,13 @@ describe("formatConversationDetails", () => {
     expect(result).toContain("DNI: 87654321");
   });
 
-  it("should handle missing name and DNI gracefully", () => {
+  it("should handle missing name and DNI gracefully", async () => {
     const result = formatConversationDetails({}, null, phoneNumber);
     expect(result).toContain("Nombre: No disponible");
     expect(result).toContain("DNI: No disponible");
   });
 
-  it("should display selected product", () => {
+  it("should display selected product", async () => {
     const phase: ConversationPhase = {
       phase: "offering_products",
       selectedProduct: { name: "iPhone 15", price: 3500 },
@@ -49,7 +49,7 @@ describe("formatConversationDetails", () => {
     expect(result).toContain("Producto: iPhone 15 (S/ 3500.00)");
   });
 
-  it("should display interested product if selected product is missing", () => {
+  it("should display interested product if selected product is missing", async () => {
     const phase: ConversationPhase = {
       phase: "offering_products",
       interestedProduct: { name: "Samsung S24", price: 3000 },

@@ -5,16 +5,13 @@
  * mounts them.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import process from "node:process";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
+import { getOne, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -47,34 +44,36 @@ function buildApp() {
   return app;
 }
 
-function login(userId: string, tenantId: string | null): Auth {
+async function login(userId: string, tenantId: string | null): Promise<Auth> {
   const token = generateSessionToken();
-  createSession(token, userId, tenantId);
+  await createSession(token, userId, tenantId);
   return { cookie: `session=${token}` };
 }
 
 /** A platform operator, optionally keeping one membership as `promote` does. */
-function createOperator(fixture?: TenantFixture): string {
+async function createOperator(fixture?: TenantFixture): Promise<string> {
   if (fixture) {
-    const { userId } = createMember(fixture, "admin");
-    db.prepare("UPDATE users SET is_platform_operator = 1 WHERE id = ?").run(
+    const { userId } = await createMember(fixture, "admin");
+    await run("UPDATE users SET is_platform_operator = 1 WHERE id = ?", [
       userId,
-    );
+    ]);
     return userId;
   }
 
   const userId = `u-${crypto.randomUUID()}`;
-  db.prepare(
+  await run(
     `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
      VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-  ).run(userId, `op-${userId.slice(2, 12)}`);
+    [userId, `op-${userId.slice(2, 12)}`],
+  );
   return userId;
 }
 
-function accountOf(userId: string) {
-  return db
-    .prepare("SELECT password_hash, is_active FROM users WHERE id = ?")
-    .get(userId) as { password_hash: string; is_active: number };
+async function accountOf(userId: string) {
+  return (await getOne(
+    "SELECT password_hash, is_active FROM users WHERE id = ?",
+    [userId],
+  )) as { password_hash: string; is_active: number };
 }
 
 describe("membership scope", () => {
@@ -83,17 +82,14 @@ describe("membership scope", () => {
   let beta: TenantFixture;
   let alphaAdmin: Auth;
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = buildApp();
-    alpha = createTenantFixture("alpha-scope");
-    beta = createTenantFixture("beta-scope");
-    alphaAdmin = login(createMember(alpha, "admin").userId, alpha.tenantId);
-  });
-
-  afterEach(() => {
-    dropTenantFixture(alpha);
-    dropTenantFixture(beta);
+    alpha = await createTenantFixture("alpha-scope");
+    beta = await createTenantFixture("beta-scope");
+    alphaAdmin = await login(
+      (await createMember(alpha, "admin")).userId,
+      alpha.tenantId,
+    );
   });
 
   function request(
@@ -123,43 +119,46 @@ describe("membership scope", () => {
       request("PATCH", `/api/admin/users/${userId}/status`, auth);
 
     it("cannot have its password reset by a tenant admin of their tenant", async () => {
-      const operator = createOperator(alpha);
-      const before = accountOf(operator);
+      const operator = await createOperator(alpha);
+      const before = await accountOf(operator);
 
       const response = await resetPassword(alphaAdmin, operator);
 
       expect(response.status).toBe(403);
-      expect(accountOf(operator)).toEqual(before);
+      expect(await accountOf(operator)).toEqual(before);
     });
 
     it("cannot be deactivated by a tenant admin of their tenant", async () => {
-      const operator = createOperator(alpha);
+      const operator = await createOperator(alpha);
 
       const response = await toggleStatus(alphaAdmin, operator);
 
       expect(response.status).toBe(403);
-      expect(accountOf(operator).is_active).toBe(1);
+      expect((await accountOf(operator)).is_active).toBe(1);
     });
 
     it("can still be changed by another platform operator", async () => {
-      const target = createOperator(alpha);
-      const actor = login(createOperator(), alpha.tenantId);
-      const before = accountOf(target);
+      const target = await createOperator(alpha);
+      const actor = await login(await createOperator(), alpha.tenantId);
+      const before = await accountOf(target);
 
       expect((await resetPassword(actor, target)).status).toBe(200);
-      expect(accountOf(target).password_hash).not.toBe(before.password_hash);
+      expect((await accountOf(target)).password_hash).not.toBe(
+        before.password_hash,
+      );
 
       expect((await toggleStatus(actor, target)).status).toBe(200);
-      expect(accountOf(target).is_active).toBe(0);
+      expect((await accountOf(target)).is_active).toBe(0);
     });
 
     it("leaves the cross-tenant refusal as it was", async () => {
-      const { userId: shared } = createMember(alpha, "sales_agent");
-      db.prepare(
+      const { userId: shared } = await createMember(alpha, "sales_agent");
+      await run(
         `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
          VALUES (?, ?, ?, 'sales_agent')`,
-      ).run(crypto.randomUUID(), beta.tenantId, shared);
-      const before = accountOf(shared);
+        [crypto.randomUUID(), beta.tenantId, shared],
+      );
+      const before = await accountOf(shared);
 
       for (const response of [
         await resetPassword(alphaAdmin, shared),
@@ -170,7 +169,7 @@ describe("membership scope", () => {
           "belongs to other businesses",
         );
       }
-      expect(accountOf(shared)).toEqual(before);
+      expect(await accountOf(shared)).toEqual(before);
     });
   });
 
@@ -187,38 +186,44 @@ describe("membership scope", () => {
 
     // Filed the way the bot files one, with no agent on the order itself.
     // The link to the agent is the conversation the order came from.
-    const fileOrder = (phone: string) =>
-      createOrder({
-        ref: alpha.ref(phone),
-        clientName: "Cliente",
-        clientDni: "12345678",
-        products: [{ productId: "p1", name: "Terma", price: 900, quantity: 1 }],
-        totalAmount: 900,
-        deliveryAddress: "Av. Siempre Viva 123",
-      }).id;
+    const fileOrder = async (phone: string) =>
+      (
+        await createOrder({
+          ref: alpha.ref(phone),
+          clientName: "Cliente",
+          clientDni: "12345678",
+          products: [
+            { productId: "p1", name: "Terma", price: 900, quantity: 1 },
+          ],
+          totalAmount: 900,
+          deliveryAddress: "Av. Siempre Viva 123",
+        })
+      ).id;
 
-    beforeEach(() => {
-      owner = createMember(alpha, "sales_agent").userId;
-      assigned = login(owner, alpha.tenantId);
-      other = login(createMember(alpha, "sales_agent").userId, alpha.tenantId);
+    beforeEach(async () => {
+      owner = (await createMember(alpha, "sales_agent")).userId;
+      assigned = await login(owner, alpha.tenantId);
+      other = await login(
+        (await createMember(alpha, "sales_agent")).userId,
+        alpha.tenantId,
+      );
 
-      insertConversation(alpha.ref(OWNED), {
+      await insertConversation(alpha.ref(OWNED), {
         clientName: "Cliente",
         assignedAgent: owner,
       });
-      insertConversation(alpha.ref(OPEN), { clientName: "Sin asignar" });
+      await insertConversation(alpha.ref(OPEN), { clientName: "Sin asignar" });
 
-      ownedOrderId = fileOrder(OWNED);
-      openOrderId = fileOrder(OPEN);
+      ownedOrderId = await fileOrder(OWNED);
+      openOrderId = await fileOrder(OPEN);
     });
 
-    const statusOf = (phone: string) =>
+    const statusOf = async (phone: string) =>
       (
-        db
-          .prepare(
-            "SELECT status FROM conversations WHERE tenant_id = ? AND phone_number = ?",
-          )
-          .get(alpha.tenantId, phone) as { status: string }
+        (await getOne(
+          "SELECT status FROM conversations WHERE tenant_id = ? AND phone_number = ?",
+          [alpha.tenantId, phone],
+        )) as { status: string }
       ).status;
 
     const orderIds = async (auth: Auth) =>
@@ -254,13 +259,13 @@ describe("membership scope", () => {
           other,
         );
 
-        expect(statusOf(OWNED)).toBe("active");
+        expect(await statusOf(OWNED)).toBe("active");
         expect(takeover.status).toBe(404);
       });
 
       it("is refused release", async () => {
         await takeoverConversation(alpha.ref(OWNED), owner);
-        expect(statusOf(OWNED)).toBe("human_takeover");
+        expect(await statusOf(OWNED)).toBe("human_takeover");
 
         const release = await request(
           "POST",
@@ -268,7 +273,7 @@ describe("membership scope", () => {
           other,
         );
 
-        expect(statusOf(OWNED)).toBe("human_takeover");
+        expect(await statusOf(OWNED)).toBe("human_takeover");
         expect(release.status).toBe(404);
       });
 
@@ -304,7 +309,7 @@ describe("membership scope", () => {
           (await request("POST", `/api/conversations/${OPEN}/takeover`, other))
             .status,
         ).toBe(200);
-        expect(statusOf(OPEN)).toBe("human_takeover");
+        expect(await statusOf(OPEN)).toBe("human_takeover");
       });
 
       it("is still refused its order", async () => {
@@ -392,8 +397,8 @@ describe("membership scope", () => {
       expect(await orderIds(alphaAdmin)).toContain(ownedOrderId);
       expect(await orderIds(alphaAdmin)).toContain(openOrderId);
 
-      const supervisor = login(
-        createMember(alpha, "supervisor").userId,
+      const supervisor = await login(
+        (await createMember(alpha, "supervisor")).userId,
         alpha.tenantId,
       );
       expect(await orderIds(supervisor)).toContain(ownedOrderId);
@@ -404,9 +409,9 @@ describe("membership scope", () => {
     const PHONE = "51900777002";
 
     it("gets the same verdict from the conversation list and the detail", async () => {
-      insertConversation(alpha.ref(PHONE), { clientName: "Cliente" });
-      const supervisor = login(
-        createMember(alpha, "supervisor").userId,
+      await insertConversation(alpha.ref(PHONE), { clientName: "Cliente" });
+      const supervisor = await login(
+        (await createMember(alpha, "supervisor")).userId,
         alpha.tenantId,
       );
 
@@ -438,7 +443,7 @@ describe("membership scope", () => {
 
       expect(response.status).toBe(403);
       expect(
-        ChannelAccountService.getByPhoneNumberId(phoneNumberId),
+        await ChannelAccountService.getByPhoneNumberId(phoneNumberId),
       ).toBeNull();
     });
 
@@ -448,51 +453,42 @@ describe("membership scope", () => {
     });
 
     it("is allowed to a platform operator", async () => {
-      const operator = login(createOperator(), alpha.tenantId);
+      const operator = await login(await createOperator(), alpha.tenantId);
       const phoneNumberId = `pnid-${crypto.randomUUID().slice(0, 8)}`;
 
       const response = await create(operator, phoneNumberId);
 
       expect(response.status).toBe(201);
       expect(
-        ChannelAccountService.getByPhoneNumberId(phoneNumberId)?.tenant_id,
+        (await ChannelAccountService.getByPhoneNumberId(phoneNumberId))
+          ?.tenant_id,
       ).toBe(alpha.tenantId);
     });
   });
 
   describe("a refused channel PATCH", () => {
-    let savedKey: string | undefined;
     let pendingId: string;
 
-    beforeEach(() => {
-      savedKey = process.env.SECRETS_KEY;
-      process.env.SECRETS_KEY = "c3".repeat(32);
-      pendingId = ChannelAccountService.create({
-        tenantId: alpha.tenantId,
-        phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
-      }).id;
+    beforeEach(async () => {
+      pendingId = (
+        await ChannelAccountService.create({
+          tenantId: alpha.tenantId,
+          phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
+        })
+      ).id;
     });
 
-    afterEach(() => {
-      if (savedKey === undefined) {
-        delete process.env.SECRETS_KEY;
-      } else {
-        process.env.SECRETS_KEY = savedKey;
-      }
-    });
-
-    const secretCount = () =>
+    const secretCount = async () =>
       (
-        db
-          .prepare(
-            "SELECT COUNT(*) AS n FROM channel_secrets WHERE tenant_id = ?",
-          )
-          .get(alpha.tenantId) as { n: number }
+        (await getOne(
+          "SELECT COUNT(*) AS n FROM channel_secrets WHERE tenant_id = ?",
+          [alpha.tenantId],
+        )) as { n: number }
       ).n;
 
     it("leaves the account as it was when one field is malformed", async () => {
-      const before = ChannelAccountService.getById(pendingId);
-      const secretsBefore = secretCount();
+      const before = await ChannelAccountService.getById(pendingId);
+      const secretsBefore = await secretCount();
 
       const response = await request(
         "PATCH",
@@ -501,8 +497,8 @@ describe("membership scope", () => {
         { accessToken: "EAAG-good-token", verifyToken: 123 },
       );
 
-      expect(ChannelAccountService.getById(pendingId)).toEqual(before);
-      expect(secretCount()).toBe(secretsBefore);
+      expect(await ChannelAccountService.getById(pendingId)).toEqual(before);
+      expect(await secretCount()).toBe(secretsBefore);
       expect(response.status).toBeGreaterThanOrEqual(400);
       expect(response.status).toBeLessThan(500);
     });

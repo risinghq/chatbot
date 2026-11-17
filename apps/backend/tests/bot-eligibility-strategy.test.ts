@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { ProviderCheckResult } from "@vendeya/types";
 
 import { evaluateResults } from "../src/domains/eligibility/strategy/eligibility-strategy.ts";
@@ -25,7 +25,7 @@ const down = (provider: string) =>
   Err(new ProviderError(provider, "unavailable", "timeout"));
 
 describe("evaluateResults", () => {
-  test("FNB approval wins over a Power BI approval", () => {
+  test("FNB approval wins over a Power BI approval", async () => {
     const r = evaluateResults({
       fnb: Ok(fnbApproved),
       powerbi: Ok(gasoApproved),
@@ -35,7 +35,7 @@ describe("evaluateResults", () => {
     expect(r.value.result).toEqual(fnbApproved);
   });
 
-  test("Power BI approval wins over an FNB refusal", () => {
+  test("Power BI approval wins over an FNB refusal", async () => {
     const r = evaluateResults({ fnb: Ok(refused), powerbi: Ok(gasoApproved) });
     if (!r.ok) throw r.error;
     expect(r.value.source).toBe("powerbi");
@@ -43,14 +43,14 @@ describe("evaluateResults", () => {
     expect(r.value.warnings).toBeUndefined();
   });
 
-  test("both refuse: not eligible", () => {
+  test("both refuse: not eligible", async () => {
     const r = evaluateResults({ fnb: Ok(refused), powerbi: Ok(refused) });
     if (!r.ok) throw r.error;
     expect(r.value.result.eligible).toBe(false);
     expect(r.value.warnings).toBeUndefined();
   });
 
-  test("FNB down, Power BI approves: Power BI with a warning", () => {
+  test("FNB down, Power BI approves: Power BI with a warning", async () => {
     const r = evaluateResults({ fnb: down("FNB"), powerbi: Ok(gasoApproved) });
     if (!r.ok) throw r.error;
     expect(r.value.source).toBe("powerbi");
@@ -58,7 +58,7 @@ describe("evaluateResults", () => {
     expect(r.value.warnings?.[0]?.failedProvider).toBe("FNB");
   });
 
-  test("Power BI down, FNB approves: FNB with a warning", () => {
+  test("Power BI down, FNB approves: FNB with a warning", async () => {
     const r = evaluateResults({
       fnb: Ok(fnbApproved),
       powerbi: down("PowerBI"),
@@ -68,7 +68,7 @@ describe("evaluateResults", () => {
     expect(r.value.warnings?.[0]?.failedProvider).toBe("PowerBI");
   });
 
-  test("one down, the other refuses: not eligible, not an outage", () => {
+  test("one down, the other refuses: not eligible, not an outage", async () => {
     for (const results of [
       { fnb: down("FNB"), powerbi: Ok(refused) },
       { fnb: Ok(refused), powerbi: down("PowerBI") },
@@ -80,7 +80,7 @@ describe("evaluateResults", () => {
     }
   });
 
-  test("a provider that answers with a technical failure counts as down", () => {
+  test("a provider that answers with a technical failure counts as down", async () => {
     const r = evaluateResults({
       fnb: Ok({ eligible: false, credit: 0, reason: "api_error" }),
       powerbi: Ok(gasoApproved),
@@ -90,7 +90,7 @@ describe("evaluateResults", () => {
     expect(r.value.warnings?.[0]?.failedProvider).toBe("FNB");
   });
 
-  test("both down: system outage", () => {
+  test("both down: system outage", async () => {
     const r = evaluateResults({ fnb: down("FNB"), powerbi: down("PowerBI") });
     expect(r.ok).toBe(false);
   });

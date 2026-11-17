@@ -4,16 +4,13 @@
  * reply each act on the outcome. The only fake is the network.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import process from "node:process";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
+import { getAll, getOne, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -47,7 +44,6 @@ const OFFERING: ConversationPhase = {
 };
 
 describe("a send WhatsApp did not accept", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let agent: string;
@@ -84,21 +80,24 @@ describe("a send WhatsApp did not accept", () => {
     return requests.filter((r) => r.type === "text");
   }
 
-  function storedPhase(): ConversationPhase {
-    const row = db
-      .prepare(
-        `SELECT context_data FROM conversations
+  async function storedPhase(): Promise<ConversationPhase> {
+    const row = (await getOne(
+      `SELECT context_data FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(ref.tenantId, ref.channelAccountId, ref.phoneNumber) as {
+      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    )) as {
       context_data: string;
     };
     return JSON.parse(row.context_data).phase;
   }
 
-  function createBundle(name: string, price: number, imageId: string): string {
+  async function createBundle(
+    name: string,
+    price: number,
+    imageId: string,
+  ): Promise<string> {
     const id = `bundle-${crypto.randomUUID()}`;
-    BundleService.create({
+    await BundleService.create({
       id,
       tenantId: tenant.tenantId,
       period_id: periodId,
@@ -117,13 +116,9 @@ describe("a send WhatsApp did not accept", () => {
 
   let periodId: string;
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("send-failure");
-    const account = ChannelAccountService.create({
+  beforeEach(async () => {
+    tenant = await createTenantFixture("send-failure");
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
       accessToken: "EAAG-a-real-looking-token",
@@ -133,16 +128,17 @@ describe("a send WhatsApp did not accept", () => {
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    insertConversation(ref);
-    agent = createMember(tenant, "sales_agent").userId;
+    await insertConversation(ref);
+    agent = (await createMember(tenant, "sales_agent")).userId;
 
     periodId = `per-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
        VALUES (?, ?, 'Enero', '2026-01', 'active')`,
-    ).run(periodId, tenant.tenantId);
-    cheapId = createBundle("Cocina 2 hornillas", 800, IMAGE_CHEAP);
-    dearId = createBundle("Cocina 4 hornillas", 1200, IMAGE_DEAR);
+      [periodId, tenant.tenantId],
+    );
+    cheapId = await createBundle("Cocina 2 hornillas", 800, IMAGE_CHEAP);
+    dearId = await createBundle("Cocina 4 hornillas", 1200, IMAGE_DEAR);
 
     requests = [];
     answer = () => accepted();
@@ -154,11 +150,8 @@ describe("a send WhatsApp did not accept", () => {
     }) as unknown as typeof globalThis.fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    dropTenantFixture(tenant);
   });
 
   describe("when the bundle images are sent", () => {
@@ -239,7 +232,7 @@ describe("a send WhatsApp did not accept", () => {
     it("records sentProducts for an accepted category image", async () => {
       await executeCommands(images, ref, metadata, false, "trace");
 
-      expect(storedPhase()).toMatchObject({
+      expect(await storedPhase()).toMatchObject({
         phase: "offering_products",
         sentProducts: [{ productId: cheapId }, { productId: dearId }],
       });
@@ -250,7 +243,7 @@ describe("a send WhatsApp did not accept", () => {
 
       await executeCommands(images, ref, metadata, false, "trace");
 
-      const phase = storedPhase();
+      const phase = await storedPhase();
       expect(phase.phase).toBe("offering_products");
       expect(phase).not.toHaveProperty("sentProducts");
       expect(phase).not.toHaveProperty("lastAction");
@@ -261,7 +254,7 @@ describe("a send WhatsApp did not accept", () => {
 
       await executeCommands(images, ref, metadata, false, "trace");
 
-      expect(storedPhase()).toMatchObject({
+      expect(await storedPhase()).toMatchObject({
         sentProducts: [{ productId: dearId, position: 2 }],
         lastAction: { type: "showed_products", productCount: 1 },
       });
@@ -270,7 +263,7 @@ describe("a send WhatsApp did not accept", () => {
     it("records sentProducts for an accepted single bundle", async () => {
       await executeCommands(bundle(), ref, metadata, false, "trace");
 
-      expect(storedPhase()).toMatchObject({
+      expect(await storedPhase()).toMatchObject({
         sentProducts: [{ productId: dearId, position: 1 }],
       });
     });
@@ -280,7 +273,7 @@ describe("a send WhatsApp did not accept", () => {
 
       await executeCommands(bundle(), ref, metadata, false, "trace");
 
-      const phase = storedPhase();
+      const phase = await storedPhase();
       expect(phase.phase).toBe("offering_products");
       expect(phase).not.toHaveProperty("sentProducts");
       expect(phase).not.toHaveProperty("lastAction");
@@ -301,8 +294,8 @@ describe("a send WhatsApp did not accept", () => {
         "trace",
       );
 
-      expect(storedPhase().phase).toBe("offering_products");
-      expect(MessageStore.getHistory(ref)[0]).toMatchObject({
+      expect((await storedPhase()).phase).toBe("offering_products");
+      expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
         status: "failed",
       });
     });
@@ -313,21 +306,22 @@ describe("a send WhatsApp did not accept", () => {
     let app: Hono;
     let cookie: string;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       app = new Hono();
       app.onError(errorHandler);
       app.use("/api/*", requireAuth);
       app.route("/api/conversations", conversationRoutes);
 
       const token = generateSessionToken();
-      createSession(token, agent, tenant.tenantId);
+      await createSession(token, agent, tenant.tenantId);
       cookie = `session=${token}`;
 
-      db.prepare(
+      await run(
         `UPDATE conversations SET last_activity_at = ?
          WHERE tenant_id = ? AND phone_number = ?`,
-      ).run(STALE, ref.tenantId, ref.phoneNumber);
-      raiseUnreadAlert(ref);
+        [STALE, ref.tenantId, ref.phoneNumber],
+      );
+      await raiseUnreadAlert(ref);
     });
 
     function reply(content = "Hola, soy Ana") {
@@ -338,14 +332,13 @@ describe("a send WhatsApp did not accept", () => {
       });
     }
 
-    function audit() {
+    async function audit() {
       return (
-        db
-          .prepare(
-            `SELECT user_id, action, resource_type, resource_id, metadata
+        (await getAll(
+          `SELECT user_id, action, resource_type, resource_id, metadata
              FROM audit_log WHERE tenant_id = ? ORDER BY rowid`,
-          )
-          .all(tenant.tenantId) as Array<{
+          [tenant.tenantId],
+        )) as Array<{
           user_id: string;
           action: string;
           resource_type: string;
@@ -355,24 +348,22 @@ describe("a send WhatsApp did not accept", () => {
       ).map((row) => ({ ...row, metadata: JSON.parse(row.metadata) }));
     }
 
-    function lastActivityAt(): number {
+    async function lastActivityAt(): Promise<number> {
       return (
-        db
-          .prepare(
-            `SELECT last_activity_at FROM conversations
+        (await getOne(
+          `SELECT last_activity_at FROM conversations
              WHERE tenant_id = ? AND phone_number = ?`,
-          )
-          .get(ref.tenantId, ref.phoneNumber) as { last_activity_at: number }
+          [ref.tenantId, ref.phoneNumber],
+        )) as { last_activity_at: number }
       ).last_activity_at;
     }
 
-    function unreadAlerts(): number {
+    async function unreadAlerts(): Promise<number> {
       return (
-        db
-          .prepare(
-            "SELECT COUNT(*) AS n FROM unread_alerts WHERE tenant_id = ?",
-          )
-          .get(ref.tenantId) as { n: number }
+        (await getOne(
+          "SELECT COUNT(*) AS n FROM unread_alerts WHERE tenant_id = ?",
+          [ref.tenantId],
+        )) as { n: number }
       ).n;
     }
 
@@ -395,7 +386,7 @@ describe("a send WhatsApp did not accept", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ success: true });
       expect(textRequests()).toHaveLength(1);
-      expect(audit()).toEqual([
+      expect(await audit()).toEqual([
         {
           user_id: agent,
           action: "send_message",
@@ -404,8 +395,8 @@ describe("a send WhatsApp did not accept", () => {
           metadata: { message: "Hola, soy Ana" },
         },
       ]);
-      expect(lastActivityAt()).toBeGreaterThan(STALE);
-      expect(unreadAlerts()).toBe(0);
+      expect(await lastActivityAt()).toBeGreaterThan(STALE);
+      expect(await unreadAlerts()).toBe(0);
     });
 
     for (const [kind, failure] of Object.entries(failures)) {
@@ -416,10 +407,10 @@ describe("a send WhatsApp did not accept", () => {
 
         expect(response.status).toBe(400);
         expect(await response.json()).toEqual({ error: failure.error });
-        expect(audit()).toEqual([]);
-        expect(lastActivityAt()).toBe(STALE);
-        expect(unreadAlerts()).toBe(1);
-        expect(MessageStore.getHistory(ref)[0]).toMatchObject({
+        expect(await audit()).toEqual([]);
+        expect(await lastActivityAt()).toBe(STALE);
+        expect(await unreadAlerts()).toBe(1);
+        expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
           status: "failed",
         });
       });
@@ -449,7 +440,7 @@ describe("a send WhatsApp did not accept", () => {
 
         expect(response.status).toBe(400);
         expect(await response.json()).toEqual({ error: unconfirmedError });
-        expect(audit()).toEqual([
+        expect(await audit()).toEqual([
           {
             user_id: agent,
             action: "send_message",
@@ -458,8 +449,8 @@ describe("a send WhatsApp did not accept", () => {
             metadata: { message: "Hola, soy Ana", deliveryUnconfirmed: true },
           },
         ]);
-        expect(lastActivityAt()).toBe(STALE);
-        expect(unreadAlerts()).toBe(1);
+        expect(await lastActivityAt()).toBe(STALE);
+        expect(await unreadAlerts()).toBe(1);
       });
     }
   });

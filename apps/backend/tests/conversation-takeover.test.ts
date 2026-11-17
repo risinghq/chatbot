@@ -1,33 +1,33 @@
 /**
  * A person's takeover stops the bot, and releasing the conversation hands it
  * back. Every test runs the real path: the webhook stores the inbound message,
- * the aggregator worker answers it, and the only fake is the network.
+ * the conversation's object answers it, and the only fake is the network.
+
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import process from "node:process";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
+import { getAll, getOne, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
-import { customerWrites as writeIn } from "./helpers/turn.ts";
+import {
+  deliver,
+  whileLocked,
+  customerWrites as writeIn,
+} from "./helpers/turn.ts";
 
 import type { ConversationPhase } from "@vendeya/core";
 import type { ConversationRef } from "@vendeya/types";
 
-import { TIMEOUTS } from "../src/config/timeouts.ts";
-import { processReadyMessages } from "../src/conversation/aggregator-worker.ts";
-import {
-  ConversationBusyError,
-  acquireLock,
-} from "../src/conversation/locks.ts";
+import { ConversationBusyError } from "../src/conversation/locks.ts";
+import type { ConversationObject } from "../src/conversation/object.ts";
+import { conversationStub } from "../src/conversation/stub.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import {
@@ -54,7 +54,6 @@ const OFFERING: ConversationPhase = {
 };
 
 describe("a person takes over a conversation", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let agent: string;
@@ -63,10 +62,8 @@ describe("a person takes over a conversation", () => {
   let textSends: string[];
   /** Runs before the network answers. A test holds a bot turn here. */
   let beforeNetworkAnswers: () => Promise<void>;
-  let lockTimeout: { LOCK_DEFAULT: number };
-  let savedLockTimeout: number;
 
-  function insert(
+  async function insert(
     phase: ConversationPhase,
     options: {
       status?: string;
@@ -75,9 +72,9 @@ describe("a person takes over a conversation", () => {
       metadata?: Record<string, unknown>;
       columns?: { client_name?: string; dni?: string; credit_line?: number };
     } = {},
-  ): void {
+  ): Promise<void> {
     const now = Date.now();
-    insertConversation(ref, {
+    await insertConversation(ref, {
       status: options.status,
       contextData: {
         phase,
@@ -88,29 +85,29 @@ describe("a person takes over a conversation", () => {
         },
       },
     });
-    db.prepare(
+    await run(
       `UPDATE conversations
        SET handover_reason = ?, client_name = ?, dni = ?, credit_line = ?
        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-    ).run(
-      options.handoverReason ?? null,
-      options.columns?.client_name ?? null,
-      options.columns?.dni ?? null,
-      options.columns?.credit_line ?? null,
-      ref.tenantId,
-      ref.channelAccountId,
-      ref.phoneNumber,
+      [
+        options.handoverReason ?? null,
+        options.columns?.client_name ?? null,
+        options.columns?.dni ?? null,
+        options.columns?.credit_line ?? null,
+        ref.tenantId,
+        ref.channelAccountId,
+        ref.phoneNumber,
+      ],
     );
   }
 
-  function conversation() {
-    const row = db
-      .prepare(
-        `SELECT status, handover_reason, context_data, client_name, dni, credit_line
+  async function conversation() {
+    const row = (await getOne(
+      `SELECT status, handover_reason, context_data, client_name, dni, credit_line
          FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(ref.tenantId, ref.channelAccountId, ref.phoneNumber) as {
+      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    )) as {
       status: string;
       handover_reason: string | null;
       context_data: string;
@@ -136,43 +133,80 @@ describe("a person takes over a conversation", () => {
     await writeIn(tenant, CUSTOMER, text);
   }
 
-  function inboxStatuses(): string[] {
+  /** The customer writes in and the quiet window passes, with the turn not yet run. */
+  async function customerWritesAndWaits(text: string): Promise<void> {
+    expect((await deliver(tenant.phoneNumberId, CUSTOMER, text)).status).toBe(
+      200,
+    );
+    await run(
+      `UPDATE message_inbox SET created_at = created_at - 60000
+       WHERE channel_account_id = ? AND status = 'pending'`,
+      [tenant.channelAccountId],
+    );
+  }
+
+  /**
+   * Runs `fn` inside the conversation's object. A test that holds a turn at
+   * the network makes its promises here, because the object may await only
+   * promises it made.
+   */
+  function insideObject(
+    fn: (object: ConversationObject) => Promise<void>,
+  ): Promise<void> {
+    return runInDurableObject(conversationStub(ref), fn);
+  }
+
+  /** Holds the turn's first send at the network until `release` is called. */
+  function holdFirstSend(): { reached: Promise<void>; release: () => void } {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reachedNetwork!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      reachedNetwork = resolve;
+    });
+    let turnHeld = false;
+    beforeNetworkAnswers = async () => {
+      if (turnHeld) return;
+      turnHeld = true;
+      reachedNetwork();
+      await held;
+    };
+    return { reached, release };
+  }
+
+  async function inboxStatuses(): Promise<string[]> {
     return (
-      db
-        .prepare(
-          "SELECT status FROM message_inbox WHERE channel_account_id = ? ORDER BY id",
-        )
-        .all(tenant.channelAccountId) as Array<{ status: string }>
+      (await getAll(
+        "SELECT status FROM message_inbox WHERE channel_account_id = ? ORDER BY id",
+        [tenant.channelAccountId],
+      )) as Array<{ status: string }>
     ).map((row) => row.status);
   }
 
-  function storedInbound(): string[] {
-    return MessageStore.getHistory(ref, 100)
+  async function storedInbound(): Promise<string[]> {
+    return (await MessageStore.getHistory(ref, 100))
       .filter((m) => m.direction === "inbound")
       .map((m) => m.content);
   }
 
-  function auditActions(): string[] {
+  async function auditActions(): Promise<string[]> {
     return (
-      db
-        .prepare(
-          "SELECT action FROM audit_log WHERE tenant_id = ? ORDER BY rowid",
-        )
-        .all(tenant.tenantId) as Array<{ action: string }>
+      (await getAll(
+        "SELECT action FROM audit_log WHERE tenant_id = ? ORDER BY rowid",
+        [tenant.tenantId],
+      )) as Array<{ action: string }>
     ).map((row) => row.action);
   }
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("takeover");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("takeover");
     // A number that genuinely sends, so a bot reply reaches the fake network.
-    db.prepare("DELETE FROM channel_accounts WHERE id = ?").run(
+    await run("DELETE FROM channel_accounts WHERE id = ?", [
       tenant.channelAccountId,
-    );
-    const account = ChannelAccountService.create({
+    ]);
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
@@ -183,7 +217,7 @@ describe("a person takes over a conversation", () => {
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    agent = createMember(tenant, "sales_agent").userId;
+    agent = (await createMember(tenant, "sales_agent")).userId;
 
     textSends = [];
     beforeNetworkAnswers = async () => {};
@@ -197,85 +231,67 @@ describe("a person takes over a conversation", () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }) as unknown as typeof globalThis.fetch;
-
-    lockTimeout = TIMEOUTS as { LOCK_DEFAULT: number };
-    savedLockTimeout = lockTimeout.LOCK_DEFAULT;
   });
 
-  afterEach(() => {
-    lockTimeout.LOCK_DEFAULT = savedLockTimeout;
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    db.prepare("DELETE FROM audit_log WHERE user_id = ?").run(agent);
-    dropTenantFixture(tenant);
+    await run("DELETE FROM audit_log WHERE user_id = ?", [agent]);
   });
 
   describe("while the bot is answering", () => {
     it("keeps the bot silent on the next message and still stores it", async () => {
-      insert(OFFERING);
+      await insert(OFFERING);
 
       await takeoverConversation(ref, agent);
       await customerWrites("quiero el segundo");
-      await processReadyMessages();
 
       expect(textSends).toEqual([]);
-      expect(storedInbound()).toEqual(["quiero el segundo"]);
-      expect(inboxStatuses()).toEqual(["processed"]);
+      expect(await storedInbound()).toEqual(["quiero el segundo"]);
+      expect(await inboxStatuses()).toEqual(["processed"]);
 
-      const after = conversation();
+      const after = await conversation();
       expect(after.phase.phase).toBe("escalated");
       expect(after.status).toBe("human_takeover");
       expect(after.handoverReason).toBe("Manual takeover by agent");
     });
 
     it("waits for a bot turn in flight and leaves the conversation escalated", async () => {
-      insert({ phase: "greeting" });
+      await insert({ phase: "greeting" });
+      await customerWritesAndWaits("hola");
 
-      let holdTurn!: () => void;
-      const held = new Promise<void>((resolve) => {
-        holdTurn = resolve;
+      await insideObject(async (object) => {
+        const send = holdFirstSend();
+        const turn = object.wake(ref);
+        await send.reached;
+
+        let takeoverDone = false;
+        const takeover = takeoverConversation(ref, agent).then(() => {
+          takeoverDone = true;
+        });
+        await scheduler.wait(50);
+
+        expect(takeoverDone).toBe(false);
+        expect((await conversation()).status).toBe("active");
+
+        send.release();
+        await Promise.all([turn, takeover]);
       });
-      let turnReachedNetwork!: () => void;
-      const reached = new Promise<void>((resolve) => {
-        turnReachedNetwork = resolve;
-      });
-      beforeNetworkAnswers = async () => {
-        turnReachedNetwork();
-        await held;
-      };
 
-      await customerWrites("hola");
-      const turn = processReadyMessages();
-      await reached;
-
-      let takeoverDone = false;
-      const takeover = takeoverConversation(ref, agent).then(() => {
-        takeoverDone = true;
-      });
-      await Bun.sleep(50);
-
-      expect(takeoverDone).toBe(false);
-      expect(conversation().status).toBe("active");
-
-      holdTurn();
-      await Promise.all([turn, takeover]);
-
-      const after = conversation();
+      const after = await conversation();
       expect(after.phase.phase).toBe("escalated");
       expect(after.status).toBe("human_takeover");
       expect(after.handoverReason).toBe("Manual takeover by agent");
     });
 
     it("keeps the customer's name, DNI and credit line", async () => {
-      insert(OFFERING, {
+      await insert(OFFERING, {
         metadata: { name: "Juan", dni: "12345678", credit: 5000 },
         columns: { client_name: "Juan", dni: "12345678", credit_line: 5000 },
       });
 
       await takeoverConversation(ref, agent);
 
-      const after = conversation();
+      const after = await conversation();
       expect(after.metadata).toMatchObject({
         name: "Juan",
         dni: "12345678",
@@ -290,25 +306,26 @@ describe("a person takes over a conversation", () => {
 
     it("refreshes the activity time, and so does an agent's reply", async () => {
       const stale = Date.now() - 2 * HOUR;
-      insert(OFFERING, { lastActivityAt: stale });
+      await insert(OFFERING, { lastActivityAt: stale });
 
       const beforeTakeover = Date.now();
       await takeoverConversation(ref, agent);
-      const takenAt = conversation().metadata.lastActivityAt as number;
+      const takenAt = (await conversation()).metadata.lastActivityAt as number;
       expect(takenAt).toBeGreaterThanOrEqual(beforeTakeover);
 
-      db.prepare(
+      await run(
         `UPDATE conversations
          SET context_data = json_set(context_data, '$.metadata.lastActivityAt', ?)
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      ).run(stale, ref.tenantId, ref.channelAccountId, ref.phoneNumber);
+        [stale, ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+      );
 
       const beforeReply = Date.now();
       const result = await sendManualMessage(ref, "Hola, soy Ana", agent);
 
       expect(result).toEqual({ success: true });
       expect(textSends).toEqual(["Hola, soy Ana"]);
-      const after = conversation();
+      const after = await conversation();
       expect(after.metadata.lastActivityAt as number).toBeGreaterThanOrEqual(
         beforeReply,
       );
@@ -317,68 +334,61 @@ describe("a person takes over a conversation", () => {
 
     it("does not refresh the activity time when nothing was sent", async () => {
       const stale = Date.now() - 2 * HOUR;
-      insert(OFFERING, { lastActivityAt: stale });
+      await insert(OFFERING, { lastActivityAt: stale });
 
       const result = await sendManualMessage(ref, "", agent);
 
       expect(result.success).toBe(false);
-      expect(conversation().metadata.lastActivityAt).toBe(stale);
+      expect((await conversation()).metadata.lastActivityAt).toBe(stale);
     });
   });
 
   describe("when an agent replies", () => {
-    function rawRow() {
-      return db
-        .prepare(
-          `SELECT * FROM conversations
+    async function rawRow() {
+      return await getOne(
+        `SELECT * FROM conversations
            WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        )
-        .get(ref.tenantId, ref.channelAccountId, ref.phoneNumber);
+        [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+      );
     }
 
-    function setContextData(value: string | null): void {
-      db.prepare(
+    async function setContextData(value: string | null): Promise<void> {
+      await run(
         `UPDATE conversations SET context_data = ?
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      ).run(value, ref.tenantId, ref.channelAccountId, ref.phoneNumber);
+        [value, ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+      );
     }
 
     it("leaves the phase and status alone while a bot turn is in flight", async () => {
       // An escalated phase with an active status. Writing this phase back
       // would set the status to human_takeover.
-      insert(
+      await insert(
         { phase: "escalated", reason: "multiple_objections" },
         { status: "active", lastActivityAt: Date.now() - 2 * HOUR },
       );
 
-      let holdTurn!: () => void;
-      const held = new Promise<void>((resolve) => {
-        holdTurn = resolve;
-      });
-      let turnReachedNetwork!: () => void;
-      const reached = new Promise<void>((resolve) => {
-        turnReachedNetwork = resolve;
-      });
-      let turnHeld = false;
-      beforeNetworkAnswers = async () => {
-        if (turnHeld) return;
-        turnHeld = true;
-        turnReachedNetwork();
-        await held;
-      };
+      await customerWritesAndWaits("hola");
 
-      await customerWrites("hola");
-      const turn = processReadyMessages();
-      await reached;
-      const before = conversation();
+      let before!: Awaited<ReturnType<typeof conversation>>;
+      let during!: Awaited<ReturnType<typeof conversation>>;
+      let result!: Awaited<ReturnType<typeof sendManualMessage>>;
+      let beforeReply!: number;
+      await insideObject(async (object) => {
+        const send = holdFirstSend();
+        const turn = object.wake(ref);
+        await send.reached;
+        before = await conversation();
 
-      const beforeReply = Date.now();
-      const result = await sendManualMessage(ref, "Hola, soy Ana", agent);
-      const during = conversation();
-      holdTurn();
-      await turn;
+        beforeReply = Date.now();
+        result = await sendManualMessage(ref, "Hola, soy Ana", agent);
+        during = await conversation();
+        send.release();
+        await turn;
+      });
 
       expect(result).toEqual({ success: true });
+
       expect(textSends).toEqual(["Hola, soy Ana"]);
       expect(during.phase).toEqual(before.phase);
       expect(during.status).toBe("active");
@@ -386,20 +396,20 @@ describe("a person takes over a conversation", () => {
       expect(during.metadata.lastActivityAt as number).toBeGreaterThanOrEqual(
         beforeReply,
       );
-      expect(conversation().status).toBe("active");
+      expect((await conversation()).status).toBe("active");
     });
 
     it("refreshes only the activity time", async () => {
-      insert(OFFERING, {
+      await insert(OFFERING, {
         lastActivityAt: Date.now() - 2 * HOUR,
         metadata: { name: "Juan", dni: "12345678" },
         columns: { client_name: "Juan", dni: "12345678", credit_line: 5000 },
       });
-      const before = conversation();
+      const before = await conversation();
 
       await sendManualMessage(ref, "Hola, soy Ana", agent);
 
-      const after = conversation();
+      const after = await conversation();
       expect(after.metadata.lastActivityAt as number).toBeGreaterThan(
         before.metadata.lastActivityAt as number,
       );
@@ -413,25 +423,25 @@ describe("a person takes over a conversation", () => {
     });
 
     it("leaves a conversation with no context data as it was", async () => {
-      insert(OFFERING);
-      setContextData(null);
-      const before = rawRow();
+      await insert(OFFERING);
+      await setContextData(null);
+      const before = await rawRow();
 
       const result = await sendManualMessage(ref, "Hola, soy Ana", agent);
 
       expect(result).toEqual({ success: true });
       expect(textSends).toEqual(["Hola, soy Ana"]);
-      expect(rawRow()).toEqual(before);
+      expect(await rawRow()).toEqual(before);
     });
 
     it("does not write a phase into context data that has none", async () => {
-      insert(OFFERING);
-      setContextData("{}");
+      await insert(OFFERING);
+      await setContextData("{}");
 
       await sendManualMessage(ref, "Hola, soy Ana", agent);
 
       const stored = JSON.parse(
-        (rawRow() as { context_data: string }).context_data,
+        ((await rawRow()) as { context_data: string }).context_data,
       );
       expect(stored.phase).toBeUndefined();
     });
@@ -439,21 +449,20 @@ describe("a person takes over a conversation", () => {
 
   describe("when the person hands the conversation back", () => {
     async function expectBotAnswersAgain(): Promise<void> {
-      const released = conversation();
+      const released = await conversation();
       expect(released.status).toBe("active");
       expect(released.handoverReason).toBeNull();
       expect(released.phase).toEqual({ phase: "greeting" });
 
       await customerWrites("hola");
-      await processReadyMessages();
 
       expect(textSends.length).toBeGreaterThan(0);
-      expect(inboxStatuses()).toEqual(["processed"]);
-      expect(conversation().phase.phase).not.toBe("escalated");
+      expect(await inboxStatuses()).toEqual(["processed"]);
+      expect((await conversation()).phase.phase).not.toBe("escalated");
     }
 
     it("after a takeover, the bot answers the next message", async () => {
-      insert(OFFERING);
+      await insert(OFFERING);
 
       await takeoverConversation(ref, agent);
       await releaseConversation(ref, agent);
@@ -462,7 +471,7 @@ describe("a person takes over a conversation", () => {
     });
 
     it("after the bot escalated, the bot answers the next message", async () => {
-      insert(
+      await insert(
         { phase: "escalated", reason: "multiple_objections" },
         { status: "human_takeover", handoverReason: "multiple_objections" },
       );
@@ -472,91 +481,89 @@ describe("a person takes over a conversation", () => {
       await expectBotAnswersAgain();
     });
 
-    function assignedAgent(): string | null {
+    async function assignedAgent(): Promise<string | null> {
       return (
-        db
-          .prepare(
-            `SELECT assigned_agent FROM conversations
+        (await getOne(
+          `SELECT assigned_agent FROM conversations
              WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-          )
-          .get(ref.tenantId, ref.channelAccountId, ref.phoneNumber) as {
+          [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+        )) as {
           assigned_agent: string | null;
         }
       ).assigned_agent;
     }
 
     it("no longer assigns the agent who released it", async () => {
-      insert(OFFERING);
+      await insert(OFFERING);
 
       await takeoverConversation(ref, agent);
-      expect(assignedAgent()).toBe(agent);
+      expect(await assignedAgent()).toBe(agent);
       await releaseConversation(ref, agent);
 
-      expect(assignedAgent()).toBeNull();
+      expect(await assignedAgent()).toBeNull();
     });
 
     it("no longer assigns the agent when the session times out", async () => {
-      insert(OFFERING);
+      await insert(OFFERING);
       await takeoverConversation(ref, agent);
-      db.prepare(
+      await run(
         `UPDATE conversations
          SET context_data = json_set(context_data, '$.metadata.lastActivityAt', ?)
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      ).run(
-        Date.now() - 4 * HOUR,
-        ref.tenantId,
-        ref.channelAccountId,
-        ref.phoneNumber,
+        [
+          Date.now() - 4 * HOUR,
+          ref.tenantId,
+          ref.channelAccountId,
+          ref.phoneNumber,
+        ],
       );
 
       await customerWrites("hola");
-      await processReadyMessages();
 
-      expect(conversation().status).toBe("active");
-      expect(assignedAgent()).toBeNull();
+      expect((await conversation()).status).toBe("active");
+      expect(await assignedAgent()).toBeNull();
     });
 
     it("keeps the agent of a conversation the bot owns when the session times out", async () => {
-      insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
-      db.prepare(
+      await insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
+      await run(
         `UPDATE conversations SET assigned_agent = ?
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      ).run(agent, ref.tenantId, ref.channelAccountId, ref.phoneNumber);
+        [agent, ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+      );
 
       await customerWrites("hola");
-      await processReadyMessages();
 
-      expect(assignedAgent()).toBe(agent);
+      expect(await assignedAgent()).toBe(agent);
     });
 
     it("starts over with the customer as a returning user", async () => {
-      insert(OFFERING, {
+      await insert(OFFERING, {
         metadata: { lastCategory: "cocinas", name: "Juan", dni: "12345678" },
       });
 
       await takeoverConversation(ref, agent);
       await releaseConversation(ref, agent);
 
-      expect(conversation().metadata).toMatchObject({
+      expect((await conversation()).metadata).toMatchObject({
         isReturningUser: true,
         lastCategory: "cocinas",
       });
-      expect(conversation().metadata.dni).toBeUndefined();
+      expect((await conversation()).metadata.dni).toBeUndefined();
     });
   });
 
   describe("when the person releases a conversation the bot already owns", () => {
-    function rawRow() {
-      return db
-        .prepare(
-          `SELECT * FROM conversations
+    async function rawRow() {
+      return await getOne(
+        `SELECT * FROM conversations
            WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        )
-        .get(ref.tenantId, ref.channelAccountId, ref.phoneNumber);
+        [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+      );
     }
 
-    function botOwned(): void {
-      insert(OFFERING, {
+    async function botOwned(): Promise<void> {
+      await insert(OFFERING, {
         lastActivityAt: Date.now() - HOUR,
         metadata: { name: "Juan", dni: "12345678", lastCategory: "cocinas" },
         columns: { client_name: "Juan", dni: "12345678", credit_line: 5000 },
@@ -564,26 +571,26 @@ describe("a person takes over a conversation", () => {
     }
 
     it("changes nothing and answers success", async () => {
-      botOwned();
-      const before = { row: rawRow(), state: conversation() };
+      await botOwned();
+      const before = { row: await rawRow(), state: await conversation() };
 
       const result = await releaseConversation(ref, agent);
 
       expect(result).toEqual({ success: true });
-      expect(rawRow()).toEqual(before.row);
-      expect(conversation()).toEqual(before.state);
-      expect(auditActions()).toEqual([]);
+      expect(await rawRow()).toEqual(before.row);
+      expect(await conversation()).toEqual(before.state);
+      expect(await auditActions()).toEqual([]);
     });
 
     it("answers success over HTTP and changes nothing", async () => {
-      botOwned();
-      const before = rawRow();
+      await botOwned();
+      const before = await rawRow();
       const app = new Hono();
       app.onError(errorHandler);
       app.use("/api/*", requireAuth);
       app.route("/api/conversations", conversationRoutes);
       const token = generateSessionToken();
-      createSession(token, agent, tenant.tenantId);
+      await createSession(token, agent, tenant.tenantId);
 
       const response = await app.request(
         `/api/conversations/${CUSTOMER}/release`,
@@ -592,12 +599,12 @@ describe("a person takes over a conversation", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ success: true });
-      expect(rawRow()).toEqual(before);
-      expect(auditActions()).toEqual([]);
+      expect(await rawRow()).toEqual(before);
+      expect(await auditActions()).toEqual([]);
     });
 
     it("does not restart a conversation a second release reaches", async () => {
-      insert(OFFERING);
+      await insert(OFFERING);
       await takeoverConversation(ref, agent);
 
       await Promise.all([
@@ -605,101 +612,94 @@ describe("a person takes over a conversation", () => {
         releaseConversation(ref, agent),
       ]);
 
-      expect(auditActions()).toEqual(["takeover", "release"]);
+      expect(await auditActions()).toEqual(["takeover", "release"]);
     });
 
     it("leaves what the first release started alone when a second arrives later", async () => {
-      insert(OFFERING);
+      await insert(OFFERING);
       await takeoverConversation(ref, agent);
       await releaseConversation(ref, agent);
 
       await customerWrites("hola");
-      await processReadyMessages();
-      const answered = conversation();
+      const answered = await conversation();
       expect(answered.phase.phase).toBe("confirming_client");
 
       await releaseConversation(ref, agent);
 
-      expect(conversation()).toEqual(answered);
-      expect(auditActions()).toEqual(["takeover", "release"]);
+      expect(await conversation()).toEqual(answered);
+      expect(await auditActions()).toEqual(["takeover", "release"]);
     });
 
     it("still moves a conversation that only has the human_takeover status", async () => {
-      insert(OFFERING, { status: "human_takeover" });
+      await insert(OFFERING, { status: "human_takeover" });
 
       await releaseConversation(ref, agent);
 
-      const after = conversation();
+      const after = await conversation();
       expect(after.status).toBe("active");
       expect(after.phase).toEqual({ phase: "greeting" });
-      expect(auditActions()).toEqual(["release"]);
+      expect(await auditActions()).toEqual(["release"]);
     });
 
     it("still moves a conversation that only has the escalated phase", async () => {
-      insert({ phase: "escalated", reason: "multiple_objections" });
+      await insert({ phase: "escalated", reason: "multiple_objections" });
 
       await releaseConversation(ref, agent);
 
-      const after = conversation();
+      const after = await conversation();
       expect(after.status).toBe("active");
       expect(after.phase).toEqual({ phase: "greeting" });
-      expect(auditActions()).toEqual(["release"]);
+      expect(await auditActions()).toEqual(["release"]);
     });
   });
 
   describe("when the conversation lock does not come free", () => {
-    async function holdLock(): Promise<() => void> {
-      const release = await acquireLock(ref);
-      lockTimeout.LOCK_DEFAULT = 30;
-      return release;
-    }
-
     it("refuses a takeover and changes nothing", async () => {
-      insert(OFFERING);
-      const before = conversation();
-      const release = await holdLock();
+      await insert(OFFERING);
+      const before = await conversation();
 
-      await expect(takeoverConversation(ref, agent)).rejects.toThrow(
-        ConversationBusyError,
+      await whileLocked(ref, () =>
+        expect(takeoverConversation(ref, agent)).rejects.toThrow(
+          ConversationBusyError,
+        ),
       );
-      release();
 
-      expect(conversation()).toEqual(before);
-      expect(auditActions()).toEqual([]);
+      expect(await conversation()).toEqual(before);
+      expect(await auditActions()).toEqual([]);
     });
 
     it("refuses a release and changes nothing", async () => {
-      insert(
+      await insert(
         { phase: "escalated", reason: "Manual takeover by agent" },
         {
           status: "human_takeover",
           handoverReason: "Manual takeover by agent",
         },
       );
-      const before = conversation();
-      const release = await holdLock();
+      const before = await conversation();
 
-      await expect(releaseConversation(ref, agent)).rejects.toThrow(
-        ConversationBusyError,
+      await whileLocked(ref, () =>
+        expect(releaseConversation(ref, agent)).rejects.toThrow(
+          ConversationBusyError,
+        ),
       );
-      release();
 
-      expect(conversation()).toEqual(before);
-      expect(auditActions()).toEqual([]);
+      expect(await conversation()).toEqual(before);
+      expect(await auditActions()).toEqual([]);
     });
 
     describe("through the HTTP routes", () => {
       let app: Hono;
       let cookie: string;
 
-      beforeEach(() => {
+      beforeEach(async () => {
         app = new Hono();
         app.onError(errorHandler);
         app.use("/api/*", requireAuth);
         app.route("/api/conversations", conversationRoutes);
 
         const token = generateSessionToken();
-        createSession(token, agent, tenant.tenantId);
+        await createSession(token, agent, tenant.tenantId);
         cookie = `session=${token}`;
       });
 
@@ -712,36 +712,34 @@ describe("a person takes over a conversation", () => {
 
       for (const action of ["takeover", "release"] as const) {
         it(`answers ${action} with an error the dashboard can show`, async () => {
-          insert(OFFERING);
-          const before = conversation();
-          const release = await holdLock();
+          await insert(OFFERING);
+          const before = await conversation();
 
-          const response = await post(action);
-          release();
+          const response = await whileLocked(ref, async () => post(action));
 
           expect(response.status).toBe(409);
           expect(await response.json()).toEqual({
             error: "The conversation is busy. Try again in a moment.",
           });
-          expect(conversation()).toEqual(before);
-          expect(auditActions()).toEqual([]);
+          expect(await conversation()).toEqual(before);
+          expect(await auditActions()).toEqual([]);
         });
       }
 
       it("writes one audit row for each of takeover and release", async () => {
-        insert(OFFERING);
+        await insert(OFFERING);
 
         expect((await post("takeover")).status).toBe(200);
         expect((await post("release")).status).toBe(200);
 
-        expect(auditActions()).toEqual(["takeover", "release"]);
+        expect(await auditActions()).toEqual(["takeover", "release"]);
       });
     });
   });
 
   describe("the idle reset", () => {
     it("still hands an escalated conversation back to the bot", async () => {
-      insert(
+      await insert(
         { phase: "escalated", reason: "multiple_objections" },
         {
           status: "human_takeover",
@@ -751,36 +749,33 @@ describe("a person takes over a conversation", () => {
       );
 
       await customerWrites("hola");
-      await processReadyMessages();
 
       expect(textSends.length).toBeGreaterThan(0);
-      const after = conversation();
+      const after = await conversation();
       expect(after.status).toBe("active");
       expect(after.handoverReason).toBeNull();
       expect(after.phase.phase).not.toBe("escalated");
     });
 
     it("restarts an idle conversation the bot was answering", async () => {
-      insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
+      await insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
 
       await customerWrites("hola");
-      await processReadyMessages();
 
       expect(textSends.length).toBeGreaterThan(0);
-      expect(conversation().phase.phase).toBe("confirming_client");
+      expect((await conversation()).phase.phase).toBe("confirming_client");
     });
 
     it("leaves a conversation an agent answered recently with the agent", async () => {
-      insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
+      await insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
       await takeoverConversation(ref, agent);
       await sendManualMessage(ref, "Hola, soy Ana", agent);
       textSends.length = 0;
 
       await customerWrites("gracias");
-      await processReadyMessages();
 
       expect(textSends).toEqual([]);
-      expect(conversation().phase.phase).toBe("escalated");
+      expect((await conversation()).phase.phase).toBe("escalated");
     });
   });
 });

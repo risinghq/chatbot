@@ -1,6 +1,6 @@
 /** The executor persists the phase after sends, not during enrichment. */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type {
   ConversationMetadata,
   ConversationPhase,
@@ -8,13 +8,11 @@ import type {
 } from "@vendeya/core";
 import { createMockProvider } from "@vendeya/intelligence";
 
-import { db } from "../src/db/index.ts";
+import { getOne } from "../src/db/index.ts";
 import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
 import { runEnrichmentLoop } from "../src/conversation/handler/enrichment-loop.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -32,22 +30,20 @@ describe("a turn that needs enrichment", () => {
     metadata: ConversationMetadata;
   };
 
-  function stored(): StoredConversation {
-    const row = db
-      .prepare(
-        `SELECT context_data FROM conversations
+  async function stored(): Promise<StoredConversation> {
+    const row = (await getOne(
+      `SELECT context_data FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(tenant.tenantId, tenant.channelAccountId, CUSTOMER) as {
+      [tenant.tenantId, tenant.channelAccountId, CUSTOMER],
+    )) as {
       context_data: string;
     };
     return JSON.parse(row.context_data);
   }
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("loop-persistence");
-    insertConversation(tenant.ref(CUSTOMER), {
+  beforeEach(async () => {
+    tenant = await createTenantFixture("loop-persistence");
+    await insertConversation(tenant.ref(CUSTOMER), {
       contextData: {
         phase: { phase: "collecting_dni" },
         metadata: { createdAt: 1, lastActivityAt: 1 },
@@ -62,15 +58,14 @@ describe("a turn that needs enrichment", () => {
       async execute(
         _request: Extract<EnrichmentRequest, { type: "check_eligibility" }>,
       ) {
-        storedDuringCheck = stored();
+        storedDuringCheck = await stored();
         return { type: "eligibility_result", status: "not_eligible" };
       },
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     enrichmentRegistry.clear();
-    dropTenantFixture(tenant);
   });
 
   test("leaves the stored phase alone while its handler runs and after the loop returns", async () => {
@@ -84,7 +79,7 @@ describe("a turn that needs enrichment", () => {
 
     expect(result.type).toBe("update");
     expect(storedDuringCheck?.phase).toEqual({ phase: "collecting_dni" });
-    expect(stored().phase).toEqual({ phase: "collecting_dni" });
+    expect((await stored()).phase).toEqual({ phase: "collecting_dni" });
   });
 
   test("a handler that throws leaves the conversation where the customer left it", async () => {
@@ -106,6 +101,6 @@ describe("a turn that needs enrichment", () => {
       ),
     ).rejects.toThrow("provider down");
 
-    expect(stored().phase).toEqual({ phase: "collecting_dni" });
+    expect((await stored()).phase).toEqual({ phase: "collecting_dni" });
   });
 });

@@ -1,12 +1,10 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "vitest";
 import { buildAnswerQuestionPrompt } from "@vendeya/core";
 import { createMockProvider } from "@vendeya/intelligence";
 import type { AnswerContext } from "@vendeya/intelligence";
 import { AnswerQuestionHandler } from "../../../src/conversation/enrichment/handlers/answer-question-handler.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   type TenantFixture,
 } from "../../helpers/tenancy.ts";
 
@@ -16,16 +14,11 @@ describe("AnswerQuestionHandler", () => {
   let tenant: TenantFixture;
   let TEST_REF: ReturnType<TenantFixture["ref"]>;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("answer-handler");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("answer-handler");
     TEST_REF = tenant.ref("51999999999");
     handler = new AnswerQuestionHandler();
     mockProvider = createMockProvider();
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
   });
 
   test("returns non-empty answer for valid question", async () => {
@@ -52,8 +45,8 @@ describe("AnswerQuestionHandler", () => {
   });
 
   test("each tenant's answer prompt names its own business", async () => {
-    const other = createTenantFixture("Hogar Norte");
-    const own = createTenantFixture("Casa Lima");
+    const other = await createTenantFixture("Hogar Norte");
+    const own = await createTenantFixture("Casa Lima");
     try {
       const prompts: string[] = [];
       const capturing = {
@@ -86,8 +79,6 @@ describe("AnswerQuestionHandler", () => {
       expect(prompts[0]).not.toContain("Hogar Norte");
       expect(prompts[1]).not.toContain("Casa Lima");
     } finally {
-      dropTenantFixture(own);
-      dropTenantFixture(other);
     }
   });
 

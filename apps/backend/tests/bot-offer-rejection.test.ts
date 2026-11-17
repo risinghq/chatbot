@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { ConversationPhase } from "@vendeya/core";
 import { createMockProvider } from "@vendeya/intelligence";
 
@@ -7,9 +7,7 @@ import { initializeEnrichmentRegistry } from "../src/conversation/enrichment/ind
 import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
 import type { CheckEligibilityHandler } from "../src/domains/eligibility/handlers/check-eligibility-handler.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -27,17 +25,15 @@ const browsing: ConversationPhase = {
 describe("turning down the offer while browsing", () => {
   let tenant: TenantFixture;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("rejection");
-    insertConversation(tenant.ref(CUSTOMER));
+  beforeEach(async () => {
+    tenant = await createTenantFixture("rejection");
+    await insertConversation(tenant.ref(CUSTOMER));
     enrichmentRegistry.clear();
     initializeEnrichmentRegistry({} as CheckEligibilityHandler);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     enrichmentRegistry.clear();
-    dropTenantFixture(tenant);
   });
 
   async function turn(message: string, isQuestion: boolean) {

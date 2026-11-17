@@ -5,22 +5,22 @@
  * tenant's status itself, because no pinned scope filters it.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as XLSX from "xlsx";
 
-import process from "node:process";
-
-import { db } from "../src/db/index.ts";
+import { getOne, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createTenantFixture,
   createMember,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import { getReadyForAggregation } from "../src/conversation/message-inbox.ts";
+import {
+  conversationsWithWaitingMessages,
+  pendingGroup,
+} from "../src/conversation/message-inbox.ts";
+import { conversationStub } from "../src/conversation/stub.ts";
 import { checkAndReassignTimeouts } from "../src/domains/conversations/assignment.ts";
 import { ReportService } from "../src/domains/reports/index.ts";
 import { createOrder } from "../src/domains/orders/write.ts";
@@ -36,70 +36,72 @@ describe("a suspended tenant", () => {
   let open: TenantFixture;
   let closed: TenantFixture;
 
-  function suspend(tenantId: string): void {
-    db.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").run(
+  async function suspend(tenantId: string): Promise<void> {
+    await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
       tenantId,
-    );
+    ]);
   }
 
-  function queueMessage(fixture: TenantFixture, text: string): void {
-    db.prepare(
+  async function queueMessage(
+    fixture: TenantFixture,
+    text: string,
+  ): Promise<void> {
+    await run(
       `INSERT INTO message_inbox
          (tenant_id, channel_account_id, phone_number, message_text, message_id,
           whatsapp_timestamp, status, created_at)
        VALUES (?, ?, ?, ?, ?, 1, 'pending', ?)`,
-    ).run(
-      fixture.tenantId,
-      fixture.channelAccountId,
-      CUSTOMER,
-      text,
-      `wamid-${crypto.randomUUID()}`,
-      Date.now() - 60_000,
+      [
+        fixture.tenantId,
+        fixture.channelAccountId,
+        CUSTOMER,
+        text,
+        `wamid-${crypto.randomUUID()}`,
+        Date.now() - 60_000,
+      ],
     );
   }
 
-  beforeEach(() => {
-    applySchema();
-    open = createTenantFixture("open-biz");
-    closed = createTenantFixture("closed-biz");
-  });
-
-  afterEach(() => {
-    dropTenantFixture(open);
-    dropTenantFixture(closed);
+  beforeEach(async () => {
+    open = await createTenantFixture("open-biz");
+    closed = await createTenantFixture("closed-biz");
   });
 
   describe("stops the aggregator from answering what was already queued", () => {
-    it("leaves its pending messages out of the dequeue", () => {
-      queueMessage(open, "hola");
-      queueMessage(closed, "hola");
+    it("leaves its pending messages out of the group and the sweep", async () => {
+      await queueMessage(open, "hola");
+      await queueMessage(closed, "hola");
 
-      const before = getReadyForAggregation(0).map((g) => g.tenant_id);
-      expect(before).toContain(open.tenantId);
-      expect(before).toContain(closed.tenantId);
+      const waiting = async () =>
+        (await conversationsWithWaitingMessages(Date.now())).map(
+          (ref) => ref.tenantId,
+        );
+      expect(await waiting()).toEqual(
+        expect.arrayContaining([open.tenantId, closed.tenantId]),
+      );
 
-      suspend(closed.tenantId);
+      await suspend(closed.tenantId);
 
-      const after = getReadyForAggregation(0).map((g) => g.tenant_id);
-      expect(after).not.toContain(closed.tenantId);
+      expect(await waiting()).not.toContain(closed.tenantId);
+      expect(await pendingGroup(closed.ref(CUSTOMER))).toBeUndefined();
       // The other business is still being served.
-      expect(after).toContain(open.tenantId);
+      expect(await waiting()).toContain(open.tenantId);
+      expect(await pendingGroup(open.ref(CUSTOMER))).toBeDefined();
     });
 
-    it("leaves them pending rather than dropping them", () => {
-      queueMessage(closed, "hola");
-      suspend(closed.tenantId);
+    it("leaves them pending rather than dropping them", async () => {
+      await queueMessage(closed, "hola");
+      await suspend(closed.tenantId);
 
-      getReadyForAggregation(0);
+      await conversationStub(closed.ref(CUSTOMER)).wake(closed.ref(CUSTOMER));
 
       // Reactivating the tenant has to resume where it left off, so the row is
       // skipped, not consumed.
       expect(
-        db
-          .prepare(
-            "SELECT status FROM message_inbox WHERE tenant_id = ? LIMIT 1",
-          )
-          .get(closed.tenantId),
+        await getOne(
+          "SELECT status FROM message_inbox WHERE tenant_id = ? LIMIT 1",
+          [closed.tenantId],
+        ),
       ).toEqual({ status: "pending" });
     });
   });
@@ -112,12 +114,8 @@ describe("a suspended tenant", () => {
   describe("sends nothing on a customer conversation", () => {
     let sends: number;
     let originalFetch: typeof globalThis.fetch;
-    let savedKey: string | undefined;
 
-    beforeEach(() => {
-      savedKey = process.env.SECRETS_KEY;
-      process.env.SECRETS_KEY = "d4".repeat(32);
-
+    beforeEach(async () => {
       sends = 0;
       originalFetch = globalThis.fetch;
       globalThis.fetch = (async () => {
@@ -129,15 +127,13 @@ describe("a suspended tenant", () => {
       }) as unknown as typeof globalThis.fetch;
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       globalThis.fetch = originalFetch;
-      if (savedKey === undefined) delete process.env.SECRETS_KEY;
-      else process.env.SECRETS_KEY = savedKey;
     });
 
     /** A number that is genuinely able to send: active, with a token. */
-    function sendableRef(fixture: TenantFixture) {
-      const account = ChannelAccountService.create({
+    async function sendableRef(fixture: TenantFixture) {
+      const account = await ChannelAccountService.create({
         tenantId: fixture.tenantId,
         phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
         accessToken: "EAAG-a-real-looking-token",
@@ -147,19 +143,19 @@ describe("a suspended tenant", () => {
         channelAccountId: account.id,
         phoneNumber: CUSTOMER,
       };
-      insertConversation(ref);
+      await insertConversation(ref);
       return ref;
     }
 
     it("makes no request, and records the reply as failed", async () => {
-      const ref = sendableRef(closed);
+      const ref = await sendableRef(closed);
 
-      suspend(closed.tenantId);
+      await suspend(closed.tenantId);
       await WhatsAppService.sendMessage(ref, "¿Sigue ahí?");
 
       expect(sends).toBe(0);
 
-      const history = MessageStore.getHistory(ref);
+      const history = await MessageStore.getHistory(ref);
       expect(history).toHaveLength(1);
       expect(history[0]).toMatchObject({
         direction: "outbound",
@@ -168,12 +164,12 @@ describe("a suspended tenant", () => {
     });
 
     it("still sends for a tenant that is open", async () => {
-      const ref = sendableRef(open);
+      const ref = await sendableRef(open);
 
       await WhatsAppService.sendMessage(ref, "¿Sigue ahí?");
 
       expect(sends).toBe(1);
-      expect(MessageStore.getHistory(ref)[0]).toMatchObject({
+      expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
         status: "sent",
       });
     });
@@ -181,59 +177,63 @@ describe("a suspended tenant", () => {
 
   describe("stops the reassignment cron", () => {
     /** A conversation whose agent was paged and never answered. */
-    function timedOut(fixture: TenantFixture, agentId: string): void {
-      insertConversation(fixture.ref(CUSTOMER), {
+    async function timedOut(
+      fixture: TenantFixture,
+      agentId: string,
+    ): Promise<void> {
+      await insertConversation(fixture.ref(CUSTOMER), {
         status: "human_takeover",
         assignedAgent: agentId,
       });
-      db.prepare(
+      await run(
         `UPDATE conversations
          SET assignment_notified_at = ?, handover_reason = NULL
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      ).run(
-        Date.now() - 10 * 60 * 1000,
-        fixture.tenantId,
-        fixture.channelAccountId,
-        CUSTOMER,
+        [
+          Date.now() - 10 * 60 * 1000,
+          fixture.tenantId,
+          fixture.channelAccountId,
+          CUSTOMER,
+        ],
       );
     }
 
-    function assignmentOf(fixture: TenantFixture) {
-      return db
-        .prepare(
-          `SELECT assigned_agent, assignment_notified_at FROM conversations
+    async function assignmentOf(fixture: TenantFixture) {
+      return (await getOne(
+        `SELECT assigned_agent, assignment_notified_at FROM conversations
            WHERE tenant_id = ? AND phone_number = ?`,
-        )
-        .get(fixture.tenantId, CUSTOMER) as {
+        [fixture.tenantId, CUSTOMER],
+      )) as {
         assigned_agent: string | null;
         assignment_notified_at: number | null;
       };
     }
 
     it("leaves its conversations assigned where they are", async () => {
-      const closedAgent = createMember(closed, "sales_agent");
-      const openAgent = createMember(open, "sales_agent");
+      const closedAgent = await createMember(closed, "sales_agent");
+      const openAgent = await createMember(open, "sales_agent");
 
-      timedOut(closed, closedAgent.userId);
-      timedOut(open, openAgent.userId);
+      await timedOut(closed, closedAgent.userId);
+      await timedOut(open, openAgent.userId);
 
-      const staleNotifiedAt = assignmentOf(closed).assignment_notified_at;
+      const staleNotifiedAt = (await assignmentOf(closed))
+        .assignment_notified_at;
 
-      suspend(closed.tenantId);
+      await suspend(closed.tenantId);
 
       await checkAndReassignTimeouts();
 
       // The assignment is not cleared, so no agent of a closed business is
       // paged for a conversation it cannot answer.
-      expect(assignmentOf(closed)).toEqual({
+      expect(await assignmentOf(closed)).toEqual({
         assigned_agent: closedAgent.userId,
         assignment_notified_at: staleNotifiedAt,
       });
 
       // The cron still processes the open tenant: its agent is notified again
       // just now.
-      expect(assignmentOf(open).assigned_agent).toBe(openAgent.userId);
-      expect(assignmentOf(open).assignment_notified_at).toBeGreaterThan(
+      expect((await assignmentOf(open)).assigned_agent).toBe(openAgent.userId);
+      expect((await assignmentOf(open)).assignment_notified_at).toBeGreaterThan(
         staleNotifiedAt!,
       );
     });
@@ -245,36 +245,41 @@ describe("a suspended tenant", () => {
       endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
     };
 
-    /** The rows an .xlsx buffer actually carries. */
-    function rowsOf(buffer: Buffer): Array<Record<string, unknown>> {
-      const workbook = XLSX.read(buffer, { type: "buffer" });
+    /** The rows an .xlsx file actually carries. */
+    function rowsOf(file: ArrayBuffer): Array<Record<string, unknown>> {
+      const workbook = XLSX.read(file, { type: "array" });
+
       const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
       return XLSX.utils.sheet_to_json(sheet);
     }
 
-    it("out of the activity report", () => {
-      insertConversation(open.ref(CUSTOMER), { clientName: "Open Client" });
-      insertConversation(closed.ref(CUSTOMER), { clientName: "Closed Client" });
+    it("out of the activity report", async () => {
+      await insertConversation(open.ref(CUSTOMER), {
+        clientName: "Open Client",
+      });
+      await insertConversation(closed.ref(CUSTOMER), {
+        clientName: "Closed Client",
+      });
 
-      suspend(closed.tenantId);
+      await suspend(closed.tenantId);
 
       const names = rowsOf(
-        ReportService.generateActivityReport({
+        await ReportService.generateActivityReport({
           tenantId: null,
           ...range,
           segments: ["all"],
           saleStatuses: ["all"],
-        }) as Buffer,
+        }),
       ).map((row) => row.Nombre);
 
       expect(names).toContain("Open Client");
       expect(names).not.toContain("Closed Client");
     });
 
-    it("out of the order report", () => {
+    it("out of the order report", async () => {
       for (const fixture of [open, closed]) {
-        insertConversation(fixture.ref(CUSTOMER));
-        createOrder({
+        await insertConversation(fixture.ref(CUSTOMER));
+        await createOrder({
           ref: fixture.ref(CUSTOMER),
           clientName: fixture === open ? "Open Buyer" : "Closed Buyer",
           clientDni: "12345678",
@@ -286,13 +291,13 @@ describe("a suspended tenant", () => {
         });
       }
 
-      suspend(closed.tenantId);
+      await suspend(closed.tenantId);
 
       const buyers = rowsOf(
-        ReportService.generateOrderReport({
+        await ReportService.generateOrderReport({
           tenantId: null,
           ...range,
-        }) as Buffer,
+        }),
       ).map((row) => row.Cliente);
 
       expect(buyers).toContain("Open Buyer");
@@ -311,10 +316,9 @@ describe("the Cloud API adapter", () => {
   let calls: number;
   let originalFetch: typeof globalThis.fetch;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("cloud-adapter");
-    account = ChannelAccountService.getById(tenant.channelAccountId)!;
+  beforeEach(async () => {
+    tenant = await createTenantFixture("cloud-adapter");
+    account = (await ChannelAccountService.getById(tenant.channelAccountId))!;
 
     calls = 0;
     originalFetch = globalThis.fetch;
@@ -326,9 +330,8 @@ describe("the Cloud API adapter", () => {
     }) as unknown as typeof globalThis.fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    dropTenantFixture(tenant);
   });
 
   for (const status of ["pending", "disabled"] as const) {

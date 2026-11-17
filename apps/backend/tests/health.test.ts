@@ -1,52 +1,36 @@
 /**
- * `/health` is what a container healthcheck and a deploy gate read. It answers
- * 503 when the database does not answer, and 200 otherwise.
+ * `/api/health` is what an uptime check reads. It answers 503 when the
+ * database does not answer, and 200 otherwise.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
-import type { Database } from "bun:sqlite";
-import { Hono } from "hono";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { markBlocked, markHealthy } from "../src/adapters/providers/health.ts";
-import { healthRoute } from "../src/routes/health.ts";
-import { createTestDatabase } from "./helpers/database.ts";
+import { env } from "cloudflare:workers";
+import { afterEach, describe, expect, it } from "vitest";
+import { markBlocked } from "../src/adapters/providers/health.ts";
+import { backendFetch } from "./helpers/turn.ts";
 
-const dirs: string[] = [];
+const DB = env.DB;
 
-function openDatabase(): Database {
-  const dir = mkdtempSync(join(tmpdir(), "vendeya-health-"));
-  dirs.push(dir);
-  return createTestDatabase(join(dir, "health.sqlite"));
-}
-
-function appFor(db: Database): Hono {
-  const app = new Hono();
-  app.route("/health", healthRoute(db));
-  return app;
-}
-
-afterEach(() => {
-  markHealthy("gaso");
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true });
+afterEach(async () => {
+  env.DB = DB;
 });
 
-describe("/health", () => {
+describe("/api/health", () => {
   it("answers 200, then 503 after the database stops answering", async () => {
-    const db = openDatabase();
-    const app = appFor(db);
-
-    const healthyResponse = await app.request("/health");
+    const healthyResponse = await backendFetch("/api/health");
 
     expect(healthyResponse.status).toBe(200);
     expect(await healthyResponse.json()).toMatchObject({
       status: "healthy",
       database: { status: "healthy" },
     });
-    db.close();
 
-    const unavailableResponse = await app.request("/health");
+    env.DB = {
+      prepare: () => {
+        throw new Error("D1 is unreachable");
+      },
+    } as unknown as D1Database;
+
+    const unavailableResponse = await backendFetch("/api/health");
 
     expect(unavailableResponse.status).toBe(503);
     expect(await unavailableResponse.json()).toMatchObject({
@@ -56,13 +40,11 @@ describe("/health", () => {
   });
 
   it("stays 200 and reports degraded while a provider is blocked", async () => {
-    markBlocked("gaso", "upstream timeout");
+    await markBlocked("gaso", "upstream timeout");
 
-    const db = openDatabase();
-    const response = await appFor(db).request("/health");
+    const response = await backendFetch("/api/health");
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ status: "degraded" });
-    db.close();
   });
 });

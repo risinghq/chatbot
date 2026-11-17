@@ -4,15 +4,11 @@
  * serves. The audit trail, the notification event and handed-out links name it.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync } from "node:fs";
-import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -20,8 +16,8 @@ import {
 import { uploadContract } from "../src/domains/conversations/media.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
 import { privateFileStorage } from "../src/adapters/storage/private-files.ts";
-import { PRIVATE_DIR } from "../src/lib/storage-paths.ts";
-import { db } from "../src/db/index.ts";
+
+import { getOne } from "../src/db/index.ts";
 
 const CUSTOMER = "51987650000";
 
@@ -29,19 +25,10 @@ describe("uploading a contract", () => {
   let tenant: TenantFixture;
   let uploaderId: string;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("uploads");
-    uploaderId = createMember(tenant, "sales_agent").userId;
-    insertConversation(tenant.ref(CUSTOMER));
-  });
-
-  afterEach(() => {
-    rmSync(path.join(PRIVATE_DIR, tenant.tenantId), {
-      recursive: true,
-      force: true,
-    });
-    dropTenantFixture(tenant);
+  beforeEach(async () => {
+    tenant = await createTenantFixture("uploads");
+    uploaderId = (await createMember(tenant, "sales_agent")).userId;
+    await insertConversation(tenant.ref(CUSTOMER));
   });
 
   function upload(contract: string, audio: string) {
@@ -56,16 +43,18 @@ describe("uploading a contract", () => {
     });
   }
 
-  function assetOf(assetId: string) {
-    const asset = AssetService.getById(tenant.tenantId, assetId);
+  async function assetOf(assetId: string) {
+    const asset = await AssetService.getById(tenant.tenantId, assetId);
     if (!asset) throw new Error(`No asset ${assetId}`);
     return asset;
   }
 
   /** The bytes /api/assets/:id would serve for that asset. */
   async function bytesOf(assetId: string): Promise<string | null> {
-    const file = privateFileStorage.read(assetOf(assetId).storage_key);
-    return file ? await file.text() : null;
+    const file = await privateFileStorage.read(
+      (await assetOf(assetId)).storage_key,
+    );
+    return file ? await new Response(file).text() : null;
   }
 
   it("keeps serving each asset id the bytes it was minted for", async () => {
@@ -85,7 +74,7 @@ describe("uploading a contract", () => {
     const first = await upload("first contract", "first recording");
     const second = await upload("corrected contract", "second recording");
 
-    const keys = AssetService.listForTenant(tenant.tenantId).map(
+    const keys = (await AssetService.listForTenant(tenant.tenantId)).map(
       (a) => a.storage_key,
     );
 
@@ -98,7 +87,7 @@ describe("uploading a contract", () => {
       second.contractAssetId,
       second.audioAssetId,
     ]) {
-      const asset = assetOf(id);
+      const asset = await assetOf(id);
       expect(asset.storage_key).toContain(id);
       expect(asset.storage_key.startsWith(`${tenant.tenantId}/`)).toBe(true);
     }
@@ -108,13 +97,12 @@ describe("uploading a contract", () => {
     await upload("first contract", "first recording");
     const second = await upload("corrected contract", "second recording");
 
-    const conversation = db
-      .prepare(
-        `SELECT recording_contract_asset_id, recording_audio_asset_id
+    const conversation = (await getOne(
+      `SELECT recording_contract_asset_id, recording_audio_asset_id
          FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(tenant.tenantId, tenant.channelAccountId, CUSTOMER) as {
+      [tenant.tenantId, tenant.channelAccountId, CUSTOMER],
+    )) as {
       recording_contract_asset_id: string;
       recording_audio_asset_id: string;
     };
@@ -130,7 +118,7 @@ describe("uploading a contract", () => {
 
     const { audioAssetId } = await upload("contract", recording);
 
-    expect(assetOf(audioAssetId).byte_size).toBe(recording.length);
+    expect((await assetOf(audioAssetId)).byte_size).toBe(recording.length);
     expect(await bytesOf(audioAssetId)).toBe(recording);
   });
 
@@ -138,10 +126,10 @@ describe("uploading a contract", () => {
     const first = await upload("short", "first recording");
     const second = await upload("a much longer contract", "second recording");
 
-    const sizeOf = (id: string) => assetOf(id).byte_size;
+    const sizeOf = async (id: string) => (await assetOf(id)).byte_size;
 
-    expect(sizeOf(first.contractAssetId)).toBe("short".length);
-    expect(sizeOf(second.contractAssetId)).toBe(
+    expect(await sizeOf(first.contractAssetId)).toBe("short".length);
+    expect(await sizeOf(second.contractAssetId)).toBe(
       "a much longer contract".length,
     );
   });

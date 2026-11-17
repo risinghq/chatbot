@@ -5,16 +5,14 @@
  * images, and the service turns the outcome into the `messages` row.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import process from "node:process";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { db } from "../src/db/index.ts";
+import { run } from "../src/db/index.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
+  setChannelStatus,
 } from "./helpers/tenancy.ts";
 
 import type { ChannelAccount, ConversationRef } from "@vendeya/types";
@@ -207,19 +205,14 @@ const CASES: Case[] = [
 ];
 
 describe("the Cloud API adapter classifies a send", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let account: ChannelAccount;
   let originalFetch: typeof globalThis.fetch;
   let respond: () => Response;
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("send-outcome");
-    account = ChannelAccountService.create({
+  beforeEach(async () => {
+    tenant = await createTenantFixture("send-outcome");
+    account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
       accessToken: TOKEN,
@@ -229,11 +222,8 @@ describe("the Cloud API adapter classifies a send", () => {
     globalThis.fetch = (async () => respond()) as unknown as typeof fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    dropTenantFixture(tenant);
   });
 
   const sends: Array<[string, () => Promise<SendOutcome>]> = [
@@ -277,8 +267,8 @@ describe("the Cloud API adapter classifies a send", () => {
         const noToken = { ...account, access_token_secret_id: null };
 
         const outcome = await (what === "a text"
-          ? CloudApiAdapter.sendMessage(noToken, CUSTOMER, TEXT)
-          : CloudApiAdapter.sendImage(noToken, CUSTOMER, "images/a.jpg"));
+          ? await CloudApiAdapter.sendMessage(noToken, CUSTOMER, TEXT)
+          : await CloudApiAdapter.sendImage(noToken, CUSTOMER, "images/a.jpg"));
 
         expect(outcome).toEqual({
           ok: false,
@@ -292,14 +282,13 @@ describe("the Cloud API adapter classifies a send", () => {
 });
 
 describe("WhatsAppService returns the outcome", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let originalFetch: typeof globalThis.fetch;
   let respond: () => Response;
 
-  function sendableRef(): ConversationRef {
-    const account = ChannelAccountService.create({
+  async function sendableRef(): Promise<ConversationRef> {
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
       accessToken: TOKEN,
@@ -309,27 +298,20 @@ describe("WhatsAppService returns the outcome", () => {
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    insertConversation(created);
+    await insertConversation(created);
     return created;
   }
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("send-outcome-service");
-    ref = sendableRef();
+  beforeEach(async () => {
+    tenant = await createTenantFixture("send-outcome-service");
+    ref = await sendableRef();
 
     originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => respond()) as unknown as typeof fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    dropTenantFixture(tenant);
   });
 
   it("returns the message id and writes `sent` for an accepted text", async () => {
@@ -338,7 +320,7 @@ describe("WhatsAppService returns the outcome", () => {
     const outcome = await WhatsAppService.sendMessage(ref, TEXT);
 
     expect(outcome).toEqual({ ok: true, messageId: "wamid.OK" });
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
       status: "sent",
       whatsapp_message_id: "wamid.OK",
     });
@@ -355,7 +337,7 @@ describe("WhatsAppService returns the outcome", () => {
       reason: "http_400:131047",
       status: 400,
     });
-    const history = MessageStore.getHistory(ref);
+    const history = await MessageStore.getHistory(ref);
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({
       direction: "outbound",
@@ -378,7 +360,7 @@ describe("WhatsAppService returns the outcome", () => {
       kind: "transient",
       reason: "http_502",
     });
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
       type: "image",
       status: "failed",
     });
@@ -390,9 +372,9 @@ describe("WhatsAppService returns the outcome", () => {
       requests++;
       return json(200, { messages: [{ id: "wamid.OK" }] });
     };
-    db.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").run(
+    await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
       tenant.tenantId,
-    );
+    ]);
 
     const outcome = await WhatsAppService.sendMessage(ref, TEXT);
 
@@ -402,7 +384,9 @@ describe("WhatsAppService returns the outcome", () => {
       reason: "tenant_not_active",
     });
     expect(requests).toBe(0);
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({ status: "failed" });
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
+      status: "failed",
+    });
   });
 
   it("still throws for a pending account of an open tenant", async () => {
@@ -411,12 +395,14 @@ describe("WhatsAppService returns the outcome", () => {
       requests++;
       return json(200, { messages: [{ id: "wamid.OK" }] });
     };
-    ChannelAccountService.updateStatus(ref.channelAccountId, "pending");
+    await setChannelStatus(ref.channelAccountId, "pending");
 
     await expect(WhatsAppService.sendMessage(ref, TEXT)).rejects.toThrow(
       "is pending, not active",
     );
     expect(requests).toBe(0);
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({ status: "failed" });
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
+      status: "failed",
+    });
   });
 });

@@ -3,7 +3,7 @@
  * as a JSON number of milliseconds, or null when a nullable column is unset.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type {
   AnalyticsEvent,
@@ -18,10 +18,8 @@ import type {
 } from "@vendeya/types";
 
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -43,9 +41,9 @@ import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { createOrder, updateOrderStatus } from "../src/domains/orders/write.ts";
-import { assignNextAgent } from "../src/domains/conversations/assignment.ts";
+import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { uploadContract } from "../src/domains/conversations/media.ts";
-import { trackEvent } from "../src/domains/analytics/index.ts";
+import { trackEventStatement } from "../src/domains/analytics/index.ts";
 import { logAction } from "../src/platform/audit/logger.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 
@@ -81,22 +79,17 @@ describe("created_at over HTTP", () => {
   let cookie: string;
   let userId: string;
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = buildApp();
-    tenant = createTenantFixture("created-at");
+    tenant = await createTenantFixture("created-at");
 
-    const admin = createMember(tenant);
+    const admin = await createMember(tenant);
     userId = admin.userId;
     const token = generateSessionToken();
-    createSession(token, userId, tenant.tenantId);
+    await createSession(token, userId, tenant.tenantId);
     cookie = `session=${token}`;
 
-    insertConversation(tenant.ref(PHONE));
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
+    await insertConversation(tenant.ref(PHONE));
   });
 
   async function getJson<T>(path: string): Promise<T> {
@@ -106,7 +99,7 @@ describe("created_at over HTTP", () => {
   }
 
   it("returns CatalogPeriod.created_at as a number", async () => {
-    PeriodService.create({
+    await PeriodService.create({
       tenantId: tenant.tenantId,
       name: "Septiembre",
       year_month: "2026-09",
@@ -120,7 +113,7 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns CatalogPeriod.published_at as null until the period is published, then a number", async () => {
-    const period = PeriodService.create({
+    const period = await PeriodService.create({
       tenantId: tenant.tenantId,
       name: "Septiembre",
       year_month: "2026-09",
@@ -130,14 +123,14 @@ describe("created_at over HTTP", () => {
     const draft = await getJson<CatalogPeriod>(`/api/periods/${period.id}`);
     expect(draft.published_at).toBeNull();
 
-    PeriodService.updateStatus(tenant.tenantId, period.id, "active");
+    await PeriodService.updateStatus(tenant.tenantId, period.id, "active");
 
     const published = await getJson<CatalogPeriod>(`/api/periods/${period.id}`);
     expectMilliseconds(published.published_at!);
   });
 
   it("returns Product.created_at as a number", async () => {
-    ProductService.create({
+    await ProductService.create({
       id: `prod-${crypto.randomUUID()}`,
       tenantId: tenant.tenantId,
       name: "Cocina",
@@ -151,13 +144,13 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns Bundle.created_at as a number", async () => {
-    const period = PeriodService.create({
+    const period = await PeriodService.create({
       tenantId: tenant.tenantId,
       name: "Septiembre",
       year_month: "2026-09",
       created_by: null,
     });
-    BundleService.create({
+    await BundleService.create({
       id: `bundle-${crypto.randomUUID()}`,
       tenantId: tenant.tenantId,
       period_id: period.id,
@@ -182,7 +175,7 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns ConversationMessage.created_at as a number", async () => {
-    MessageStore.log(tenant.ref(PHONE), "inbound", "text", "hola");
+    await MessageStore.log(tenant.ref(PHONE), "inbound", "text", "hola");
 
     const detail = await getJson<{ messages: ConversationMessage[] }>(
       `/api/conversations/${PHONE}`,
@@ -202,8 +195,8 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns Conversation.assignment_notified_at and recording_uploaded_at as numbers once set", async () => {
-    const agent = createMember(tenant, "sales_agent");
-    await assignNextAgent(tenant.ref(PHONE));
+    const agent = await createMember(tenant, "sales_agent");
+    await assignNextAgentHeld(tenant.ref(PHONE));
     await uploadContract({
       ref: tenant.ref(PHONE),
       userId: agent.userId,
@@ -226,7 +219,7 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns AnalyticsEvent.created_at as a number", async () => {
-    trackEvent(tenant.ref(PHONE), "greeting_sent");
+    await trackEventStatement(tenant.ref(PHONE), "greeting_sent").run();
 
     const { events } = await getJson<{ events: AnalyticsEvent[] }>(
       "/api/analytics/events",
@@ -242,7 +235,7 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns Order.created_at as a number", async () => {
-    createOrder({
+    await createOrder({
       ref: tenant.ref(PHONE),
       clientName: "Client",
       clientDni: "87654321",
@@ -258,7 +251,7 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns Order.updated_at as a number, before and after a status change", async () => {
-    const created = createOrder({
+    const created = await createOrder({
       ref: tenant.ref(PHONE),
       clientName: "Client",
       clientDni: "87654321",
@@ -270,14 +263,18 @@ describe("created_at over HTTP", () => {
     const [listed] = await getJson<Order[]>("/api/orders");
     expectMilliseconds(listed!.updated_at);
 
-    updateOrderStatus(tenant.tenantId, created.id, "supervisor_approved");
+    await updateOrderStatus(tenant.tenantId, created.id, "supervisor_approved");
 
     const changed = await getJson<Order>(`/api/orders/${created.id}`);
     expectMilliseconds(changed.updated_at);
   });
 
   it("returns AuditLog.created_at as a number", async () => {
-    logAction({ userId, tenantId: tenant.tenantId }, "test_action", "test");
+    await logAction(
+      { userId, tenantId: tenant.tenantId },
+      "test_action",
+      "test",
+    );
 
     const { logs } = await getJson<{ logs: AuditLog[] }>("/api/admin/audit");
 

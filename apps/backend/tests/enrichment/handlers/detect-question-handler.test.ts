@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "vitest";
 import { createMockProvider } from "@vendeya/intelligence";
 import { DetectQuestionHandler } from "../../../src/conversation/enrichment/handlers/detect-question-handler.ts";
 
@@ -12,7 +12,7 @@ describe("DetectQuestionHandler", () => {
   let handler: DetectQuestionHandler;
   let mockProvider: ReturnType<typeof createMockProvider>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     handler = new DetectQuestionHandler();
     mockProvider = createMockProvider();
   });

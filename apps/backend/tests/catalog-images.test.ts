@@ -1,58 +1,61 @@
 /**
  * A tenant's catalog is seeded from the same base data as every other seeded
- * tenant's, so two tenants' seeded bundles name the same `image_id`. The bundle
- * and asset rows are tenant-scoped, but the image file is shared. Deleting a
- * bundle must keep a file that another tenant's bundle still names.
+ * tenant's, so two tenants' seeded bundles name the same `image_id`. Each
+ * tenant holds its own copy of the object, under its own key prefix. Deleting
+ * one tenant's bundle never touches another tenant's object, and an object goes
+ * only with the last of its tenant's bundles that names it.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  applySchema,
-  createTenantFixture,
-  dropTenantFixture,
-  type TenantFixture,
-} from "./helpers/tenancy.ts";
+import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 
-import { db } from "../src/db/index.ts";
+import { getOne, run } from "../src/db/index.ts";
+
 import { imageStorage } from "../src/adapters/storage/images.ts";
-import { IMAGES_DIR } from "../src/lib/storage-paths.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
 
-const written: string[] = [];
+const SHARED_IMAGE = "0123456789abcdef";
 
-/** The bytes a seeded catalog ships with, as a file the storage can find. */
-function writeImage(imageId: string): string {
-  // Uses the store's own root. A separate copy of the path could drift and let
-  // the deletion assertions pass against a directory the store never reads.
-  fs.mkdirSync(IMAGES_DIR, { recursive: true });
-  fs.writeFileSync(path.join(IMAGES_DIR, `${imageId}.jpg`), "jpeg-bytes");
-  written.push(imageId);
+async function storeImage(
+  fixture: TenantFixture,
+  imageId: string,
+): Promise<string> {
+  await imageStorage.put(
+    fixture.tenantId,
+    imageId,
+    new TextEncoder().encode("jpeg-bytes"),
+  );
   return imageId;
 }
 
-function onDisk(imageId: string): boolean {
-  return fs.existsSync(path.join(IMAGES_DIR, `${imageId}.jpg`));
-}
+const stored = (fixture: TenantFixture, imageId: string) =>
+  imageStorage.exists(fixture.tenantId, imageId);
 
 /** One tenant's copy of a base-catalog bundle, image id and all. */
-function seedBundle(fixture: TenantFixture, imageId: string): string {
+async function seedBundle(
+  fixture: TenantFixture,
+  imageId: string,
+): Promise<string> {
   const periodId = `per-${crypto.randomUUID()}`;
 
-  db.prepare(
-    `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
+  await run(
+    `INSERT OR IGNORE INTO catalog_periods (id, tenant_id, name, year_month, status)
      VALUES (?, ?, 'Enero', '2026-01', 'active')`,
-  ).run(periodId, fixture.tenantId);
+    [periodId, fixture.tenantId],
+  );
+  const period = await getOne<{ id: string }>(
+    "SELECT id FROM catalog_periods WHERE tenant_id = ? AND year_month = '2026-01'",
+    [fixture.tenantId],
+  );
 
   const bundleId = `bundle-${crypto.randomUUID()}`;
 
-  BundleService.create({
+  await BundleService.create({
     id: bundleId,
     tenantId: fixture.tenantId,
-    period_id: periodId,
+    period_id: period!.id,
     segment: "gaso",
     name: "Celular a elección + Cocineta 2Q",
     price: 1799,
@@ -70,111 +73,110 @@ function seedBundle(fixture: TenantFixture, imageId: string): string {
 describe("a catalog image two tenants were seeded with", () => {
   let alpha: TenantFixture;
   let beta: TenantFixture;
-  let sharedImage: string;
   let alphaBundle: string;
   let betaBundle: string;
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
+    alpha = await createTenantFixture("alpha-images");
+    beta = await createTenantFixture("beta-images");
 
-    alpha = createTenantFixture("alpha-images");
-    beta = createTenantFixture("beta-images");
-
-    sharedImage = writeImage(
-      crypto.randomUUID().replace(/-/g, "").slice(0, 16),
+    alphaBundle = await seedBundle(
+      alpha,
+      await storeImage(alpha, SHARED_IMAGE),
     );
-    alphaBundle = seedBundle(alpha, sharedImage);
-    betaBundle = seedBundle(beta, sharedImage);
+    betaBundle = await seedBundle(beta, await storeImage(beta, SHARED_IMAGE));
   });
 
-  afterEach(() => {
-    for (const imageId of written.splice(0)) {
-      fs.rmSync(path.join(IMAGES_DIR, `${imageId}.jpg`), { force: true });
-    }
-    dropTenantFixture(alpha);
-    dropTenantFixture(beta);
+  it("is two objects, one under each tenant's prefix", () => {
+    expect(imageStorage.storageKey(alpha.tenantId, SHARED_IMAGE)).not.toBe(
+      imageStorage.storageKey(beta.tenantId, SHARED_IMAGE),
+    );
   });
 
-  it("survives one tenant replacing its own bundle image", async () => {
-    const replacement = writeImage("aaaa1111bbbb2222");
+  it("survives in the other tenant when one replaces its bundle image", async () => {
+    const replacement = await storeImage(alpha, "aaaa1111bbbb2222");
 
     await BundleService.updateImage(alpha.tenantId, alphaBundle, replacement);
 
-    expect(onDisk(sharedImage)).toBe(true);
-    expect(BundleService.getById(beta.tenantId, betaBundle)?.image_id).toBe(
-      sharedImage,
-    );
-    expect(BundleService.getById(alpha.tenantId, alphaBundle)?.image_id).toBe(
-      replacement,
-    );
+    expect(await stored(alpha, SHARED_IMAGE)).toBe(false);
+    expect(await stored(beta, SHARED_IMAGE)).toBe(true);
+    expect(
+      (await BundleService.getById(beta.tenantId, betaBundle))?.image_id,
+    ).toBe(SHARED_IMAGE);
+    expect(
+      (await BundleService.getById(alpha.tenantId, alphaBundle))?.image_id,
+    ).toBe(replacement);
   });
 
-  it("survives one tenant deleting its own bundle", async () => {
+  it("survives in the other tenant when one deletes its bundle", async () => {
     await BundleService.delete(alpha.tenantId, alphaBundle);
 
-    expect(onDisk(sharedImage)).toBe(true);
-    expect(BundleService.getById(beta.tenantId, betaBundle)).not.toBeNull();
-  });
-
-  it("is deleted with the last bundle that still points at it", async () => {
-    await BundleService.delete(alpha.tenantId, alphaBundle);
-    await BundleService.delete(beta.tenantId, betaBundle);
-
-    expect(onDisk(sharedImage)).toBe(false);
+    expect(await stored(alpha, SHARED_IMAGE)).toBe(false);
+    expect(await stored(beta, SHARED_IMAGE)).toBe(true);
+    expect(
+      await BundleService.getById(beta.tenantId, betaBundle),
+    ).not.toBeNull();
   });
 
   it("takes only the deleting tenant's asset row with it", async () => {
-    const storageKey = imageStorage.storageKey(sharedImage);
-
     for (const tenant of [alpha, beta]) {
-      AssetService.create({
+      await AssetService.create({
         tenantId: tenant.tenantId,
         kind: "catalog_image",
         visibility: "public",
-        storageKey,
+        storageKey: imageStorage.storageKey(tenant.tenantId, SHARED_IMAGE),
       });
     }
 
     await BundleService.delete(alpha.tenantId, alphaBundle);
 
-    expect(AssetService.getByStorageKey(alpha.tenantId, storageKey)).toBeNull();
     expect(
-      AssetService.getByStorageKey(beta.tenantId, storageKey),
-    ).not.toBeNull();
+      await AssetService.getByStorageKey(
+        alpha.tenantId,
+        imageStorage.storageKey(alpha.tenantId, SHARED_IMAGE),
+      ),
+    ).toBeFalsy();
+    expect(
+      await AssetService.getByStorageKey(
+        beta.tenantId,
+        imageStorage.storageKey(beta.tenantId, SHARED_IMAGE),
+      ),
+    ).toBeTruthy();
   });
 });
 
-describe("a catalog image only one tenant has", () => {
+describe("a catalog image two bundles of one tenant name", () => {
   let alpha: TenantFixture;
-  let ownImage: string;
-  let bundleId: string;
+  let first: string;
+  let second: string;
 
-  beforeEach(() => {
-    applySchema();
-    alpha = createTenantFixture("solo-images");
-    ownImage = writeImage(crypto.randomUUID().replace(/-/g, "").slice(0, 16));
-    bundleId = seedBundle(alpha, ownImage);
+  beforeEach(async () => {
+    alpha = await createTenantFixture("solo-images");
+    await storeImage(alpha, SHARED_IMAGE);
+    first = await seedBundle(alpha, SHARED_IMAGE);
+    second = await seedBundle(alpha, SHARED_IMAGE);
   });
 
-  afterEach(() => {
-    for (const imageId of written.splice(0)) {
-      fs.rmSync(path.join(IMAGES_DIR, `${imageId}.jpg`), { force: true });
-    }
-    dropTenantFixture(alpha);
+  it("stays while another bundle still names it", async () => {
+    await BundleService.delete(alpha.tenantId, first);
+
+    expect(await stored(alpha, SHARED_IMAGE)).toBe(true);
   });
 
-  it("is deleted when its bundle is", async () => {
-    await BundleService.delete(alpha.tenantId, bundleId);
+  it("is deleted with the last bundle that names it", async () => {
+    await BundleService.delete(alpha.tenantId, first);
+    await BundleService.delete(alpha.tenantId, second);
 
-    expect(onDisk(ownImage)).toBe(false);
+    expect(await stored(alpha, SHARED_IMAGE)).toBe(false);
   });
 
-  it("is deleted when its bundle is given a new one", async () => {
-    const replacement = writeImage("cccc3333dddd4444");
+  it("is deleted when the last bundle naming it is given a new one", async () => {
+    const replacement = await storeImage(alpha, "cccc3333dddd4444");
 
-    await BundleService.updateImage(alpha.tenantId, bundleId, replacement);
+    await BundleService.delete(alpha.tenantId, first);
+    await BundleService.updateImage(alpha.tenantId, second, replacement);
 
-    expect(onDisk(ownImage)).toBe(false);
-    expect(onDisk(replacement)).toBe(true);
+    expect(await stored(alpha, SHARED_IMAGE)).toBe(false);
+    expect(await stored(alpha, replacement)).toBe(true);
   });
 });

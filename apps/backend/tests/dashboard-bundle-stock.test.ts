@@ -4,15 +4,13 @@
  * it: a relative URL under `/api`, with the session cookie.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
+import { run } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -24,16 +22,14 @@ import {
 } from "../src/platform/auth/session.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
 import catalogRoutes from "../src/routes/catalog.ts";
+import { importFrontend } from "./helpers/frontend.ts";
 
-// Loaded by a computed path: the SvelteKit workspace is outside this project's
-// tsc rootDir.
-const CATALOG_PATH = "../../frontend/src/lib/utils/catalog.ts";
-const { updateBundleStock } = (await import(CATALOG_PATH)) as {
+const { updateBundleStock } = await importFrontend<{
   updateBundleStock: (
     bundleId: string,
     stockStatus: "in_stock" | "low_stock" | "out_of_stock",
   ) => Promise<unknown>;
-};
+}>("lib/utils/catalog.ts");
 
 const realFetch = globalThis.fetch;
 
@@ -41,21 +37,21 @@ describe("changing a bundle's stock from the dashboard", () => {
   let tenant: TenantFixture;
   let bundleId: string;
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     const app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/catalog", catalogRoutes);
     app.onError(errorHandler);
 
-    tenant = createTenantFixture("bundle-stock");
+    tenant = await createTenantFixture("bundle-stock");
     const periodId = `per-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
        VALUES (?, ?, 'Enero', '2026-01', 'active')`,
-    ).run(periodId, tenant.tenantId);
+      [periodId, tenant.tenantId],
+    );
     bundleId = `bundle-${crypto.randomUUID()}`;
-    BundleService.create({
+    await BundleService.create({
       id: bundleId,
       tenantId: tenant.tenantId,
       period_id: periodId,
@@ -70,9 +66,9 @@ describe("changing a bundle's stock from the dashboard", () => {
       created_by: null,
     });
 
-    const { userId } = createMember(tenant, "supervisor");
+    const { userId } = await createMember(tenant, "supervisor");
     const token = generateSessionToken();
-    createSession(token, userId, tenant.tenantId);
+    await createSession(token, userId, tenant.tenantId);
 
     // The browser resolves the relative URL against the dashboard, which
     // forwards it to the backend, and adds the session cookie itself.
@@ -86,24 +82,23 @@ describe("changing a bundle's stock from the dashboard", () => {
       })) as typeof fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = realFetch;
-    dropTenantFixture(tenant);
   });
 
   it("stores the new stock status", async () => {
     await updateBundleStock(bundleId, "out_of_stock");
 
-    expect(BundleService.getById(tenant.tenantId, bundleId)?.stock_status).toBe(
-      "out_of_stock",
-    );
+    expect(
+      (await BundleService.getById(tenant.tenantId, bundleId))?.stock_status,
+    ).toBe("out_of_stock");
   });
 
   it("takes the bundle out of what the bot offers", async () => {
     await updateBundleStock(bundleId, "out_of_stock");
 
     expect(
-      BundleService.getAvailable(tenant.tenantId).map((b) => b.id),
+      (await BundleService.getAvailable(tenant.tenantId)).map((b) => b.id),
     ).toEqual([]);
   });
 });

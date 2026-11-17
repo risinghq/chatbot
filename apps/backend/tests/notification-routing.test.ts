@@ -1,14 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import process from "node:process";
+import { env } from "cloudflare:workers";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import {
-  applySchema,
-  createTenantFixture,
-  dropTenantFixture,
-  type TenantFixture,
-} from "./helpers/tenancy.ts";
+import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 
-import { db } from "../src/db/index.ts";
+import { getOne, run } from "../src/db/index.ts";
 import { notificationRules } from "../src/domains/notifications/config.ts";
 import { evaluateNotifications } from "../src/domains/notifications/evaluator.ts";
 import {
@@ -48,7 +43,7 @@ describe("the link an alert carries", () => {
 
   const expectedLink = `/dashboard/conversations/${CUSTOMER}?channel=${CHANNEL}`;
 
-  it("names the thread on an assignment", () => {
+  it("names the thread on an assignment", async () => {
     expect(
       contentFor({
         ...base,
@@ -64,7 +59,7 @@ describe("the link an alert carries", () => {
     ).toContain(expectedLink);
   });
 
-  it("names the thread on an escalation", () => {
+  it("names the thread on an escalation", async () => {
     expect(
       contentFor({
         ...base,
@@ -74,7 +69,7 @@ describe("the link an alert carries", () => {
     ).toContain(expectedLink);
   });
 
-  it("names the thread when attention is required", () => {
+  it("names the thread when attention is required", async () => {
     expect(
       contentFor({
         ...base,
@@ -89,7 +84,7 @@ describe("the link an alert carries", () => {
     ).toContain(expectedLink);
   });
 
-  it("names the thread on a contract upload", () => {
+  it("names the thread on a contract upload", async () => {
     expect(
       contentFor({
         ...base,
@@ -103,7 +98,7 @@ describe("the link an alert carries", () => {
     ).toContain(expectedLink);
   });
 
-  it("names the thread on an enrichment loop alert", () => {
+  it("names the thread on an enrichment loop alert", async () => {
     expect(
       contentFor({
         ...base,
@@ -113,7 +108,7 @@ describe("the link an alert carries", () => {
     ).toContain(expectedLink);
   });
 
-  it("still links an order to the order, not the conversation", () => {
+  it("still links an order to the order, not the conversation", async () => {
     const content = contentFor({
       ...base,
       type: "order_created",
@@ -140,29 +135,27 @@ describe("dispatching an alert on a number that cannot send", () => {
   let tenant: TenantFixture;
   let pendingAccountId: string;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("notifications");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("notifications");
 
     // A number registered but not yet able to send. The Cloud adapter refuses
     // it.
-    pendingAccountId = ChannelAccountService.create({
-      tenantId: tenant.tenantId,
-      phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
-      label: "Pendiente",
-    }).id;
+    pendingAccountId = (
+      await ChannelAccountService.create({
+        tenantId: tenant.tenantId,
+        phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
+        label: "Pendiente",
+      })
+    ).id;
   });
 
-  afterEach(() => {
-    dropTenantFixture(tenant);
-  });
-
-  function trace(traceId: string): { status: string; reason: string | null } {
-    return db
-      .prepare(
-        "SELECT status, reason FROM notification_traces WHERE trace_id = ?",
-      )
-      .get(traceId) as { status: string; reason: string | null };
+  async function trace(
+    traceId: string,
+  ): Promise<{ status: string; reason: string | null }> {
+    return (await getOne(
+      "SELECT status, reason FROM notification_traces WHERE trace_id = ?",
+      [traceId],
+    )) as { status: string; reason: string | null };
   }
 
   it("records it as failed, not sent", async () => {
@@ -193,7 +186,7 @@ describe("dispatching an alert on a number that cannot send", () => {
       },
     );
 
-    expect(trace(traceId)).toEqual({
+    expect(await trace(traceId)).toEqual({
       status: "failed",
       reason: "send_failed",
     });
@@ -207,7 +200,6 @@ describe("dispatching an alert on a number that cannot send", () => {
  * record `no_channel_account` and deliver nothing.
  */
 describe("a platform-wide alert with no tenant", () => {
-  const SECRETS_KEY = "d4".repeat(32);
   /** What the rule's "dev" target resolves to: VendeYa's own operations group. */
   const DEV_GROUP = "51900000999@g.us";
 
@@ -216,14 +208,7 @@ describe("a platform-wide alert with no tenant", () => {
   let opsPhoneNumberId: string;
   let sends: Array<{ url: string; to: string; body: string }>;
 
-  const saved: Record<string, string | undefined> = {};
   const originalFetch = globalThis.fetch;
-
-  function setEnv(key: string, value: string | undefined): void {
-    if (!(key in saved)) saved[key] = process.env[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
 
   /** The event GET /api/providers/:dni raises: no tenant, no channel account. */
   function outageEvent(traceId: string): DomainEvent {
@@ -247,33 +232,27 @@ describe("a platform-wide alert with no tenant", () => {
     ];
   }
 
-  function trace(traceId: string): {
+  async function trace(traceId: string): Promise<{
     status: string;
     reason: string | null;
     tenant_id: string | null;
-  } {
-    return db
-      .prepare(
-        "SELECT status, reason, tenant_id FROM notification_traces WHERE trace_id = ?",
-      )
-      .get(traceId) as {
+  }> {
+    return (await getOne(
+      "SELECT status, reason, tenant_id FROM notification_traces WHERE trace_id = ?",
+      [traceId],
+    )) as {
       status: string;
       reason: string | null;
       tenant_id: string | null;
     };
   }
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("platform-ops");
-
-    setEnv("SECRETS_KEY", SECRETS_KEY);
-    setEnv("PLATFORM_OPS_PHONE_NUMBER_ID", undefined);
-    setEnv("WHATSAPP_PHONE_ID", undefined);
+  beforeEach(async () => {
+    tenant = await createTenantFixture("platform-ops");
 
     // VendeYa's own number: a real account that can send, which the platform
     // owns rather than borrowing from whichever tenant is at hand.
-    const account = ChannelAccountService.create({
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: `pnid-ops-${crypto.randomUUID().slice(0, 8)}`,
       label: "VendeYa Ops",
@@ -294,29 +273,24 @@ describe("a platform-wide alert with no tenant", () => {
     }) as typeof fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    for (const key of Object.keys(saved)) delete saved[key];
-    db.prepare("DELETE FROM system_settings WHERE key = ?").run(
+    env.PLATFORM_OPS_PHONE_NUMBER_ID = "";
+    await run("DELETE FROM system_settings WHERE key = ?", [
       "platform_ops_channel_account_id",
-    );
-    db.prepare("DELETE FROM notification_traces WHERE tenant_id IS NULL").run();
-    dropTenantFixture(tenant);
+    ]);
+    await run("DELETE FROM notification_traces WHERE tenant_id IS NULL");
   });
 
   // The operations account resolves from the `platform_ops_channel_account_id`
-  // setting, else PLATFORM_OPS_PHONE_NUMBER_ID, else WHATSAPP_PHONE_ID.
+  // setting, else PLATFORM_OPS_PHONE_NUMBER_ID.
   it("goes out on the designated platform operations account", async () => {
-    SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
+    await SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
 
     const traceId = `trace-${crypto.randomUUID()}`;
     await dispatchNotifications(outageDecisions(), outageEvent(traceId));
 
-    expect(trace(traceId)).toEqual({
+    expect(await trace(traceId)).toEqual({
       status: "sent",
       reason: null,
       tenant_id: null,
@@ -328,26 +302,26 @@ describe("a platform-wide alert with no tenant", () => {
     expect(sends[0]!.body).toBe("Ambos proveedores caídos.");
   });
 
-  it("falls back to the number the alert used before tenancy", async () => {
-    // No designation is stored, so WHATSAPP_PHONE_ID resolves the account.
-    setEnv("WHATSAPP_PHONE_ID", opsPhoneNumberId);
+  it("falls back to PLATFORM_OPS_PHONE_NUMBER_ID with no designation", async () => {
+    env.PLATFORM_OPS_PHONE_NUMBER_ID = opsPhoneNumberId;
 
     const traceId = `trace-${crypto.randomUUID()}`;
     await dispatchNotifications(outageDecisions(), outageEvent(traceId));
 
-    expect(trace(traceId).status).toBe("sent");
+    expect((await trace(traceId)).status).toBe("sent");
     expect(sends[0]!.url).toContain(`/${opsPhoneNumberId}/messages`);
   });
 
   it("prefers the designated account over the environment", async () => {
-    const other = ChannelAccountService.create({
+    const other = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: `pnid-env-${crypto.randomUUID().slice(0, 8)}`,
       label: "Otro",
       accessToken: "other-token",
     });
-    setEnv("WHATSAPP_PHONE_ID", other.phone_number_id);
-    SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
+    env.PLATFORM_OPS_PHONE_NUMBER_ID = other.phone_number_id;
+
+    await SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
 
     const traceId = `trace-${crypto.randomUUID()}`;
     await dispatchNotifications(outageDecisions(), outageEvent(traceId));
@@ -359,7 +333,7 @@ describe("a platform-wide alert with no tenant", () => {
     const traceId = `trace-${crypto.randomUUID()}`;
     await dispatchNotifications(outageDecisions(), outageEvent(traceId));
 
-    expect(trace(traceId)).toEqual({
+    expect(await trace(traceId)).toEqual({
       status: "failed",
       reason: "no_channel_account",
       tenant_id: null,
@@ -368,17 +342,19 @@ describe("a platform-wide alert with no tenant", () => {
   });
 
   it("still prefers the tenant's own account when the event names one", async () => {
-    SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
+    await SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
 
     expect(
-      accountForEvent({
-        type: "system_error_occurred",
-        traceId: "trace-scoped",
-        timestamp: Date.now(),
-        tenantId: tenant.tenantId,
-        channelAccountId: tenant.channelAccountId,
-        payload: { phoneNumber: CUSTOMER, error: "boom" },
-      } as DomainEvent)?.id,
+      (
+        await accountForEvent({
+          type: "system_error_occurred",
+          traceId: "trace-scoped",
+          timestamp: Date.now(),
+          tenantId: tenant.tenantId,
+          channelAccountId: tenant.channelAccountId,
+          payload: { phoneNumber: CUSTOMER, error: "boom" },
+        } as DomainEvent)
+      )?.id,
     ).toBe(tenant.channelAccountId);
   });
 
@@ -396,23 +372,19 @@ describe("a platform-wide alert with no tenant", () => {
       } as DomainEvent;
     }
 
-    beforeEach(() => {
-      bare = createTenantFixture("no-number");
-      db.prepare("DELETE FROM channel_accounts WHERE tenant_id = ?").run(
+    beforeEach(async () => {
+      bare = await createTenantFixture("no-number");
+      await run("DELETE FROM channel_accounts WHERE tenant_id = ?", [
         bare.tenantId,
-      );
-      SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
-    });
-
-    afterEach(() => {
-      dropTenantFixture(bare);
+      ]);
+      await SystemSettings.set("platform_ops_channel_account_id", opsAccountId);
     });
 
     it("is recorded as failed and sends nothing", async () => {
       const traceId = `trace-${crypto.randomUUID()}`;
       await dispatchNotifications(outageDecisions(), tenantEvent(traceId));
 
-      expect(trace(traceId)).toEqual({
+      expect(await trace(traceId)).toEqual({
         status: "failed",
         reason: "no_channel_account",
         tenant_id: bare.tenantId,
@@ -427,12 +399,12 @@ describe("a platform-wide alert with no tenant", () => {
         tenantEvent(traceId, "ch-deleted"),
       );
 
-      expect(trace(traceId).reason).toBe("no_channel_account");
+      expect((await trace(traceId)).reason).toBe("no_channel_account");
       expect(sends).toHaveLength(0);
     });
 
     it("goes out on the tenant's default number once it has one", async () => {
-      const own = ChannelAccountService.create({
+      const own = await ChannelAccountService.create({
         tenantId: bare.tenantId,
         phoneNumberId: `pnid-own-${crypto.randomUUID().slice(0, 8)}`,
         label: "Propio",
@@ -445,7 +417,7 @@ describe("a platform-wide alert with no tenant", () => {
         tenantEvent(traceId, "ch-deleted"),
       );
 
-      expect(trace(traceId).status).toBe("sent");
+      expect((await trace(traceId)).status).toBe("sent");
       expect(sends).toHaveLength(1);
       expect(sends[0]!.url).toContain(`/${own.phone_number_id}/messages`);
       expect(sends[0]!.url).not.toContain(`/${opsPhoneNumberId}/messages`);

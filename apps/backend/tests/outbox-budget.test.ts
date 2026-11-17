@@ -4,7 +4,7 @@
  * inline send and the worker cannot disagree about when a reply is given up on.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 
 import type { SendOutcome } from "../src/adapters/whatsapp/types.ts";
 import {
@@ -202,7 +202,7 @@ describe("the outbox retry budget", () => {
     });
   }
 
-  it("schedules the four transient retries at 5 s, 30 s, 2 min and 10 min", () => {
+  it("schedules the four transient retries at 5 s, 30 s, 2 min and 10 min", async () => {
     expect([...TRANSIENT_RETRY_DELAYS_MS]).toEqual([
       5 * SECOND,
       30 * SECOND,
@@ -212,7 +212,7 @@ describe("the outbox retry budget", () => {
     expect(TRANSIENT_RETRY_DELAYS_MS).toHaveLength(MAX_ATTEMPTS - 1);
   });
 
-  it("gives up an hour after the row was created", () => {
+  it("gives up an hour after the row was created", async () => {
     expect(MAX_AGE_MS).toBe(60 * MINUTE);
   });
 });

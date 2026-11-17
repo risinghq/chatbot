@@ -1,24 +1,17 @@
 /**
- * SQLite defaults `PRAGMA foreign_keys` to off, which leaves every REFERENCES
- * and ON DELETE CASCADE in schema.sql unenforced. These tests check that the
- * connection the app uses turns enforcement on.
+ * D1 enforces foreign keys on every connection. These tests check that the
+ * schema's REFERENCES and ON DELETE CASCADE rules hold the rows they should.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { env } from "cloudflare:workers";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
-import { initializeDatabase } from "../src/db/init.ts";
+import { getOne, run } from "../src/db/index.ts";
 import {
   addChannelAccount,
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -31,73 +24,60 @@ import tenantRoutes from "../src/routes/tenants.ts";
 import simulatorRoutes from "../src/routes/simulator.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
-import webhook from "../src/routes/webhook.ts";
+import { webhookRequest } from "./helpers/turn.ts";
 import { signedWebhookRequest } from "./helpers/webhook.ts";
 import type { ConversationRef } from "@vendeya/types";
-import { createTestDatabase } from "./helpers/database.ts";
 
 describe("foreign key enforcement", () => {
   let tenant: TenantFixture;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("fk");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("fk");
   });
 
-  afterEach(() => {
-    dropTenantFixture(tenant);
-  });
-
-  it("is on for the application connection", () => {
-    expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({
-      foreign_keys: 1,
-    });
-  });
-
-  it("rejects a membership for a user that does not exist", () => {
-    expect(() =>
-      db
-        .prepare(
-          `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
+  it("rejects a membership for a user that does not exist", async () => {
+    await expect(
+      run(
+        `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
            VALUES (?, ?, 'no-such-user', 'admin')`,
-        )
-        .run(crypto.randomUUID(), tenant.tenantId),
-    ).toThrow();
+        [crypto.randomUUID(), tenant.tenantId],
+      ),
+    ).rejects.toThrow();
   });
 
-  it("rejects a membership for a tenant that does not exist", () => {
+  it("rejects a membership for a tenant that does not exist", async () => {
     const userId = `u-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO users (id, username, password_hash, role, name)
        VALUES (?, ?, 'x', 'admin', 'Test')`,
-    ).run(userId, `user-${userId.slice(2, 10)}`);
+      [userId, `user-${userId.slice(2, 10)}`],
+    );
 
-    expect(() =>
-      db
-        .prepare(
-          `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
+    await expect(
+      run(
+        `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
            VALUES (?, 'no-such-tenant', ?, 'admin')`,
-        )
-        .run(crypto.randomUUID(), userId),
-    ).toThrow();
+        [crypto.randomUUID(), userId],
+      ),
+    ).rejects.toThrow();
 
-    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+    await run("DELETE FROM users WHERE id = ?", [userId]);
   });
 
-  it("rejects a conversation on a channel account that does not exist", () => {
-    expect(() =>
+  it("rejects a conversation on a channel account that does not exist", async () => {
+    await expect(
       insertConversation({
         tenantId: tenant.tenantId,
         channelAccountId: "no-such-channel",
         phoneNumber: "51900000000",
       }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
-  it("rejects a message with no conversation behind it", () => {
-    expect(() =>
+  it("rejects a message with no conversation behind it", async () => {
+    await expect(
       MessageStore.log(tenant.ref("51900000001"), "inbound", "text", "hola"),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
   // Every table carrying both columns must reference the pair together, not
@@ -105,22 +85,18 @@ describe("foreign key enforcement", () => {
   describe("a tenant paired with another tenant's number", () => {
     let other: TenantFixture;
 
-    beforeEach(() => {
-      other = createTenantFixture("fk-other");
+    beforeEach(async () => {
+      other = await createTenantFixture("fk-other");
     });
 
-    afterEach(() => {
-      dropTenantFixture(other);
-    });
-
-    it("is refused on a conversation", () => {
-      expect(() =>
+    it("is refused on a conversation", async () => {
+      await expect(
         insertConversation({
           tenantId: tenant.tenantId,
           channelAccountId: other.channelAccountId,
           phoneNumber: "51900000010",
         }),
-      ).toThrow();
+      ).rejects.toThrow();
     });
 
     /**
@@ -130,87 +106,84 @@ describe("foreign key enforcement", () => {
      */
     const pairedTables: Array<{
       table: string;
-      insert: (tenantId: string, channelAccountId: string) => void;
+      insert: (tenantId: string, channelAccountId: string) => Promise<unknown>;
     }> = [
       {
         table: "message_inbox",
-        insert: (tenantId, channelAccountId) =>
-          db
-            .prepare(
-              `INSERT INTO message_inbox
+        insert: async (tenantId, channelAccountId) =>
+          await run(
+            `INSERT INTO message_inbox
                  (tenant_id, channel_account_id, phone_number, message_text, message_id, whatsapp_timestamp)
                VALUES (?, ?, '51900000011', 'hola', ?, 1)`,
-            )
-            .run(tenantId, channelAccountId, crypto.randomUUID()),
+            [tenantId, channelAccountId, crypto.randomUUID()],
+          ),
       },
       {
         table: "analytics_events",
-        insert: (tenantId, channelAccountId) =>
-          db
-            .prepare(
-              `INSERT INTO analytics_events
+        insert: async (tenantId, channelAccountId) =>
+          await run(
+            `INSERT INTO analytics_events
                  (id, tenant_id, channel_account_id, phone_number, event_type)
                VALUES (?, ?, ?, '51900000013', 'message_received')`,
-            )
-            .run(crypto.randomUUID(), tenantId, channelAccountId),
+            [crypto.randomUUID(), tenantId, channelAccountId],
+          ),
       },
       {
         table: "llm_calls",
-        insert: (tenantId, channelAccountId) =>
-          db
-            .prepare(
-              `INSERT INTO llm_calls
+        insert: async (tenantId, channelAccountId) =>
+          await run(
+            `INSERT INTO llm_calls
                  (id, tenant_id, channel_account_id, phone_number, operation, model, prompt, user_message, status)
                VALUES (?, ?, ?, '51900000014', 'classify', 'gpt', 'p', 'u', 'success')`,
-            )
-            .run(crypto.randomUUID(), tenantId, channelAccountId),
+            [crypto.randomUUID(), tenantId, channelAccountId],
+          ),
       },
     ];
 
     for (const { table, insert } of pairedTables) {
-      it(`is refused on ${table}`, () => {
-        expect(() => insert(tenant.tenantId, other.channelAccountId)).toThrow();
+      it(`is refused on ${table}`, async () => {
+        await expect(
+          insert(tenant.tenantId, other.channelAccountId),
+        ).rejects.toThrow();
       });
 
-      it(`still accepts ${table} when the pair matches`, () => {
-        expect(() =>
+      it(`still accepts ${table} when the pair matches`, async () => {
+        await expect(
           insert(tenant.tenantId, tenant.channelAccountId),
-        ).not.toThrow();
+        ).resolves.not.toThrow();
       });
     }
 
-    it("is refused on a message, even with a conversation of its own", () => {
+    it("is refused on a message, even with a conversation of its own", async () => {
       // A conversation with this phone number exists under the other tenant.
       // The message still pairs this tenant with the other tenant's number.
-      insertConversation(other.ref("51900000015"));
+      await insertConversation(other.ref("51900000015"));
 
-      expect(() =>
-        db
-          .prepare(
-            `INSERT INTO messages
+      await expect(
+        run(
+          `INSERT INTO messages
                (id, tenant_id, channel_account_id, phone_number, direction, type, content)
              VALUES (?, ?, ?, '51900000015', 'inbound', 'text', 'hola')`,
-          )
-          .run(crypto.randomUUID(), tenant.tenantId, other.channelAccountId),
-      ).toThrow();
+          [crypto.randomUUID(), tenant.tenantId, other.channelAccountId],
+        ),
+      ).rejects.toThrow();
     });
 
-    it("is refused on an order", () => {
-      expect(() =>
-        db
-          .prepare(
-            `INSERT INTO orders
+    it("is refused on an order", async () => {
+      await expect(
+        run(
+          `INSERT INTO orders
                (id, tenant_id, channel_account_id, order_number, conversation_phone,
                 client_name, client_dni, products, total_amount, delivery_address)
              VALUES (?, ?, ?, ?, '51900000016', 'Ana', '12345678', '[]', 100, 'Lima')`,
-          )
-          .run(
+          [
             crypto.randomUUID(),
             tenant.tenantId,
             other.channelAccountId,
             `A-${crypto.randomUUID().slice(0, 8)}`,
-          ),
-      ).toThrow();
+          ],
+        ),
+      ).rejects.toThrow();
     });
   });
 
@@ -222,79 +195,87 @@ describe("foreign key enforcement", () => {
   describe("a bundle in another tenant's period", () => {
     let other: TenantFixture;
 
-    beforeEach(() => {
-      other = createTenantFixture("fk-period");
+    beforeEach(async () => {
+      other = await createTenantFixture("fk-period");
     });
 
-    afterEach(() => {
-      dropTenantFixture(other);
-    });
-
-    function createPeriod(tenantId: string, yearMonth: string): string {
+    async function createPeriod(
+      tenantId: string,
+      yearMonth: string,
+    ): Promise<string> {
       const id = `per-${crypto.randomUUID()}`;
-      db.prepare(
+      await run(
         `INSERT INTO catalog_periods (id, tenant_id, name, year_month)
          VALUES (?, ?, 'Septiembre', ?)`,
-      ).run(id, tenantId, yearMonth);
+        [id, tenantId, yearMonth],
+      );
       return id;
     }
 
-    function insertBundle(tenantId: string, periodId: string): void {
-      db.prepare(
+    async function insertBundle(
+      tenantId: string,
+      periodId: string,
+    ): Promise<void> {
+      await run(
         `INSERT INTO catalog_bundles
            (id, tenant_id, period_id, segment, name, price, primary_category,
             image_id, composition_json, installments_json)
          VALUES (?, ?, ?, 'gaso', 'Combo', 999, 'cocinas', 'img-1', '[]', '[]')`,
-      ).run(`bundle-${crypto.randomUUID()}`, tenantId, periodId);
+        [`bundle-${crypto.randomUUID()}`, tenantId, periodId],
+      );
     }
 
-    it("is refused", () => {
-      const theirPeriod = createPeriod(other.tenantId, "2026-09");
+    it("is refused", async () => {
+      const theirPeriod = await createPeriod(other.tenantId, "2026-09");
 
-      expect(() => insertBundle(tenant.tenantId, theirPeriod)).toThrow();
+      await expect(
+        insertBundle(tenant.tenantId, theirPeriod),
+      ).rejects.toThrow();
     });
 
-    it("is still accepted when the period is the tenant's own", () => {
-      const ownPeriod = createPeriod(tenant.tenantId, "2026-09");
+    it("is still accepted when the period is the tenant's own", async () => {
+      const ownPeriod = await createPeriod(tenant.tenantId, "2026-09");
 
-      expect(() => insertBundle(tenant.tenantId, ownPeriod)).not.toThrow();
+      await expect(
+        insertBundle(tenant.tenantId, ownPeriod),
+      ).resolves.not.toThrow();
     });
 
-    it("cascades a period delete to the bundles in it", () => {
-      const period = createPeriod(tenant.tenantId, "2026-10");
-      insertBundle(tenant.tenantId, period);
+    it("cascades a period delete to the bundles in it", async () => {
+      const period = await createPeriod(tenant.tenantId, "2026-10");
+      await insertBundle(tenant.tenantId, period);
 
-      db.prepare("DELETE FROM catalog_periods WHERE id = ?").run(period);
+      await run("DELETE FROM catalog_periods WHERE id = ?", [period]);
 
       expect(
-        db
-          .prepare(
-            "SELECT COUNT(*) as count FROM catalog_bundles WHERE period_id = ?",
-          )
-          .get(period),
+        await getOne(
+          "SELECT COUNT(*) as count FROM catalog_bundles WHERE period_id = ?",
+          [period],
+        ),
       ).toEqual({ count: 0 });
     });
   });
 
-  it("cascades a tenant delete through its children", () => {
-    const scratch = createTenantFixture("fk-cascade");
+  it("cascades a tenant delete through its children", async () => {
+    const scratch = await createTenantFixture("fk-cascade");
     const ref = scratch.ref("51900000002");
-    insertConversation(ref);
-    MessageStore.log(ref, "inbound", "text", "hola");
+    await insertConversation(ref);
+    await MessageStore.log(ref, "inbound", "text", "hola");
 
-    expect(MessageStore.getHistory(ref)).toHaveLength(1);
+    expect(await MessageStore.getHistory(ref)).toHaveLength(1);
 
-    db.prepare("DELETE FROM tenants WHERE id = ?").run(scratch.tenantId);
+    await run("DELETE FROM tenants WHERE id = ?", [scratch.tenantId]);
 
     expect(
-      db
-        .prepare("SELECT COUNT(*) as c FROM conversations WHERE tenant_id = ?")
-        .get(scratch.tenantId),
+      await getOne(
+        "SELECT COUNT(*) as c FROM conversations WHERE tenant_id = ?",
+        [scratch.tenantId],
+      ),
     ).toEqual({ c: 0 });
     expect(
-      db
-        .prepare("SELECT COUNT(*) as c FROM messages WHERE tenant_id = ?")
-        .get(scratch.tenantId),
+      await getOne("SELECT COUNT(*) as c FROM messages WHERE tenant_id = ?", [
+        scratch.tenantId,
+      ]),
     ).toEqual({ c: 0 });
   });
 
@@ -303,63 +284,65 @@ describe("foreign key enforcement", () => {
   describe("deleting a conversation that has an order behind it", () => {
     const CUSTOMER = "51900000020";
 
-    function insertOrder(ref: ConversationRef): string {
+    async function insertOrder(ref: ConversationRef): Promise<string> {
       const id = crypto.randomUUID();
-      db.prepare(
+      await run(
         `INSERT INTO orders
            (id, tenant_id, channel_account_id, order_number, conversation_phone,
             client_name, client_dni, products, total_amount, delivery_address)
          VALUES (?, ?, ?, ?, ?, 'Ana', '12345678', '[]', 100, 'Lima')`,
-      ).run(
-        id,
-        ref.tenantId,
-        ref.channelAccountId,
-        `A-${crypto.randomUUID().slice(0, 8)}`,
-        ref.phoneNumber,
+        [
+          id,
+          ref.tenantId,
+          ref.channelAccountId,
+          `A-${crypto.randomUUID().slice(0, 8)}`,
+          ref.phoneNumber,
+        ],
       );
       return id;
     }
 
-    function orderCount(id: string): number {
+    async function orderCount(id: string): Promise<number> {
       return (
-        db.prepare("SELECT COUNT(*) as c FROM orders WHERE id = ?").get(id) as {
+        (await getOne("SELECT COUNT(*) as c FROM orders WHERE id = ?", [
+          id,
+        ])) as {
           c: number;
         }
       ).c;
     }
 
-    it("takes the order with it rather than failing", () => {
+    it("takes the order with it rather than failing", async () => {
       const ref = tenant.ref(CUSTOMER);
-      insertConversation(ref);
-      const orderId = insertOrder(ref);
+      await insertConversation(ref);
+      const orderId = await insertOrder(ref);
 
-      expect(() =>
-        db
-          .prepare(
-            `DELETE FROM conversations
+      await expect(
+        run(
+          `DELETE FROM conversations
              WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-          )
-          .run(ref.tenantId, ref.channelAccountId, ref.phoneNumber),
-      ).not.toThrow();
+          [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+        ),
+      ).resolves.toBeDefined();
 
-      expect(orderCount(orderId)).toBe(0);
+      expect(await orderCount(orderId)).toBe(0);
     });
 
     it("lets the simulator delete a conversation that reached checkout", async () => {
-      const account = ChannelAccountService.getDefaultForTenant(
+      const account = (await ChannelAccountService.getDefaultForTenant(
         tenant.tenantId,
-      )!;
+      ))!;
       const ref = {
         tenantId: tenant.tenantId,
         channelAccountId: account.id,
         phoneNumber: CUSTOMER,
       };
-      insertConversation(ref, { isSimulation: true });
-      const orderId = insertOrder(ref);
+      await insertConversation(ref, { isSimulation: true });
+      const orderId = await insertOrder(ref);
 
-      const admin = createMember(tenant, "admin");
+      const admin = await createMember(tenant, "admin");
       const token = generateSessionToken();
-      createSession(token, admin.userId, tenant.tenantId);
+      await createSession(token, admin.userId, tenant.tenantId);
 
       const app = new Hono();
       app.use("/api/*", requireAuth);
@@ -372,11 +355,11 @@ describe("foreign key enforcement", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ status: "deleted" });
-      expect(orderCount(orderId)).toBe(0);
+      expect(await orderCount(orderId)).toBe(0);
     });
   });
 
-  describe("routes that used to lean on the unenforced constraint", () => {
+  describe("routes that check before the constraint does", () => {
     function buildApp() {
       const app = new Hono();
       app.use("/api/*", requireAuth);
@@ -386,13 +369,14 @@ describe("foreign key enforcement", () => {
 
     it("grants no membership to a user id that does not exist", async () => {
       const operatorId = `u-${crypto.randomUUID()}`;
-      db.prepare(
+      await run(
         `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
          VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-      ).run(operatorId, `op-${operatorId.slice(2, 10)}`);
+        [operatorId, `op-${operatorId.slice(2, 10)}`],
+      );
 
       const token = generateSessionToken();
-      createSession(token, operatorId, null);
+      await createSession(token, operatorId, null);
 
       const response = await buildApp().request(
         `/api/tenants/${tenant.tenantId}/members`,
@@ -410,24 +394,22 @@ describe("foreign key enforcement", () => {
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: "User not found" });
       expect(
-        db
-          .prepare(
-            "SELECT COUNT(*) as c FROM tenant_memberships WHERE user_id = 'ghost-user'",
-          )
-          .get(),
+        await getOne(
+          "SELECT COUNT(*) as c FROM tenant_memberships WHERE user_id = 'ghost-user'",
+        ),
       ).toEqual({ c: 0 });
 
-      db.prepare("DELETE FROM session WHERE user_id = ?").run(operatorId);
-      db.prepare("DELETE FROM users WHERE id = ?").run(operatorId);
+      await run("DELETE FROM session WHERE user_id = ?", [operatorId]);
+      await run("DELETE FROM users WHERE id = ?", [operatorId]);
     });
 
     it("creates the conversation before logging an inbound message", async () => {
       const contact = "51900000003";
-      const account = addChannelAccount(tenant);
+      const account = await addChannelAccount(tenant);
 
-      const response = await webhook.request(
+      const response = await webhookRequest(
         "/",
-        signedWebhookRequest({
+        await signedWebhookRequest({
           entry: [
             {
               id: "waba-fk",
@@ -458,14 +440,13 @@ describe("foreign key enforcement", () => {
 
       const ref = account.ref(contact);
       expect(
-        db
-          .prepare(
-            `SELECT COUNT(*) as c FROM conversations
+        await getOne(
+          `SELECT COUNT(*) as c FROM conversations
              WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-          )
-          .get(ref.tenantId, ref.channelAccountId, ref.phoneNumber),
+          [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+        ),
       ).toEqual({ c: 1 });
-      expect(MessageStore.getHistory(ref)).toHaveLength(1);
+      expect(await MessageStore.getHistory(ref)).toHaveLength(1);
     });
   });
 });
@@ -477,36 +458,34 @@ describe("foreign key enforcement", () => {
  * its own tests, and accept cross-tenant rows.
  */
 describe("the composite reference itself", () => {
-  let dir: string;
-  let fresh: Database;
+  type Row = Record<string, unknown>;
 
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "vendeya-fk-shape-"));
-    fresh = createTestDatabase(join(dir, "fresh.sqlite"));
-    initializeDatabase(fresh);
-  });
+  async function rows<T = Row>(sql: string): Promise<T[]> {
+    return (await env.DB.prepare(sql).all<T>()).results;
+  }
 
-  afterEach(() => {
-    fresh.close();
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  function tablesWithBothColumns(): string[] {
-    const tables = fresh
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+  async function tables(): Promise<string[]> {
+    return (
+      await rows<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
       )
-      .all() as Array<{ name: string }>;
+    ).map((t) => t.name);
+  }
 
-    return tables
-      .map((t) => t.name)
-      .filter((name) => {
-        const columns = fresh
-          .prepare(`PRAGMA table_info(${name})`)
-          .all() as Array<{ name: string }>;
-        const has = (column: string) => columns.some((c) => c.name === column);
-        return has("tenant_id") && has("channel_account_id");
-      });
+  function foreignKeys<T>(table: string): Promise<T[]> {
+    return rows<T>(`PRAGMA foreign_key_list(${table})`);
+  }
+
+  async function tablesWithBothColumns(): Promise<string[]> {
+    const result: string[] = [];
+    for (const name of await tables()) {
+      const columns = await rows<{ name: string }>(
+        `PRAGMA table_info(${name})`,
+      );
+      const has = (column: string) => columns.some((c) => c.name === column);
+      if (has("tenant_id") && has("channel_account_id")) result.push(name);
+    }
+    return result;
   }
 
   /**
@@ -515,20 +494,14 @@ describe("the composite reference itself", () => {
    * conversation fails the expected list, and a key with any other ON DELETE
    * action fails the cascade check.
    */
-  it("cascades on every table that references a conversation", () => {
-    const referencing = fresh
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-      )
-      .all()
-      .map((t) => (t as { name: string }).name)
-      .filter((name) =>
-        (
-          fresh.prepare(`PRAGMA foreign_key_list(${name})`).all() as Array<{
-            table: string;
-          }>
-        ).some((key) => key.table === "conversations"),
-      );
+  it("cascades on every table that references a conversation", async () => {
+    const referencing: string[] = [];
+    for (const name of await tables()) {
+      const keys = await foreignKeys<{ table: string }>(name);
+      if (keys.some((key) => key.table === "conversations")) {
+        referencing.push(name);
+      }
+    }
 
     expect(referencing.sort()).toEqual([
       "messages",
@@ -539,10 +512,7 @@ describe("the composite reference itself", () => {
 
     for (const table of referencing) {
       const keys = (
-        fresh.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
-          table: string;
-          on_delete: string;
-        }>
+        await foreignKeys<{ table: string; on_delete: string }>(table)
       ).filter((key) => key.table === "conversations");
 
       // One row per column of the key, all carrying the same action.
@@ -555,8 +525,8 @@ describe("the composite reference itself", () => {
     }
   });
 
-  it("is on every table that names a tenant and a channel account", () => {
-    const tables = tablesWithBothColumns();
+  it("is on every table that names a tenant and a channel account", async () => {
+    const tables = await tablesWithBothColumns();
 
     // channel_accounts itself is the parent, so it is not in this set.
     expect(tables.sort()).toEqual([
@@ -571,14 +541,12 @@ describe("the composite reference itself", () => {
     ]);
 
     for (const table of tables) {
-      const keys = fresh
-        .prepare(`PRAGMA foreign_key_list(${table})`)
-        .all() as Array<{
+      const keys = await foreignKeys<{
         id: number;
         table: string;
         from: string;
         to: string | null;
-      }>;
+      }>(table);
 
       // One foreign key (same `id`) covering both columns at once. Two keys
       // that each happen to point at channel_accounts would not do: it is the

@@ -1,18 +1,16 @@
 /**
  * A reply that ends `failed` leaves the customer without an answer, so the
- * conversation goes to a person. Each test drives the real worker pass with a
- * clock it controls, and the only fake is the network.
+ * conversation goes to a person. Each test runs the real cron sweep, which
+ * wakes every conversation that is due, with a clock it controls. The only
+ * fake is the network.
  */
 
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import process from "node:process";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { db } from "../src/db/index.ts";
+import { getAll, getOne, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -23,12 +21,8 @@ import type { ConversationRef, DomainEvent } from "@vendeya/types";
 import { executeCommands } from "../src/conversation/handler/command-executor.ts";
 import { WhatsAppService } from "../src/adapters/whatsapp/index.ts";
 import { MAX_AGE_MS, type OutboxRow } from "../src/conversation/outbox.ts";
-import { createLogger } from "../src/lib/logger.ts";
-import {
-  processDueOutbox,
-  startOutboxWorker,
-  stopOutboxWorker,
-} from "../src/conversation/outbox-worker.ts";
+import { logsDuring } from "./helpers/logs.ts";
+import { sweepAt } from "./helpers/turn.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { notificationRules } from "../src/domains/notifications/config.ts";
 import { evaluateNotifications } from "../src/domains/notifications/evaluator.ts";
@@ -45,7 +39,6 @@ type ConversationState = {
 };
 
 describe("handing a conversation to a person when a reply cannot be delivered", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let agent: string;
@@ -79,29 +72,29 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     if (event.tenantId === tenant.tenantId) alerts.push(event);
   };
 
-  function rowsOf(of: ConversationRef): OutboxRow[] {
-    return db
-      .prepare(
-        `SELECT * FROM outbox
+  async function rowsOf(of: ConversationRef): Promise<OutboxRow[]> {
+    return (await getAll(
+      `SELECT * FROM outbox
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
          ORDER BY id`,
-      )
-      .all(of.tenantId, of.channelAccountId, of.phoneNumber) as OutboxRow[];
+      [of.tenantId, of.channelAccountId, of.phoneNumber],
+    )) as OutboxRow[];
   }
 
-  function message(id: string): { status: string } {
-    return db.prepare("SELECT status FROM messages WHERE id = ?").get(id) as {
+  async function message(id: string): Promise<{ status: string }> {
+    return (await getOne("SELECT status FROM messages WHERE id = ?", [id])) as {
       status: string;
     };
   }
 
-  function conversationOf(of: ConversationRef): ConversationState {
-    const row = db
-      .prepare(
-        `SELECT status, handover_reason, context_data FROM conversations
+  async function conversationOf(
+    of: ConversationRef,
+  ): Promise<ConversationState> {
+    const row = (await getOne(
+      `SELECT status, handover_reason, context_data FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(of.tenantId, of.channelAccountId, of.phoneNumber) as {
+      [of.tenantId, of.channelAccountId, of.phoneNumber],
+    )) as {
       status: string;
       handover_reason: string | null;
       context_data: string;
@@ -113,13 +106,12 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     };
   }
 
-  function assignmentOf(of: ConversationRef) {
-    return db
-      .prepare(
-        `SELECT assigned_agent, assignment_notified_at FROM conversations
+  async function assignmentOf(of: ConversationRef) {
+    return (await getOne(
+      `SELECT assigned_agent, assignment_notified_at FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(of.tenantId, of.channelAccountId, of.phoneNumber) as {
+      [of.tenantId, of.channelAccountId, of.phoneNumber],
+    )) as {
       assigned_agent: string | null;
       assignment_notified_at: number | null;
     };
@@ -127,9 +119,9 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
 
   /** Queue one reply by letting its inline send fail the way `answer` says. */
   async function queue(text: string, of = ref): Promise<OutboxRow> {
-    const before = rowsOf(of).length;
+    const before = (await rowsOf(of)).length;
     await WhatsAppService.sendMessage(of, text, { retry: true });
-    const queued = rowsOf(of);
+    const queued = await rowsOf(of);
     expect(queued).toHaveLength(before + 1);
     return queued[before]!;
   }
@@ -139,63 +131,26 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
    * the handoff would. The worker pass that fails a row also hands it off, so a
    * test that needs the gap writes the state itself.
    */
-  function failWithoutHandoff(row: OutboxRow, reason = "expired"): void {
-    db.prepare(
+  async function failWithoutHandoff(
+    row: OutboxRow,
+    reason = "expired",
+  ): Promise<void> {
+    await run(
       "UPDATE outbox SET status = 'failed', last_reason = ? WHERE id = ?",
-    ).run(reason, row.id);
-    db.prepare("UPDATE messages SET status = 'failed' WHERE id = ?").run(
+      [reason, row.id],
+    );
+    await run("UPDATE messages SET status = 'failed' WHERE id = ?", [
       row.message_id,
-    );
+    ]);
   }
 
-  /** The JSON lines the loggers wrote at error level while `run` ran. */
-  async function errorLogsDuring(
-    run: () => Promise<void>,
-  ): Promise<Array<Record<string, any>>> {
-    // Every logger shares the root logger's stream, which pino keeps under a
-    // symbol on the root of the prototype chain.
-    let stream: { write: (line: string) => unknown } | undefined;
-    for (
-      let node: object | null = createLogger("handoff-test");
-      node && !stream;
-      node = Object.getPrototypeOf(node)
-    ) {
-      for (const symbol of Object.getOwnPropertySymbols(node)) {
-        if (symbol.description === "pino.stream") {
-          stream = (node as Record<symbol, any>)[symbol];
-        }
-      }
-    }
-    if (!stream) throw new Error("The logger stream could not be found");
-
-    const lines: string[] = [];
-    const write = spyOn(stream, "write");
-    write.mockImplementation((line: string) => {
-      lines.push(line);
-      return true;
-    });
-    try {
-      await run();
-    } finally {
-      write.mockRestore();
-    }
-
-    return lines
-      .map((line) => JSON.parse(line) as Record<string, any>)
-      .filter((entry) => entry.level === 50);
-  }
-
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("outbox-handoff");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("outbox-handoff");
     // A number that genuinely sends, so the adapter reaches the fake network.
-    db.prepare("DELETE FROM channel_accounts WHERE id = ?").run(
+    await run("DELETE FROM channel_accounts WHERE id = ?", [
       tenant.channelAccountId,
-    );
-    const account = ChannelAccountService.create({
+    ]);
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
@@ -206,8 +161,8 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    insertConversation(ref);
-    agent = createMember(tenant, "sales_agent").userId;
+    await insertConversation(ref);
+    agent = (await createMember(tenant, "sales_agent")).userId;
 
     alerts = [];
     eventBus.on("escalation_triggered", onAlert);
@@ -218,15 +173,12 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
   });
 
   afterEach(async () => {
-    await stopOutboxWorker();
+    vi.useRealTimers();
     eventBus.off("escalation_triggered", onAlert);
-    db.prepare("DROP TRIGGER IF EXISTS refuse_handoff_test").run();
-    db.prepare("DROP TRIGGER IF EXISTS refuse_stamp_test").run();
+    await run("DROP TRIGGER IF EXISTS refuse_handoff_test");
+    await run("DROP TRIGGER IF EXISTS refuse_stamp_test");
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    db.prepare("DELETE FROM audit_log WHERE user_id = ?").run(agent);
-    dropTenantFixture(tenant);
+    await run("DELETE FROM audit_log WHERE user_id = ?", [agent]);
   });
 
   describe("every route to a failed row", () => {
@@ -246,9 +198,9 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
         queueWith: unreachable,
         failFirst: async () => {
           for (let pass = 0; pass < 4; pass++) {
-            expect(rowsOf(ref)[0]!.status).toBe("pending");
+            expect((await rowsOf(ref))[0]!.status).toBe("pending");
             expect(alerts).toEqual([]);
-            await processDueOutbox(rowsOf(ref)[0]!.next_attempt_at);
+            await sweepAt((await rowsOf(ref))[0]!.next_attempt_at);
           }
         },
       },
@@ -258,11 +210,11 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
         queueWith: unreachable,
         failFirst: async (first, second) => {
           // The second reply is younger than the age limit, so only the first expires.
-          db.prepare("UPDATE outbox SET created_at = ? WHERE id = ?").run(
+          await run("UPDATE outbox SET created_at = ? WHERE id = ?", [
             first.created_at + 1_000,
             second.id,
-          );
-          await processDueOutbox(first.created_at + MAX_AGE_MS);
+          ]);
+          await sweepAt(first.created_at + MAX_AGE_MS);
         },
       },
       {
@@ -271,7 +223,7 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
         queueWith: unreachable,
         failFirst: async (first) => {
           answer = refused;
-          await processDueOutbox(first.next_attempt_at);
+          await sweepAt(first.next_attempt_at);
         },
       },
       {
@@ -279,7 +231,7 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
         lastReason: "network:ECONNRESET",
         queueWith: reset,
         failFirst: async (first) => {
-          await processDueOutbox(first.next_attempt_at);
+          await sweepAt(first.next_attempt_at);
         },
       },
     ];
@@ -292,21 +244,23 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
 
         await route.failFirst(first, second);
 
-        expect(rowsOf(ref)[0]).toMatchObject({
+        expect((await rowsOf(ref))[0]).toMatchObject({
           status: "failed",
           last_reason: route.lastReason,
         });
-        expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-        expect(message(first.message_id).status).toBe("failed");
+        expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+        expect((await message(first.message_id)).status).toBe("failed");
 
-        expect(conversationOf(ref)).toMatchObject({
+        expect(await conversationOf(ref)).toMatchObject({
           status: "human_takeover",
           handover_reason: "reply_undeliverable",
           phase: { phase: "escalated", reason: "reply_undeliverable" },
         });
 
-        expect(assignmentOf(ref).assigned_agent).toBe(agent);
-        expect(assignmentOf(ref).assignment_notified_at).toBeGreaterThan(0);
+        expect((await assignmentOf(ref)).assigned_agent).toBe(agent);
+        expect(
+          (await assignmentOf(ref)).assignment_notified_at,
+        ).toBeGreaterThan(0);
 
         expect(alerts).toHaveLength(1);
         expect(alerts[0]).toMatchObject({
@@ -320,12 +274,12 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
           },
         });
 
-        expect(rowsOf(ref)[1]).toMatchObject({
+        expect((await rowsOf(ref))[1]).toMatchObject({
           id: second.id,
           status: "cancelled",
           handed_off_at: null,
         });
-        expect(message(second.message_id).status).toBe("cancelled");
+        expect((await message(second.message_id)).status).toBe("cancelled");
       });
     }
 
@@ -333,33 +287,35 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
       answer = unreachable;
       const first = await queue("primero");
       await queue("segundo");
-      await processDueOutbox(first.created_at + MAX_AGE_MS);
+      await sweepAt(first.created_at + MAX_AGE_MS);
       expect(alerts).toHaveLength(1);
 
-      const rows = rowsOf(ref);
-      const conversation = conversationOf(ref);
+      const rows = await rowsOf(ref);
+      const conversation = await conversationOf(ref);
 
-      await processDueOutbox(first.created_at + MAX_AGE_MS + 60_000);
-      await processDueOutbox(first.created_at + MAX_AGE_MS + 120_000);
+      await sweepAt(first.created_at + MAX_AGE_MS + 60_000);
+      await sweepAt(first.created_at + MAX_AGE_MS + 120_000);
 
       expect(alerts).toHaveLength(1);
-      expect(rowsOf(ref)).toEqual(rows);
-      expect(conversationOf(ref)).toEqual(conversation);
+      expect(await rowsOf(ref)).toEqual(rows);
+      expect(await conversationOf(ref)).toEqual(conversation);
     });
 
     it("hands off a reply refused for good on the first inline send, which is kept as a failed row", async () => {
       answer = refused;
       await WhatsAppService.sendMessage(ref, "hola", { retry: true });
-      expect(rowsOf(ref)[0]).toMatchObject({
+      expect((await rowsOf(ref))[0]).toMatchObject({
         status: "failed",
         attempts: 1,
         handed_off_at: null,
       });
 
-      await processDueOutbox();
+      await sweepAt();
 
-      expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-      expect(conversationOf(ref).handover_reason).toBe("reply_undeliverable");
+      expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+      expect((await conversationOf(ref)).handover_reason).toBe(
+        "reply_undeliverable",
+      );
       expect(alerts).toHaveLength(1);
     });
   });
@@ -392,18 +348,18 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
         false,
         "trace",
       );
-      const advisorMessage = rowsOf(ref)[0]!;
-      const before = conversationOf(ref);
+      const advisorMessage = (await rowsOf(ref))[0]!;
+      const before = await conversationOf(ref);
       expect(before).toMatchObject({
         status: "human_takeover",
         handover_reason: "multiple_objections",
       });
 
-      await processDueOutbox(advisorMessage.created_at + MAX_AGE_MS);
+      await sweepAt(advisorMessage.created_at + MAX_AGE_MS);
 
-      expect(rowsOf(ref)[0]).toMatchObject({ status: "failed" });
-      expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-      expect(conversationOf(ref)).toEqual(before);
+      expect((await rowsOf(ref))[0]).toMatchObject({ status: "failed" });
+      expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+      expect(await conversationOf(ref)).toEqual(before);
       expect(alerts).toHaveLength(1);
       expect(alerts[0]!.payload).toMatchObject({
         reason: "reply_undeliverable",
@@ -413,15 +369,15 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     it("keeps the reason of a person's takeover, and still sends one alert", async () => {
       answer = unreachable;
       const failed = await queue("primero");
-      failWithoutHandoff(failed);
+      await failWithoutHandoff(failed);
       await takeoverConversation(ref, agent);
-      const before = conversationOf(ref);
+      const before = await conversationOf(ref);
       expect(before.handover_reason).toBe("Manual takeover by agent");
 
-      await processDueOutbox();
+      await sweepAt();
 
-      expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-      expect(conversationOf(ref)).toEqual(before);
+      expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+      expect(await conversationOf(ref)).toEqual(before);
       expect(alerts).toHaveLength(1);
     });
   });
@@ -431,13 +387,15 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     await queue("primero");
     const second = await queue("segundo");
 
-    await processDueOutbox(second.created_at + MAX_AGE_MS);
+    await sweepAt(second.created_at + MAX_AGE_MS);
 
-    expect(rowsOf(ref).map((row) => row.status)).toEqual(["failed", "failed"]);
-    expect(rowsOf(ref).map((row) => row.handed_off_at !== null)).toEqual([
-      true,
-      true,
+    expect((await rowsOf(ref)).map((row) => row.status)).toEqual([
+      "failed",
+      "failed",
     ]);
+    expect(
+      (await rowsOf(ref)).map((row) => row.handed_off_at !== null),
+    ).toEqual([true, true]);
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.payload).toMatchObject({
       context: { failedReplies: 2, lastReason: "expired" },
@@ -448,60 +406,60 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     answer = unreachable;
     const failed = await queue("primero");
     const behind = await queue("segundo");
-    failWithoutHandoff(failed);
-    db.prepare("UPDATE tenants SET status = 'suspended' WHERE id = ?").run(
+    await failWithoutHandoff(failed);
+    await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
       tenant.tenantId,
-    );
+    ]);
 
-    await processDueOutbox();
+    await sweepAt();
 
-    expect(rowsOf(ref)[0]!.handed_off_at).toBeNull();
-    expect(rowsOf(ref)[1]!.status).toBe("pending");
-    expect(conversationOf(ref).status).toBe("active");
+    expect((await rowsOf(ref))[0]!.handed_off_at).toBeNull();
+    expect((await rowsOf(ref))[1]!.status).toBe("pending");
+    expect((await conversationOf(ref)).status).toBe("active");
     expect(alerts).toEqual([]);
 
-    db.prepare("UPDATE tenants SET status = 'active' WHERE id = ?").run(
+    await run("UPDATE tenants SET status = 'active' WHERE id = ?", [
       tenant.tenantId,
-    );
-    await processDueOutbox();
+    ]);
+    await sweepAt();
 
-    expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-    expect(rowsOf(ref)[1]!.status).toBe("cancelled");
-    expect(message(behind.message_id).status).toBe("cancelled");
-    expect(conversationOf(ref).handover_reason).toBe("reply_undeliverable");
+    expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+    expect((await rowsOf(ref))[1]!.status).toBe("cancelled");
+    expect((await message(behind.message_id)).status).toBe("cancelled");
+    expect((await conversationOf(ref)).handover_reason).toBe(
+      "reply_undeliverable",
+    );
     expect(alerts).toHaveLength(1);
   });
 
-  describe("at boot", () => {
+  describe("when the sweep finds it", () => {
     it("hands off a failed row that was never handed off", async () => {
       answer = unreachable;
       const failed = await queue("primero");
-      failWithoutHandoff(failed);
+      await failWithoutHandoff(failed);
 
-      startOutboxWorker();
-      await stopOutboxWorker();
+      await sweepAt();
 
-      expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-      expect(conversationOf(ref).handover_reason).toBe("reply_undeliverable");
+      expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+      expect((await conversationOf(ref)).handover_reason).toBe(
+        "reply_undeliverable",
+      );
       expect(alerts).toHaveLength(1);
     });
 
-    it("hands off a row that boot recovery fails as a second ambiguous outcome", async () => {
+    it("hands off a row that a new object's recovery fails as a second ambiguous outcome", async () => {
       answer = reset;
       const row = await queue("primero");
       expect(row.ambiguous_attempts).toBe(1);
-      db.prepare("UPDATE outbox SET status = 'sending' WHERE id = ?").run(
-        row.id,
-      );
+      await run("UPDATE outbox SET status = 'sending' WHERE id = ?", [row.id]);
 
-      startOutboxWorker();
-      await stopOutboxWorker();
+      await sweepAt();
 
-      expect(rowsOf(ref)[0]).toMatchObject({
+      expect((await rowsOf(ref))[0]).toMatchObject({
         status: "failed",
         last_reason: "interrupted",
       });
-      expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
+      expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
       expect(alerts).toHaveLength(1);
     });
   });
@@ -509,25 +467,25 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
   it("emits the alert before it stamps the rows, so a failure in between costs a second alert and never a missed one", async () => {
     answer = unreachable;
     const failed = await queue("primero");
-    failWithoutHandoff(failed);
-    db.prepare(
-      `CREATE TRIGGER refuse_stamp_test BEFORE UPDATE OF handed_off_at ON outbox
-       BEGIN SELECT RAISE(ABORT, 'refused for the test'); END`,
-    ).run();
+    await failWithoutHandoff(failed);
+    await run(`CREATE TRIGGER refuse_stamp_test BEFORE UPDATE OF handed_off_at ON outbox
+       BEGIN SELECT RAISE(ABORT, 'refused for the test'); END`);
 
-    await errorLogsDuring(() => processDueOutbox());
+    await logsDuring("error", () => sweepAt());
 
     expect(alerts).toHaveLength(1);
-    expect(rowsOf(ref)[0]!.handed_off_at).toBeNull();
-    expect(conversationOf(ref).handover_reason).toBe("reply_undeliverable");
+    expect((await rowsOf(ref))[0]!.handed_off_at).toBeNull();
+    expect((await conversationOf(ref)).handover_reason).toBe(
+      "reply_undeliverable",
+    );
 
-    db.prepare("DROP TRIGGER refuse_stamp_test").run();
-    await processDueOutbox();
+    await run("DROP TRIGGER refuse_stamp_test");
+    await sweepAt();
 
     expect(alerts).toHaveLength(2);
-    expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
+    expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
 
-    await processDueOutbox();
+    await sweepAt();
     expect(alerts).toHaveLength(2);
   });
 
@@ -535,27 +493,25 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     answer = unreachable;
     const broken = await queue("primero");
     const otherRef = { ...ref, phoneNumber: OTHER_CUSTOMER };
-    insertConversation(otherRef);
+    await insertConversation(otherRef);
     const healthy = await queue("primero", otherRef);
-    failWithoutHandoff(broken);
-    failWithoutHandoff(healthy);
+    await failWithoutHandoff(broken);
+    await failWithoutHandoff(healthy);
 
-    db.prepare(
-      `CREATE TRIGGER refuse_handoff_test BEFORE UPDATE ON conversations
+    await run(`CREATE TRIGGER refuse_handoff_test BEFORE UPDATE ON conversations
        WHEN NEW.phone_number = '${CUSTOMER}' AND NEW.status = 'human_takeover'
-       BEGIN SELECT RAISE(ABORT, 'refused for the test'); END`,
-    ).run();
+       BEGIN SELECT RAISE(ABORT, 'refused for the test'); END`);
 
-    const logs = await errorLogsDuring(() => processDueOutbox());
+    const logs = await logsDuring("error", () => sweepAt());
 
-    expect(rowsOf(otherRef)[0]!.handed_off_at).toBeGreaterThan(0);
-    expect(conversationOf(otherRef).handover_reason).toBe(
+    expect((await rowsOf(otherRef))[0]!.handed_off_at).toBeGreaterThan(0);
+    expect((await conversationOf(otherRef)).handover_reason).toBe(
       "reply_undeliverable",
     );
     expect(alerts).toHaveLength(1);
 
-    expect(rowsOf(ref)[0]!.handed_off_at).toBeNull();
-    expect(conversationOf(ref).status).toBe("active");
+    expect((await rowsOf(ref))[0]!.handed_off_at).toBeNull();
+    expect((await conversationOf(ref)).status).toBe("active");
 
     const failure = logs.find((entry) => entry.module === "handoff");
     expect(failure).toMatchObject({
@@ -566,16 +522,18 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     expect(JSON.stringify(failure)).not.toContain(CUSTOMER);
 
     // Nothing was lost: the next pass, with the fault gone, finishes the job.
-    db.prepare("DROP TRIGGER refuse_handoff_test").run();
-    await processDueOutbox();
+    await run("DROP TRIGGER refuse_handoff_test");
+    await sweepAt();
 
-    expect(rowsOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-    expect(conversationOf(ref).handover_reason).toBe("reply_undeliverable");
+    expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+    expect((await conversationOf(ref)).handover_reason).toBe(
+      "reply_undeliverable",
+    );
     expect(alerts).toHaveLength(2);
   });
 
   describe("the alert the advisor reads", () => {
-    it("says in Spanish that a reply could not be delivered", () => {
+    it("says in Spanish that a reply could not be delivered", async () => {
       const decisions = evaluateNotifications(
         {
           type: "escalation_triggered",

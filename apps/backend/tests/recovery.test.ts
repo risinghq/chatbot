@@ -1,20 +1,15 @@
-import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { CheckEligibilityHandler } from "../src/domains/eligibility/handlers/check-eligibility-handler.ts";
 import { RetryEligibilityHandler } from "../src/domains/recovery/handlers/retry-eligibility-handler.ts";
 import { FNBProvider } from "../src/domains/eligibility/providers/fnb-provider.ts";
 import { PowerBIProvider } from "../src/domains/eligibility/providers/powerbi-provider.ts";
 import { initializeEnrichmentRegistry } from "../src/conversation/enrichment/index.ts";
 import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
-import { db } from "../src/db/index.ts";
-import jwt from "jsonwebtoken";
-import {
-  applySchema,
-  createTenantFixture,
-  dropTenantFixture,
-  type TenantFixture,
-} from "./helpers/tenancy.ts";
+import { run } from "../src/db/index.ts";
+import { fakeJwt } from "./helpers/jwt.ts";
+import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 
-const FAKE_TOKEN = jwt.sign({ commercialAllyId: "123" }, "secret");
+const FAKE_TOKEN = fakeJwt({ commercialAllyId: "123" });
 
 describe("Provider outage recovery", () => {
   const testPhone = "51999999999";
@@ -23,14 +18,8 @@ describe("Provider outage recovery", () => {
 
   let tenant: TenantFixture;
 
-  beforeEach(() => {
-    process.env.CALIDDA_BASE_URL = "https://test.calidda.com";
-    process.env.CALIDDA_USERNAME = "testuser";
-    process.env.CALIDDA_PASSWORD = "testpass";
-
-    applySchema();
-
-    tenant = createTenantFixture("recovery");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("recovery");
 
     // Initialize enrichment registry
     const fnbProvider = new FNBProvider();
@@ -43,13 +32,12 @@ describe("Provider outage recovery", () => {
     initializeEnrichmentRegistry(eligibilityHandler);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    dropTenantFixture(tenant);
   });
 
   it("should detect system_outage when APIs return 5xx errors", async () => {
-    globalThis.fetch = mock(async (input: any) => {
+    globalThis.fetch = vi.fn(async (input: any) => {
       const url = input.toString();
 
       if (url.includes("autenticar")) {
@@ -94,17 +82,18 @@ describe("Provider outage recovery", () => {
       timestamp: Date.now(),
     };
     const metadata = { createdAt: Date.now(), lastActivityAt: Date.now() };
-    db.prepare(
+    await run(
       `INSERT INTO conversations (tenant_id, channel_account_id, phone_number, context_data, status)
         VALUES (?, ?, ?, ?, 'active')`,
-    ).run(
-      tenant.tenantId,
-      tenant.channelAccountId,
-      testPhone,
-      JSON.stringify({ phase, metadata }),
+      [
+        tenant.tenantId,
+        tenant.channelAccountId,
+        testPhone,
+        JSON.stringify({ phase, metadata }),
+      ],
     );
 
-    globalThis.fetch = mock(async (input: any) => {
+    globalThis.fetch = vi.fn(async (input: any) => {
       const url = input.toString();
 
       if (url.includes("autenticar")) {

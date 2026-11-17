@@ -5,21 +5,16 @@
  * uploaded .html or .svg never runs as a page on the backend's origin.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync } from "node:fs";
-import path from "node:path";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import { db } from "../src/db/index.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import {
   createSession,
@@ -29,7 +24,6 @@ import assetRoutes from "../src/routes/assets.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
 import { uploadContract } from "../src/domains/conversations/media.ts";
 import { privateFileStorage } from "../src/adapters/storage/private-files.ts";
-import { PRIVATE_DIR } from "../src/lib/storage-paths.ts";
 
 const CUSTOMER = "51987651111";
 
@@ -46,23 +40,13 @@ describe("serving a private asset", () => {
   let cookie: string;
 
   beforeEach(async () => {
-    applySchema();
     app = buildApp();
-    tenant = createTenantFixture("private-assets");
+    tenant = await createTenantFixture("private-assets");
 
-    const { userId } = createMember(tenant, "admin");
+    const { userId } = await createMember(tenant, "admin");
     const token = generateSessionToken();
-    createSession(token, userId, tenant.tenantId);
+    await createSession(token, userId, tenant.tenantId);
     cookie = `session=${token}`;
-  });
-
-  afterEach(() => {
-    rmSync(path.join(PRIVATE_DIR, tenant.tenantId), {
-      recursive: true,
-      force: true,
-    });
-    db.prepare("DELETE FROM session").run();
-    dropTenantFixture(tenant);
   });
 
   /**
@@ -77,7 +61,10 @@ describe("serving a private asset", () => {
   }) {
     const id = crypto.randomUUID();
     const storageKey = `${tenant.tenantId}/contracts/${id}-${options.filename}`;
-    await privateFileStorage.write(storageKey, Buffer.from(options.body));
+    await privateFileStorage.write(
+      storageKey,
+      new TextEncoder().encode(options.body),
+    );
 
     return AssetService.create({
       id,
@@ -129,9 +116,7 @@ describe("serving a private asset", () => {
     expect(response.headers.get("Content-Type")).toBe(
       "application/octet-stream",
     );
-    expect(response.headers.get("Content-Disposition")).toStartWith(
-      "attachment;",
-    );
+    expect(response.headers.get("Content-Disposition")).toMatch(/^attachment;/);
   });
 
   it("keeps the real content type of a genuine contract", async () => {
@@ -198,19 +183,10 @@ describe("recording the content type of an upload", () => {
   let tenant: TenantFixture;
   let uploaderId: string;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("upload-types");
-    uploaderId = createMember(tenant, "sales_agent").userId;
-    insertConversation(tenant.ref(CUSTOMER));
-  });
-
-  afterEach(() => {
-    rmSync(path.join(PRIVATE_DIR, tenant.tenantId), {
-      recursive: true,
-      force: true,
-    });
-    dropTenantFixture(tenant);
+  beforeEach(async () => {
+    tenant = await createTenantFixture("upload-types");
+    uploaderId = (await createMember(tenant, "sales_agent")).userId;
+    await insertConversation(tenant.ref(CUSTOMER));
   });
 
   function upload(contract: File, audio: File) {
@@ -230,11 +206,12 @@ describe("recording the content type of an upload", () => {
     );
 
     expect(
-      AssetService.getById(tenant.tenantId, result.contractAssetId)
+      (await AssetService.getById(tenant.tenantId, result.contractAssetId))
         ?.content_type,
     ).toBe("application/pdf");
     expect(
-      AssetService.getById(tenant.tenantId, result.audioAssetId)?.content_type,
+      (await AssetService.getById(tenant.tenantId, result.audioAssetId))
+        ?.content_type,
     ).toBe("audio/mpeg");
   });
 
@@ -246,7 +223,7 @@ describe("recording the content type of an upload", () => {
       new File(["ID3"], "llamada.mp3", { type: "audio/mpeg" }),
     );
 
-    const contract = AssetService.getById(
+    const contract = await AssetService.getById(
       tenant.tenantId,
       result.contractAssetId,
     );
@@ -256,7 +233,9 @@ describe("recording the content type of an upload", () => {
     // the browser wrote is not grounds for losing it.
     expect(contract?.byte_size).toBe("<script>alert(1)</script>".length);
     expect(
-      await privateFileStorage.read(contract!.storage_key)?.text(),
+      await new Response(
+        await privateFileStorage.read(contract!.storage_key),
+      ).text(),
     ).toContain("<script>");
   });
 
@@ -267,7 +246,8 @@ describe("recording the content type of an upload", () => {
     );
 
     expect(
-      AssetService.getById(tenant.tenantId, result.audioAssetId)?.content_type,
+      (await AssetService.getById(tenant.tenantId, result.audioAssetId))
+        ?.content_type,
     ).toBe("audio/webm");
   });
 });

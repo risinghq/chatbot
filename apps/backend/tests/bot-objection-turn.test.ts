@@ -4,7 +4,7 @@
  * receives are what production would see.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   buildAnswerQuestionPrompt,
   type ConversationMetadata,
@@ -14,17 +14,15 @@ import { createMockProvider } from "@vendeya/intelligence";
 import type { AnswerContext } from "@vendeya/intelligence";
 import type { DomainEvent } from "@vendeya/types";
 
-import { db } from "../src/db/index.ts";
+import { run } from "../src/db/index.ts";
 import { runEnrichmentLoop } from "../src/conversation/handler/enrichment-loop.ts";
-import { handleMessage } from "../src/conversation/handler/index.ts";
+import { answerMessage } from "../src/conversation/handler/index.ts";
 import { initializeEnrichmentRegistry } from "../src/conversation/enrichment/index.ts";
 import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
 import type { CheckEligibilityHandler } from "../src/domains/eligibility/handlers/check-eligibility-handler.ts";
 import { eventBus } from "../src/shared/events/index.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -63,10 +61,9 @@ describe("a turn during a price objection", () => {
   let tenant: TenantFixture;
   let metadata: ConversationMetadata;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("objection");
-    insertConversation(tenant.ref(CUSTOMER), {
+  beforeEach(async () => {
+    tenant = await createTenantFixture("objection");
+    await insertConversation(tenant.ref(CUSTOMER), {
       contextData: { phase: objection, metadata: {} },
     });
     metadata = { createdAt: Date.now(), lastActivityAt: Date.now() };
@@ -74,9 +71,8 @@ describe("a turn during a price objection", () => {
     initializeEnrichmentRegistry({} as CheckEligibilityHandler);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     enrichmentRegistry.clear();
-    dropTenantFixture(tenant);
   });
 
   test("a message that matches nothing costs one LLM call and gets a reply", async () => {
@@ -147,17 +143,15 @@ describe("a turn during a price objection", () => {
 describe("a question while browsing products", () => {
   let tenant: TenantFixture;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("browsing");
-    insertConversation(tenant.ref(CUSTOMER));
+  beforeEach(async () => {
+    tenant = await createTenantFixture("browsing");
+    await insertConversation(tenant.ref(CUSTOMER));
     enrichmentRegistry.clear();
     initializeEnrichmentRegistry({} as CheckEligibilityHandler);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     enrichmentRegistry.clear();
-    dropTenantFixture(tenant);
   });
 
   test("reaches the answer prompt with the customer's credit", async () => {
@@ -185,9 +179,9 @@ describe("a question while browsing products", () => {
   });
 
   test("names the tenant's business in the answer prompt", async () => {
-    db.prepare("UPDATE tenants SET name = 'Casa Lima' WHERE id = ?").run(
+    await run("UPDATE tenants SET name = 'Casa Lima' WHERE id = ?", [
       tenant.tenantId,
-    );
+    ]);
     const { provider, answerContexts } = countingProvider();
     provider.setResponse("isQuestion", true);
 
@@ -219,10 +213,9 @@ describe("escalation from a phase", () => {
   };
   let originalFetch: typeof globalThis.fetch;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("escalation");
-    insertConversation(tenant.ref(CUSTOMER), {
+  beforeEach(async () => {
+    tenant = await createTenantFixture("escalation");
+    await insertConversation(tenant.ref(CUSTOMER), {
       contextData: {
         phase: { ...objection, objectionCount: 2 },
         metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
@@ -236,21 +229,18 @@ describe("escalation from a phase", () => {
       new Response("{}")) as unknown as typeof fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     eventBus.off("escalation_triggered", onEscalation);
     globalThis.fetch = originalFetch;
-    dropTenantFixture(tenant);
   });
 
   test("emits escalation_triggered once", async () => {
-    await handleMessage({
+    await answerMessage({
       ref: tenant.ref(CUSTOMER),
       content: "no",
       timestamp: Date.now() - 11 * 60 * 1000,
       messageId: `wamid-${crypto.randomUUID()}`,
     });
-    // `handleMessage` does not await its own emit.
-    await Bun.sleep(10);
 
     expect(escalations).toHaveLength(1);
     expect(escalations[0]).toMatchObject({

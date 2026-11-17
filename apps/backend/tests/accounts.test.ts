@@ -1,54 +1,35 @@
 /** Creating and promoting accounts. Each refused create or promote also checks that nothing was written. */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import type { Database } from "bun:sqlite";
-import bcrypt from "bcryptjs";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { initializeDatabase } from "../src/db/init.ts";
+import { describe, it, expect, beforeEach } from "vitest";
+import { getAll, getOne, run } from "../src/db/index.ts";
 import type { AccountErrorReason } from "../src/domains/accounts/errors.ts";
-import { accountsOn } from "../src/domains/accounts/index.ts";
-import { membershipsOn, tenantsOn } from "../src/domains/tenants/index.ts";
+import { AccountService } from "../src/domains/accounts/index.ts";
+import {
+  MembershipService,
+  TenantService,
+} from "../src/domains/tenants/index.ts";
+import { verifyPassword } from "../src/platform/auth/password.ts";
 import type { Result } from "../src/shared/result/index.ts";
-import { createTestDatabase } from "./helpers/database.ts";
 
 const PASSWORD = "a-long-enough-password";
 const OPERATOR = { name: "operator", uid: 1000 };
 
 describe("accounts", () => {
-  let dir: string;
-  let db: Database;
-  let accounts: ReturnType<typeof accountsOn>;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "vendeya-accounts-"));
-    db = createTestDatabase(join(dir, "accounts.sqlite"));
-    db.run("PRAGMA foreign_keys = ON;");
-    initializeDatabase(db);
-    accounts = accountsOn(db);
-  });
-
-  afterEach(() => {
-    db.close();
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  function tenant(slug: string): string {
-    return tenantsOn(db).create({ slug, name: slug }).id;
+  async function tenant(slug: string): Promise<string> {
+    return (await TenantService.create({ slug, name: slug })).id;
   }
 
-  function userCount(): number {
+  async function userCount(): Promise<number> {
     return (
-      db.prepare("SELECT COUNT(*) as count FROM users").get() as {
+      (await getOne("SELECT COUNT(*) as count FROM users")) as {
         count: number;
       }
     ).count;
   }
 
-  function user(username: string) {
+  async function user(username: string) {
     return (
-      (db.prepare("SELECT * FROM users WHERE username = ?").get(username) as {
+      ((await getOne("SELECT * FROM users WHERE username = ?", [username])) as {
         id: string;
         role: string;
         name: string;
@@ -60,13 +41,11 @@ describe("accounts", () => {
     );
   }
 
-  function operators(): string[] {
+  async function operators(): Promise<string[]> {
     return (
-      db
-        .prepare(
-          "SELECT username FROM users WHERE is_platform_operator = 1 ORDER BY username",
-        )
-        .all() as Array<{ username: string }>
+      (await getAll(
+        "SELECT username FROM users WHERE is_platform_operator = 1 ORDER BY username",
+      )) as Array<{ username: string }>
     ).map((row) => row.username);
   }
 
@@ -75,26 +54,26 @@ describe("accounts", () => {
   }
 
   describe("creating an account", () => {
-    it("makes an admin of the only tenant, with a membership there", () => {
-      const tenantId = tenant("totem");
+    it("makes an admin of the only tenant, with a membership there", async () => {
+      const tenantId = await tenant("totem");
 
-      const result = accounts.create(
+      const result = await AccountService.create(
         { username: "maria", password: PASSWORD },
         OPERATOR,
       );
 
       expect(result.ok).toBe(true);
-      const row = user("maria")!;
+      const row = (await user("maria"))!;
       expect(row.role).toBe("admin");
       expect(row.is_platform_operator).toBe(0);
       expect(row.created_by).toBeNull();
-      expect(membershipsOn(db).roleFor(tenantId, row.id)).toBe("admin");
+      expect(await MembershipService.roleFor(tenantId, row.id)).toBe("admin");
     });
 
-    it("tells the caller which tenant it joined", () => {
-      const tenantId = tenant("totem");
+    it("tells the caller which tenant it joined", async () => {
+      const tenantId = await tenant("totem");
 
-      const result = accounts.create(
+      const result = await AccountService.create(
         { username: "maria", password: PASSWORD },
         OPERATOR,
       );
@@ -105,21 +84,27 @@ describe("accounts", () => {
       });
     });
 
-    it("stores a hash of the password, never the password", () => {
-      tenant("totem");
+    it("stores a hash of the password, never the password", async () => {
+      await tenant("totem");
 
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
 
-      const { password_hash } = user("maria")!;
+      const { password_hash } = (await user("maria"))!;
       expect(password_hash).not.toContain(PASSWORD);
-      expect(bcrypt.compareSync(PASSWORD, password_hash)).toBe(true);
+      expect(await verifyPassword(PASSWORD, password_hash)).toBe(true);
     });
 
-    it("names the account after its username unless given a display name", () => {
-      tenant("totem");
+    it("names the account after its username unless given a display name", async () => {
+      await tenant("totem");
 
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
-      accounts.create(
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
+      await AccountService.create(
         {
           username: "juan",
           password: PASSWORD,
@@ -128,14 +113,14 @@ describe("accounts", () => {
         OPERATOR,
       );
 
-      expect(user("maria")!.name).toBe("maria");
-      expect(user("juan")!.name).toBe("Juan Pérez");
+      expect((await user("maria"))!.name).toBe("maria");
+      expect((await user("juan"))!.name).toBe("Juan Pérez");
     });
 
-    it("makes a platform operator with no membership", () => {
-      tenant("totem");
+    it("makes a platform operator with no membership", async () => {
+      await tenant("totem");
 
-      const result = accounts.create(
+      const result = await AccountService.create(
         {
           username: "vendeya-staff",
           password: PASSWORD,
@@ -146,14 +131,14 @@ describe("accounts", () => {
 
       expect(result.ok && result.value.isPlatformOperator).toBe(true);
       expect(result.ok && result.value.tenant).toBeNull();
-      expect(user("vendeya-staff")!.is_platform_operator).toBe(1);
+      expect((await user("vendeya-staff"))!.is_platform_operator).toBe(1);
       expect(
-        db.prepare("SELECT COUNT(*) as count FROM tenant_memberships").get(),
+        await getOne("SELECT COUNT(*) as count FROM tenant_memberships"),
       ).toEqual({ count: 0 });
     });
 
-    it("makes a platform operator where there is no tenant at all", () => {
-      const result = accounts.create(
+    it("makes a platform operator where there is no tenant at all", async () => {
+      const result = await AccountService.create(
         {
           username: "vendeya-staff",
           password: PASSWORD,
@@ -163,20 +148,20 @@ describe("accounts", () => {
       );
 
       expect(result.ok).toBe(true);
-      expect(operators()).toEqual(["vendeya-staff"]);
+      expect(await operators()).toEqual(["vendeya-staff"]);
     });
 
     describe("with several tenants", () => {
       let alpha: string;
       let beta: string;
 
-      beforeEach(() => {
-        alpha = tenant("alpha");
-        beta = tenant("beta");
+      beforeEach(async () => {
+        alpha = await tenant("alpha");
+        beta = await tenant("beta");
       });
 
-      it("joins the tenant it is told to", () => {
-        const result = accounts.create(
+      it("joins the tenant it is told to", async () => {
+        const result = await AccountService.create(
           {
             username: "maria",
             password: PASSWORD,
@@ -186,26 +171,26 @@ describe("accounts", () => {
         );
 
         expect(result.ok).toBe(true);
-        const { id } = user("maria")!;
-        expect(membershipsOn(db).roleFor(beta, id)).toBe("admin");
-        expect(membershipsOn(db).roleFor(alpha, id)).toBeNull();
+        const { id } = (await user("maria"))!;
+        expect(await MembershipService.roleFor(beta, id)).toBe("admin");
+        expect(await MembershipService.roleFor(alpha, id)).toBeNull();
       });
 
-      it("is refused without one, and the refusal lists them", () => {
+      it("is refused without one, and the refusal lists them", async () => {
         const request = { username: "maria", password: PASSWORD };
-        const result = accounts.create(request, OPERATOR);
+        const result = await AccountService.create(request, OPERATOR);
 
         expect(reasonOf(result)).toBe("tenant_required");
         expect(!result.ok && result.error.message).toContain(alpha);
         expect(!result.ok && result.error.message).toContain(beta);
-        expect(user("maria")).toBeUndefined();
+        expect(await user("maria")).toBeUndefined();
       });
     });
 
-    it("refuses a tenant that does not exist", () => {
-      tenant("totem");
+    it("refuses a tenant that does not exist", async () => {
+      await tenant("totem");
 
-      const result = accounts.create(
+      const result = await AccountService.create(
         {
           username: "maria",
           password: PASSWORD,
@@ -215,23 +200,23 @@ describe("accounts", () => {
       );
 
       expect(reasonOf(result)).toBe("unknown_tenant");
-      expect(userCount()).toBe(0);
+      expect(await userCount()).toBe(0);
     });
 
-    it("refuses a database with no tenant to join", () => {
-      const result = accounts.create(
+    it("refuses a database with no tenant to join", async () => {
+      const result = await AccountService.create(
         { username: "maria", password: PASSWORD },
         OPERATOR,
       );
 
       expect(reasonOf(result)).toBe("no_tenant");
-      expect(userCount()).toBe(0);
+      expect(await userCount()).toBe(0);
     });
 
-    it("refuses to be both a platform operator and a member of a tenant", () => {
-      const tenantId = tenant("totem");
+    it("refuses to be both a platform operator and a member of a tenant", async () => {
+      const tenantId = await tenant("totem");
 
-      const result = accounts.create(
+      const result = await AccountService.create(
         {
           username: "maria",
           password: PASSWORD,
@@ -242,14 +227,14 @@ describe("accounts", () => {
       );
 
       expect(reasonOf(result)).toBe("conflicting_scope");
-      expect(userCount()).toBe(0);
+      expect(await userCount()).toBe(0);
     });
 
     describe("the password", () => {
-      it("is refused under 12 characters, and nothing is written", () => {
-        tenant("totem");
+      it("is refused under 12 characters, and nothing is written", async () => {
+        await tenant("totem");
 
-        const result = accounts.create(
+        const result = await AccountService.create(
           {
             username: "maria",
             password: "x".repeat(11),
@@ -258,16 +243,16 @@ describe("accounts", () => {
         );
 
         expect(reasonOf(result)).toBe("password_too_short");
-        expect(userCount()).toBe(0);
+        expect(await userCount()).toBe(0);
         expect(
-          db.prepare("SELECT COUNT(*) as count FROM tenant_memberships").get(),
+          await getOne("SELECT COUNT(*) as count FROM tenant_memberships"),
         ).toEqual({ count: 0 });
       });
 
-      it("is accepted at exactly 12", () => {
-        tenant("totem");
+      it("is accepted at exactly 12", async () => {
+        await tenant("totem");
 
-        const result = accounts.create(
+        const result = await AccountService.create(
           {
             username: "maria",
             password: "x".repeat(12),
@@ -280,15 +265,18 @@ describe("accounts", () => {
     });
 
     describe("a username that is taken", () => {
-      beforeEach(() => {
-        tenant("totem");
-        accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
+      beforeEach(async () => {
+        await tenant("totem");
+        await AccountService.create(
+          { username: "maria", password: PASSWORD },
+          OPERATOR,
+        );
       });
 
-      it("is refused, and the account that holds it is untouched", () => {
-        const before = user("maria")!;
+      it("is refused, and the account that holds it is untouched", async () => {
+        const before = (await user("maria"))!;
 
-        const result = accounts.create(
+        const result = await AccountService.create(
           {
             username: "maria",
             password: "a-different-password",
@@ -298,113 +286,128 @@ describe("accounts", () => {
         );
 
         expect(reasonOf(result)).toBe("username_taken");
-        expect(user("maria")).toEqual(before);
-        expect(userCount()).toBe(1);
+        expect(await user("maria")).toEqual(before);
+        expect(await userCount()).toBe(1);
       });
 
-      it("is refused by the check made before a password is asked for", () => {
-        expect(reasonOf(accounts.checkNew({ username: "maria" }))).toBe(
-          "username_taken",
+      it("is refused by the check made before a password is asked for", async () => {
+        expect(
+          reasonOf(await AccountService.checkNew({ username: "maria" })),
+        ).toBe("username_taken");
+        expect((await AccountService.checkNew({ username: "juan" })).ok).toBe(
+          true,
         );
-        expect(accounts.checkNew({ username: "juan" }).ok).toBe(true);
       });
     });
 
-    it("refuses an empty username or one wrapped in whitespace", () => {
-      tenant("totem");
+    it("refuses an empty username or one wrapped in whitespace", async () => {
+      await tenant("totem");
 
       for (const username of ["", "   ", " maria", "maria "]) {
         expect(
-          reasonOf(accounts.create({ username, password: PASSWORD }, OPERATOR)),
+          reasonOf(
+            await AccountService.create(
+              { username, password: PASSWORD },
+              OPERATOR,
+            ),
+          ),
         ).toBe("invalid_username");
       }
-      expect(userCount()).toBe(0);
+      expect(await userCount()).toBe(0);
     });
 
-    it("checks everything but the password before one exists", () => {
-      const alpha = tenant("alpha");
-      tenant("beta");
+    it("checks everything but the password before one exists", async () => {
+      const alpha = await tenant("alpha");
+      await tenant("beta");
 
-      expect(reasonOf(accounts.checkNew({ username: "maria" }))).toBe(
-        "tenant_required",
-      );
-      expect(accounts.checkNew({ username: "maria", tenantId: alpha }).ok).toBe(
-        true,
-      );
       expect(
-        accounts.checkNew({ username: "maria", platformOperator: true }).ok,
+        reasonOf(await AccountService.checkNew({ username: "maria" })),
+      ).toBe("tenant_required");
+      expect(
+        (await AccountService.checkNew({ username: "maria", tenantId: alpha }))
+          .ok,
       ).toBe(true);
-      expect(userCount()).toBe(0);
+      expect(
+        (
+          await AccountService.checkNew({
+            username: "maria",
+            platformOperator: true,
+          })
+        ).ok,
+      ).toBe(true);
+      expect(await userCount()).toBe(0);
     });
   });
 
   describe("promoting an account", () => {
     let tenantId: string;
 
-    beforeEach(() => {
-      tenantId = tenant("totem");
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
-      accounts.create({ username: "juan", password: PASSWORD }, OPERATOR);
+    beforeEach(async () => {
+      tenantId = await tenant("totem");
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
+      await AccountService.create(
+        { username: "juan", password: PASSWORD },
+        OPERATOR,
+      );
     });
 
-    it("makes an existing account a platform operator", () => {
-      const result = accounts.promote("maria", OPERATOR);
+    it("makes an existing account a platform operator", async () => {
+      const result = await AccountService.promote("maria", OPERATOR);
 
       expect(result.ok && result.value).toMatchObject({
         username: "maria",
         changed: true,
       });
-      expect(operators()).toEqual(["maria"]);
+      expect(await operators()).toEqual(["maria"]);
     });
 
-    it("keeps the account's tenant membership", () => {
-      accounts.promote("maria", OPERATOR);
+    it("keeps the account's tenant membership", async () => {
+      await AccountService.promote("maria", OPERATOR);
 
-      expect(membershipsOn(db).roleFor(tenantId, user("maria")!.id)).toBe(
-        "admin",
-      );
+      expect(
+        await MembershipService.roleFor(tenantId, (await user("maria"))!.id),
+      ).toBe("admin");
     });
 
-    it("leaves every other account alone", () => {
-      accounts.promote("maria", OPERATOR);
+    it("leaves every other account alone", async () => {
+      await AccountService.promote("maria", OPERATOR);
 
-      expect(user("juan")!.is_platform_operator).toBe(0);
+      expect((await user("juan"))!.is_platform_operator).toBe(0);
     });
 
-    it("changes nothing the second time, and says so", () => {
-      accounts.promote("maria", OPERATOR);
+    it("changes nothing the second time, and says so", async () => {
+      await AccountService.promote("maria", OPERATOR);
 
-      const again = accounts.promote("maria", OPERATOR);
+      const again = await AccountService.promote("maria", OPERATOR);
 
       expect(again.ok && again.value.changed).toBe(false);
-      expect(operators()).toEqual(["maria"]);
+      expect(await operators()).toEqual(["maria"]);
     });
 
-    it("is refused for a username nobody holds", () => {
-      const result = accounts.promote("nobody", OPERATOR);
+    it("is refused for a username nobody holds", async () => {
+      const result = await AccountService.promote("nobody", OPERATOR);
 
       expect(reasonOf(result)).toBe("not_found");
-      expect(operators()).toEqual([]);
+      expect(await operators()).toEqual([]);
     });
 
-    it("is refused for a disabled account", () => {
-      db.prepare(
-        "UPDATE users SET is_active = 0 WHERE username = 'maria'",
-      ).run();
+    it("is refused for a disabled account", async () => {
+      await run("UPDATE users SET is_active = 0 WHERE username = 'maria'");
 
-      const result = accounts.promote("maria", OPERATOR);
+      const result = await AccountService.promote("maria", OPERATOR);
 
       expect(reasonOf(result)).toBe("inactive");
-      expect(operators()).toEqual([]);
+      expect(await operators()).toEqual([]);
     });
 
-    it("counts an account whose active flag was never set as active", () => {
-      db.prepare(
-        "UPDATE users SET is_active = NULL WHERE username = 'maria'",
-      ).run();
+    it("counts an account whose active flag was never set as active", async () => {
+      await run("UPDATE users SET is_active = NULL WHERE username = 'maria'");
 
-      expect(accounts.promote("maria", OPERATOR).ok).toBe(true);
-      expect(operators()).toEqual(["maria"]);
+      expect((await AccountService.promote("maria", OPERATOR)).ok).toBe(true);
+      expect(await operators()).toEqual(["maria"]);
     });
   });
 
@@ -419,21 +422,21 @@ describe("accounts", () => {
       metadata: string;
     };
 
-    function auditRows(): AuditRow[] {
-      return db
-        .prepare("SELECT * FROM audit_log ORDER BY created_at, rowid")
-        .all() as AuditRow[];
+    async function auditRows(): Promise<AuditRow[]> {
+      return (await getAll(
+        "SELECT * FROM audit_log ORDER BY created_at, rowid",
+      )) as AuditRow[];
     }
 
-    it("records a created admin under the operator and the tenant it joined", () => {
-      const tenantId = tenant("totem");
+    it("records a created admin under the operator and the tenant it joined", async () => {
+      const tenantId = await tenant("totem");
 
-      const result = accounts.create(
+      const result = await AccountService.create(
         { username: "maria", password: PASSWORD },
         OPERATOR,
       );
 
-      const [row, ...rest] = auditRows();
+      const [row, ...rest] = await auditRows();
       expect(rest).toEqual([]);
       expect(row).toMatchObject({
         tenant_id: tenantId,
@@ -451,29 +454,32 @@ describe("accounts", () => {
       });
     });
 
-    it("stores the name the environment gave and the uid it could not change", () => {
-      tenant("totem");
+    it("stores the name the environment gave and the uid it could not change", async () => {
+      await tenant("totem");
       const spoofed = { name: "alice", uid: 1000 };
 
-      accounts.create({ username: "maria", password: PASSWORD }, spoofed);
-      accounts.promote("maria", spoofed);
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        spoofed,
+      );
+      await AccountService.promote("maria", spoofed);
 
-      const rows = auditRows();
+      const rows = await auditRows();
       expect(rows.map((row) => row.actor)).toEqual(["cli:alice", "cli:alice"]);
       expect(rows.map((row) => JSON.parse(row.metadata).uid)).toEqual([
         1000, 1000,
       ]);
     });
 
-    it("records a created platform operator with no tenant", () => {
-      tenant("totem");
+    it("records a created platform operator with no tenant", async () => {
+      await tenant("totem");
 
-      accounts.create(
+      await AccountService.create(
         { username: "staff", password: PASSWORD, platformOperator: true },
         OPERATOR,
       );
 
-      const [row, ...rest] = auditRows();
+      const [row, ...rest] = await auditRows();
       expect(rest).toEqual([]);
       expect(row!.tenant_id).toBeNull();
       expect(JSON.parse(row!.metadata)).toEqual({
@@ -483,60 +489,81 @@ describe("accounts", () => {
       });
     });
 
-    it("never records the password", () => {
-      tenant("totem");
+    it("never records the password", async () => {
+      await tenant("totem");
 
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
 
-      const stored = JSON.stringify(auditRows());
+      const stored = JSON.stringify(await auditRows());
       expect(stored).not.toContain(PASSWORD);
-      expect(stored).not.toContain(user("maria")!.password_hash);
+      expect(stored).not.toContain((await user("maria"))!.password_hash);
     });
 
-    it("writes nothing when the password is too short", () => {
-      tenant("totem");
+    it("writes nothing when the password is too short", async () => {
+      await tenant("totem");
 
-      accounts.create({ username: "maria", password: "short" }, OPERATOR);
+      await AccountService.create(
+        { username: "maria", password: "short" },
+        OPERATOR,
+      );
 
-      expect(auditRows()).toEqual([]);
+      expect(await auditRows()).toEqual([]);
     });
 
-    it("writes nothing when the username is taken", () => {
-      tenant("totem");
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
+    it("writes nothing when the username is taken", async () => {
+      await tenant("totem");
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
 
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
 
-      expect(auditRows()).toHaveLength(1);
+      expect(await auditRows()).toHaveLength(1);
     });
 
-    it("writes nothing when the tenant is refused", () => {
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
+    it("writes nothing when the tenant is refused", async () => {
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
 
-      expect(auditRows()).toEqual([]);
+      expect(await auditRows()).toEqual([]);
     });
 
-    it("rolls the account back when its row cannot be written", () => {
-      tenant("totem");
-      db.run("DROP TABLE audit_log");
+    it("rolls the account back when its row cannot be written", async () => {
+      await tenant("totem");
+      await run("DROP TABLE audit_log");
 
-      expect(() =>
-        accounts.create({ username: "maria", password: PASSWORD }, OPERATOR),
-      ).toThrow();
-      expect(user("maria")).toBeUndefined();
+      await expect(
+        AccountService.create(
+          { username: "maria", password: PASSWORD },
+          OPERATOR,
+        ),
+      ).rejects.toThrow();
+      expect(await user("maria")).toBeUndefined();
     });
 
     describe("on promotion", () => {
-      beforeEach(() => {
-        tenant("totem");
-        accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
-        db.run("DELETE FROM audit_log");
+      beforeEach(async () => {
+        await tenant("totem");
+        await AccountService.create(
+          { username: "maria", password: PASSWORD },
+          OPERATOR,
+        );
+        await run("DELETE FROM audit_log");
       });
 
-      it("records one row, in no tenant even though the account belongs to one", () => {
-        accounts.promote("maria", OPERATOR);
+      it("records one row, in no tenant even though the account belongs to one", async () => {
+        await AccountService.promote("maria", OPERATOR);
 
-        const [row, ...rest] = auditRows();
+        const [row, ...rest] = await auditRows();
         expect(rest).toEqual([]);
         expect(row).toMatchObject({
           tenant_id: null,
@@ -544,7 +571,7 @@ describe("accounts", () => {
           actor: `cli:${OPERATOR.name}`,
           action: "promote_platform_operator",
           resource_type: "user",
-          resource_id: user("maria")!.id,
+          resource_id: (await user("maria"))!.id,
         });
         expect(JSON.parse(row!.metadata)).toEqual({
           username: "maria",
@@ -553,58 +580,63 @@ describe("accounts", () => {
         });
       });
 
-      it("records no tenant for an account that belongs to several either", () => {
-        membershipsOn(db).upsert({
-          tenantId: tenant("other"),
-          userId: user("maria")!.id,
+      it("records no tenant for an account that belongs to several either", async () => {
+        await MembershipService.upsert({
+          tenantId: await tenant("other"),
+          userId: (await user("maria"))!.id,
           role: "admin",
           createdBy: null,
         });
 
-        accounts.promote("maria", OPERATOR);
+        await AccountService.promote("maria", OPERATOR);
 
-        expect(auditRows().map((row) => row.tenant_id)).toEqual([null]);
+        expect((await auditRows()).map((row) => row.tenant_id)).toEqual([null]);
       });
 
-      it("writes nothing when the account was already a platform operator", () => {
-        accounts.promote("maria", OPERATOR);
-        db.run("DELETE FROM audit_log");
+      it("writes nothing when the account was already a platform operator", async () => {
+        await AccountService.promote("maria", OPERATOR);
+        await run("DELETE FROM audit_log");
 
-        accounts.promote("maria", OPERATOR);
+        await AccountService.promote("maria", OPERATOR);
 
-        expect(auditRows()).toEqual([]);
+        expect(await auditRows()).toEqual([]);
       });
 
-      it("writes nothing for an unknown or disabled account", () => {
-        accounts.promote("nobody", OPERATOR);
-        db.prepare("UPDATE users SET is_active = 0").run();
-        accounts.promote("maria", OPERATOR);
+      it("writes nothing for an unknown or disabled account", async () => {
+        await AccountService.promote("nobody", OPERATOR);
+        await run("UPDATE users SET is_active = 0");
+        await AccountService.promote("maria", OPERATOR);
 
-        expect(auditRows()).toEqual([]);
+        expect(await auditRows()).toEqual([]);
       });
 
-      it("leaves the account unpromoted when its row cannot be written", () => {
-        db.run("DROP TABLE audit_log");
+      it("leaves the account unpromoted when its row cannot be written", async () => {
+        await run("DROP TABLE audit_log");
 
-        expect(() => accounts.promote("maria", OPERATOR)).toThrow();
-        expect(user("maria")!.is_platform_operator).toBe(0);
+        await expect(
+          AccountService.promote("maria", OPERATOR),
+        ).rejects.toThrow();
+        expect((await user("maria"))!.is_platform_operator).toBe(0);
       });
     });
   });
 
   describe("knowing whether anybody holds the platform operator's powers", () => {
-    beforeEach(() => {
-      tenant("totem");
+    beforeEach(async () => {
+      await tenant("totem");
     });
 
-    it("is no for a database of ordinary accounts", () => {
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
+    it("is no for a database of ordinary accounts", async () => {
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
 
-      expect(accounts.hasPlatformOperator()).toBe(false);
+      expect(await AccountService.hasPlatformOperator()).toBe(false);
     });
 
-    it("is yes once one is created", () => {
-      accounts.create(
+    it("is yes once one is created", async () => {
+      await AccountService.create(
         {
           username: "staff",
           password: PASSWORD,
@@ -613,18 +645,21 @@ describe("accounts", () => {
         OPERATOR,
       );
 
-      expect(accounts.hasPlatformOperator()).toBe(true);
+      expect(await AccountService.hasPlatformOperator()).toBe(true);
     });
 
-    it("is yes once an account is promoted", () => {
-      accounts.create({ username: "maria", password: PASSWORD }, OPERATOR);
-      accounts.promote("maria", OPERATOR);
+    it("is yes once an account is promoted", async () => {
+      await AccountService.create(
+        { username: "maria", password: PASSWORD },
+        OPERATOR,
+      );
+      await AccountService.promote("maria", OPERATOR);
 
-      expect(accounts.hasPlatformOperator()).toBe(true);
+      expect(await AccountService.hasPlatformOperator()).toBe(true);
     });
 
-    it("is no when the only operator is disabled", () => {
-      accounts.create(
+    it("is no when the only operator is disabled", async () => {
+      await AccountService.create(
         {
           username: "staff",
           password: PASSWORD,
@@ -632,9 +667,9 @@ describe("accounts", () => {
         },
         OPERATOR,
       );
-      db.prepare("UPDATE users SET is_active = 0").run();
+      await run("UPDATE users SET is_active = 0");
 
-      expect(accounts.hasPlatformOperator()).toBe(false);
+      expect(await AccountService.hasPlatformOperator()).toBe(false);
     });
   });
 });

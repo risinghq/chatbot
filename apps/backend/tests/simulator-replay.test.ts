@@ -4,19 +4,17 @@
  * resolved on the number it came in on, not through the default account.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import { db } from "../src/db/index.ts";
+import { getOne, run } from "../src/db/index.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import {
   createSession,
@@ -40,27 +38,26 @@ describe("replaying a conversation from a second WhatsApp number", () => {
   let defaultAccountId: string;
   let sourceRef: ConversationRef;
 
-  beforeEach(() => {
-    applySchema();
-
+  beforeEach(async () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/simulator", simulatorRoutes);
 
-    alpha = createTenantFixture("alpha-replay");
-    beta = createTenantFixture("beta-replay");
+    alpha = await createTenantFixture("alpha-replay");
+    beta = await createTenantFixture("beta-replay");
 
     // A second number for the same business.
     const secondId = `ch-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO channel_accounts (id, tenant_id, channel_type, phone_number_id, status)
        VALUES (?, ?, 'whatsapp', ?, 'active')`,
-    ).run(secondId, alpha.tenantId, `pnid-${crypto.randomUUID().slice(0, 8)}`);
+      [secondId, alpha.tenantId, `pnid-${crypto.randomUUID().slice(0, 8)}`],
+    );
 
     // Whichever of the two is the default, the source is the other one.
-    defaultAccountId = ChannelAccountService.getDefaultForTenant(
+    defaultAccountId = (await ChannelAccountService.getDefaultForTenant(
       alpha.tenantId,
-    )!.id;
+    ))!.id;
     const sourceAccountId = [alpha.channelAccountId, secondId].find(
       (id) => id !== defaultAccountId,
     )!;
@@ -71,19 +68,21 @@ describe("replaying a conversation from a second WhatsApp number", () => {
       phoneNumber: CUSTOMER,
     };
 
-    insertConversation(sourceRef, { clientName: "Cliente Segunda Línea" });
-    MessageStore.log(sourceRef, "inbound", "text", "hola");
-    MessageStore.log(sourceRef, "outbound", "text", "¡Hola! ¿En qué ayudo?");
+    await insertConversation(sourceRef, {
+      clientName: "Cliente Segunda Línea",
+    });
+    await MessageStore.log(sourceRef, "inbound", "text", "hola");
+    await MessageStore.log(
+      sourceRef,
+      "outbound",
+      "text",
+      "¡Hola! ¿En qué ayudo?",
+    );
 
-    const userId = createMember(alpha, "admin").userId;
+    const userId = (await createMember(alpha, "admin")).userId;
     const token = generateSessionToken();
-    createSession(token, userId, alpha.tenantId);
+    await createSession(token, userId, alpha.tenantId);
     cookie = `session=${token}`;
-  });
-
-  afterEach(() => {
-    dropTenantFixture(alpha);
-    dropTenantFixture(beta);
   });
 
   function load(body: unknown, auth = cookie) {
@@ -117,12 +116,11 @@ describe("replaying a conversation from a second WhatsApp number", () => {
     // The simulator's own endpoints look the conversation up through the
     // tenant's default account, so the replay has to land there. It carries the
     // source conversation's client, not the source's number.
-    const loaded = db
-      .prepare(
-        `SELECT client_name, is_simulation FROM conversations
+    const loaded = (await getOne(
+      `SELECT client_name, is_simulation FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(alpha.tenantId, defaultAccountId, SIMULATOR_PHONE) as {
+      [alpha.tenantId, defaultAccountId, SIMULATOR_PHONE],
+    )) as {
       client_name: string;
       is_simulation: number;
     };
@@ -132,7 +130,7 @@ describe("replaying a conversation from a second WhatsApp number", () => {
   });
 
   it("does not read a source out of another tenant", async () => {
-    insertConversation(beta.ref(CUSTOMER), { clientName: "Beta Client" });
+    await insertConversation(beta.ref(CUSTOMER), { clientName: "Beta Client" });
 
     const response = await load({
       sourcePhone: CUSTOMER,
@@ -144,7 +142,7 @@ describe("replaying a conversation from a second WhatsApp number", () => {
 
   it("still defaults to the tenant's own number when none is named", async () => {
     const onDefault = "51987659999";
-    insertConversation(
+    await insertConversation(
       {
         tenantId: alpha.tenantId,
         channelAccountId: defaultAccountId,
@@ -174,44 +172,39 @@ describe("listing simulated conversations", () => {
 
   const SIMULATED = "51900000001";
 
-  beforeEach(() => {
-    applySchema();
-
+  beforeEach(async () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/simulator", simulatorRoutes);
 
-    tenant = createTenantFixture("alpha-sim-list");
+    tenant = await createTenantFixture("alpha-sim-list");
 
     const secondId = `ch-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO channel_accounts (id, tenant_id, channel_type, phone_number_id, status)
        VALUES (?, ?, 'whatsapp', ?, 'active')`,
-    ).run(secondId, tenant.tenantId, `pnid-${crypto.randomUUID().slice(0, 8)}`);
+      [secondId, tenant.tenantId, `pnid-${crypto.randomUUID().slice(0, 8)}`],
+    );
 
-    defaultAccountId = ChannelAccountService.getDefaultForTenant(
+    defaultAccountId = (await ChannelAccountService.getDefaultForTenant(
       tenant.tenantId,
-    )!.id;
+    ))!.id;
     otherAccountId = [tenant.channelAccountId, secondId].find(
       (id) => id !== defaultAccountId,
     )!;
 
     // The same contact simulated on both of the business's numbers.
     for (const channelAccountId of [defaultAccountId, otherAccountId]) {
-      insertConversation(
+      await insertConversation(
         { tenantId: tenant.tenantId, channelAccountId, phoneNumber: SIMULATED },
         { isSimulation: true },
       );
     }
 
-    const userId = createMember(tenant, "admin").userId;
+    const userId = (await createMember(tenant, "admin")).userId;
     const token = generateSessionToken();
-    createSession(token, userId, tenant.tenantId);
+    await createSession(token, userId, tenant.tenantId);
     cookie = `session=${token}`;
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
   });
 
   function list() {
@@ -244,12 +237,11 @@ describe("listing simulated conversations", () => {
 
     // The other number's thread was never listed and was not touched either.
     expect(
-      db
-        .prepare(
-          `SELECT COUNT(*) as c FROM conversations
+      await getOne(
+        `SELECT COUNT(*) as c FROM conversations
            WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        )
-        .get(tenant.tenantId, otherAccountId, SIMULATED),
+        [tenant.tenantId, otherAccountId, SIMULATED],
+      ),
     ).toEqual({ c: 1 });
   });
 });

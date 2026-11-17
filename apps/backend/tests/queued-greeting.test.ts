@@ -1,39 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import process from "node:process";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { GREETING } from "@vendeya/core";
 
-import { db } from "../src/db/index.ts";
-import { processReadyMessages } from "../src/conversation/aggregator-worker.ts";
+import { getOne, run } from "../src/db/index.ts";
+
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
-import webhook from "../src/routes/webhook.ts";
-import {
-  applySchema,
-  createTenantFixture,
-  dropTenantFixture,
-  type TenantFixture,
-} from "./helpers/tenancy.ts";
+import { quietWindowPasses, webhookRequest } from "./helpers/turn.ts";
+import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 import { signedWebhookRequest } from "./helpers/webhook.ts";
 
 const CUSTOMER = "51900555001";
 
 describe("messages queued before the greeting is processed", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let originalFetch: typeof globalThis.fetch;
   let delivered: string[];
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "f1".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("queued-greeting");
-    db.prepare("DELETE FROM channel_accounts WHERE id = ?").run(
+  beforeEach(async () => {
+    tenant = await createTenantFixture("queued-greeting");
+    await run("DELETE FROM channel_accounts WHERE id = ?", [
       tenant.channelAccountId,
-    );
-    const account = ChannelAccountService.create({
+    ]);
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
@@ -57,19 +46,16 @@ describe("messages queued before the greeting is processed", () => {
     }) as unknown as typeof globalThis.fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    dropTenantFixture(tenant);
   });
 
   async function customerSends(messages: string[]): Promise<void> {
     const timestamp = Math.floor((Date.now() - 11 * 60 * 1000) / 1000);
     for (const [index, body] of messages.entries()) {
-      const response = await webhook.request(
+      const response = await webhookRequest(
         "/",
-        signedWebhookRequest({
+        await signedWebhookRequest({
           object: "whatsapp_business_account",
           entry: [
             {
@@ -106,56 +92,46 @@ describe("messages queued before the greeting is processed", () => {
   it("sends one greeting for a burst and interprets the next answer", async () => {
     await customerSends(["Hola", "Hola", "?"]);
 
-    db.prepare(
-      "UPDATE message_inbox SET created_at = created_at - 60000 WHERE channel_account_id = ?",
-    ).run(tenant.channelAccountId);
-
     expect(
       (
-        db
-          .prepare(
-            "SELECT COUNT(*) as count FROM message_inbox WHERE channel_account_id = ? AND status = 'pending'",
-          )
-          .get(tenant.channelAccountId) as { count: number }
+        (await getOne(
+          "SELECT COUNT(*) as count FROM message_inbox WHERE channel_account_id = ? AND status = 'pending'",
+          [tenant.channelAccountId],
+        )) as { count: number }
       ).count,
     ).toBe(3);
     expect(
       JSON.parse(
         (
-          db
-            .prepare(
-              "SELECT context_data FROM conversations WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?",
-            )
-            .get(tenant.tenantId, tenant.channelAccountId, CUSTOMER) as {
+          (await getOne(
+            "SELECT context_data FROM conversations WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?",
+            [tenant.tenantId, tenant.channelAccountId, CUSTOMER],
+          )) as {
             context_data: string;
           }
         ).context_data,
       ).phase,
     ).toEqual({ phase: "greeting" });
 
-    await processReadyMessages();
+    await quietWindowPasses(tenant.ref(CUSTOMER));
 
     expect(delivered).toHaveLength(1);
     expect(GREETING.flat()).toContain(delivered[0]!);
     expect(delivered.join(" ")).not.toContain("no te entendí");
     expect(
       (
-        db
-          .prepare(
-            "SELECT COUNT(*) as count FROM message_inbox WHERE channel_account_id = ? AND status = 'processed'",
-          )
-          .get(tenant.channelAccountId) as { count: number }
+        (await getOne(
+          "SELECT COUNT(*) as count FROM message_inbox WHERE channel_account_id = ? AND status = 'processed'",
+          [tenant.channelAccountId],
+        )) as { count: number }
       ).count,
     ).toBe(3);
 
     await customerSends(["Sí"]);
-    db.prepare(
-      "UPDATE message_inbox SET created_at = created_at - 60000 WHERE channel_account_id = ? AND status = 'pending'",
-    ).run(tenant.channelAccountId);
-    await processReadyMessages();
+    await quietWindowPasses(tenant.ref(CUSTOMER));
 
     expect(
-      MessageStore.getHistory(
+      await MessageStore.getHistory(
         {
           tenantId: tenant.tenantId,
           channelAccountId: tenant.channelAccountId,

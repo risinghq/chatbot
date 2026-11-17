@@ -11,18 +11,16 @@ import {
   beforeEach,
   afterAll,
   afterEach,
-  setSystemTime,
-} from "bun:test";
+  vi,
+} from "vitest";
 import process from "node:process";
 import { Hono } from "hono";
 import * as XLSX from "xlsx";
-import { db } from "../src/db/index.ts";
+import { run } from "../src/db/index.ts";
 
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -48,13 +46,13 @@ function buildApp() {
   return app;
 }
 
-function login(
+async function login(
   tenant: TenantFixture,
   role: "admin" | "sales_agent" = "admin",
-): { Cookie: string } {
-  const { userId } = createMember(tenant, role);
+): Promise<{ Cookie: string }> {
+  const { userId } = await createMember(tenant, role);
   const token = generateSessionToken();
-  createSession(token, userId, tenant.tenantId);
+  await createSession(token, userId, tenant.tenantId);
   return { Cookie: `session=${token}` };
 }
 
@@ -73,33 +71,32 @@ describe("report and funnel routes", () => {
   const get = (path: string, headers: Record<string, string> = auth) =>
     app.request(path, { headers });
 
-  function setLastActivity(at: number): void {
-    db.prepare(
+  async function setLastActivity(at: number): Promise<void> {
+    await run(
       `UPDATE conversations SET last_activity_at = ?
        WHERE tenant_id = ? AND phone_number = ?`,
-    ).run(at, tenant.tenantId, CUSTOMER);
+      [at, tenant.tenantId, CUSTOMER],
+    );
   }
 
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.TZ = "UTC";
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     if (originalTz === undefined) delete process.env.TZ;
     else process.env.TZ = originalTz;
   });
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = buildApp();
-    tenant = createTenantFixture("report-routes");
-    insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
-    auth = login(tenant);
+    tenant = await createTenantFixture("report-routes");
+    await insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
+    auth = await login(tenant);
   });
 
-  afterEach(() => {
-    setSystemTime();
-    dropTenantFixture(tenant);
+  afterEach(async () => {
+    vi.useRealTimers();
   });
 
   describe("an invalid date", () => {
@@ -152,21 +149,21 @@ describe("report and funnel routes", () => {
 
   describe("the daily report", () => {
     it("is the Lima day, from Lima midnight to the last millisecond of it", async () => {
-      setLastActivity(Date.parse("2026-09-19T00:00:00.000-05:00"));
+      await setLastActivity(Date.parse("2026-09-19T00:00:00.000-05:00"));
       expect(
         rowCount(
           await (await get("/api/reports/daily?date=2026-09-19")).arrayBuffer(),
         ),
       ).toBe(1);
 
-      setLastActivity(Date.parse("2026-09-18T23:59:59.999-05:00"));
+      await setLastActivity(Date.parse("2026-09-18T23:59:59.999-05:00"));
       expect(
         rowCount(
           await (await get("/api/reports/daily?date=2026-09-19")).arrayBuffer(),
         ),
       ).toBe(0);
 
-      setLastActivity(Date.parse("2026-09-19T23:59:59.999-05:00"));
+      await setLastActivity(Date.parse("2026-09-19T23:59:59.999-05:00"));
       expect(
         rowCount(
           await (await get("/api/reports/daily?date=2026-09-19")).arrayBuffer(),
@@ -185,7 +182,7 @@ describe("report and funnel routes", () => {
 
     it("is named for today in Lima when no date is given", async () => {
       // 22:00 on the 19th in Lima, already the 20th in UTC.
-      setSystemTime(new Date("2026-09-20T03:00:00.000Z"));
+      vi.setSystemTime(new Date("2026-09-20T03:00:00.000Z"));
 
       const res = await get("/api/reports/daily");
 
@@ -198,7 +195,7 @@ describe("report and funnel routes", () => {
 
   describe("the activity report", () => {
     it("covers Lima days and is named for them", async () => {
-      setLastActivity(Date.parse("2026-03-10T23:30:00-05:00"));
+      await setLastActivity(Date.parse("2026-03-10T23:30:00-05:00"));
 
       const res = await get(
         "/api/reports/activity?startDate=2026-03-09&endDate=2026-03-10",
@@ -212,7 +209,7 @@ describe("report and funnel routes", () => {
     });
 
     it("leaves out the next Lima day", async () => {
-      setLastActivity(Date.parse("2026-03-11T00:00:00-05:00"));
+      await setLastActivity(Date.parse("2026-03-11T00:00:00-05:00"));
 
       const res = await get(
         "/api/reports/activity?startDate=2026-03-09&endDate=2026-03-10",
@@ -238,8 +235,8 @@ describe("report and funnel routes", () => {
   describe("today's contact count", () => {
     it("counts the Lima day", async () => {
       // 22:00 on the 18th in Lima, already the 19th in UTC.
-      setSystemTime(new Date("2026-09-19T03:00:00.000Z"));
-      setLastActivity(Date.parse("2026-09-18T12:00:00-05:00"));
+      vi.setSystemTime(new Date("2026-09-19T03:00:00.000Z"));
+      await setLastActivity(Date.parse("2026-09-18T12:00:00-05:00"));
 
       const res = await get("/api/reports/today-count");
 
@@ -249,16 +246,17 @@ describe("report and funnel routes", () => {
 
   describe("the funnel", () => {
     it("covers the whole Lima day of a date-only end", async () => {
-      db.prepare(
+      await run(
         `INSERT INTO analytics_events
            (id, tenant_id, channel_account_id, phone_number, event_type, created_at)
          VALUES (?, ?, ?, ?, 'session_start', ?)`,
-      ).run(
-        crypto.randomUUID(),
-        tenant.tenantId,
-        tenant.channelAccountId,
-        CUSTOMER,
-        Date.parse("2026-03-10T15:00:00.000Z"),
+        [
+          crypto.randomUUID(),
+          tenant.tenantId,
+          tenant.channelAccountId,
+          CUSTOMER,
+          Date.parse("2026-03-10T15:00:00.000Z"),
+        ],
       );
 
       const res = await get(
@@ -275,7 +273,7 @@ describe("report and funnel routes", () => {
 
   describe("access", () => {
     it("still turns away a role that may not read reports", async () => {
-      const agent = login(tenant, "sales_agent");
+      const agent = await login(tenant, "sales_agent");
 
       expect((await get("/api/reports/daily", agent)).status).toBe(403);
       expect((await get("/api/reports/today-count", agent)).status).toBe(403);

@@ -4,18 +4,13 @@
  * payloads of up to 3 MB.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach } from "vitest";
 
-import { db } from "../src/db/index.ts";
-import {
-  applySchema,
-  createTenantFixture,
-  dropTenantFixture,
-  type TenantFixture,
-} from "./helpers/tenancy.ts";
+import { getOne } from "../src/db/index.ts";
+import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 import { chunkedSpaces, signWebhookBody } from "./helpers/webhook.ts";
 
-import webhook from "../src/routes/webhook.ts";
+import { webhookRequest } from "./helpers/turn.ts";
 
 const LIMIT_BYTES = 3 * 1024 * 1024;
 
@@ -24,9 +19,8 @@ describe("webhook body limit", () => {
   let messageId: string;
   let rawBody: string;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("body-limit");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("body-limit");
     messageId = `wamid-${crypto.randomUUID()}`;
     rawBody = JSON.stringify({
       object: "whatsapp_business_account",
@@ -56,10 +50,6 @@ describe("webhook body limit", () => {
     });
   });
 
-  afterEach(() => {
-    dropTenantFixture(tenant);
-  });
-
   /** `rawBody` followed by spaces, which JSON.parse ignores, up to `bytes`. */
   function paddedTo(bytes: number): string {
     const padded = rawBody + " ".repeat(bytes - Buffer.byteLength(rawBody));
@@ -75,7 +65,7 @@ describe("webhook body limit", () => {
       "Content-Type": "application/json",
     };
     if (signature !== undefined) headers["X-Hub-Signature-256"] = signature;
-    return webhook.request("/", {
+    return webhookRequest("/", {
       method: "POST",
       headers,
       body,
@@ -83,21 +73,22 @@ describe("webhook body limit", () => {
     } as RequestInit);
   }
 
-  function inboxRows(): number {
+  async function inboxRows(): Promise<number> {
     return (
-      db
-        .prepare("SELECT COUNT(*) as c FROM message_inbox WHERE message_id = ?")
-        .get(messageId) as { c: number }
+      (await getOne(
+        "SELECT COUNT(*) as c FROM message_inbox WHERE message_id = ?",
+        [messageId],
+      )) as { c: number }
     ).c;
   }
 
   it("refuses a body one byte over the limit, though it is signed", async () => {
     const body = paddedTo(LIMIT_BYTES + 1);
 
-    const response = await post(body, signWebhookBody(body));
+    const response = await post(body, await signWebhookBody(body));
 
     expect(response.status).toBe(413);
-    expect(inboxRows()).toBe(0);
+    expect(await inboxRows()).toBe(0);
   });
 
   it("takes a body of exactly the limit to the signature check", async () => {
@@ -106,17 +97,17 @@ describe("webhook body limit", () => {
     const unsigned = await post(body, undefined);
     expect(unsigned.status).toBe(401);
     expect(await unsigned.json()).toEqual({ error: "invalid_signature" });
-    expect(inboxRows()).toBe(0);
+    expect(await inboxRows()).toBe(0);
 
-    const signed = await post(body, signWebhookBody(body));
+    const signed = await post(body, await signWebhookBody(body));
     expect(signed.status).toBe(200);
-    expect(inboxRows()).toBe(1);
+    expect(await inboxRows()).toBe(1);
   });
 
   it("stops reading a chunked body that passes the limit", async () => {
     const source = chunkedSpaces(LIMIT_BYTES + 20 * 64 * 1024);
 
-    const response = await post(source.stream, signWebhookBody(rawBody));
+    const response = await post(source.stream, await signWebhookBody(rawBody));
 
     expect(response.status).toBe(413);
     // The stream keeps one chunk ready ahead of the reader, so the reader is
@@ -124,7 +115,7 @@ describe("webhook body limit", () => {
     expect(source.pulledBytes()).toBeLessThanOrEqual(
       LIMIT_BYTES + 2 * source.chunkBytes,
     );
-    expect(inboxRows()).toBe(0);
+    expect(await inboxRows()).toBe(0);
   });
 
   it("processes a chunked body under the limit", async () => {
@@ -138,9 +129,9 @@ describe("webhook body limit", () => {
       },
     });
 
-    const response = await post(stream, signWebhookBody(rawBody));
+    const response = await post(stream, await signWebhookBody(rawBody));
 
     expect(response.status).toBe(200);
-    expect(inboxRows()).toBe(1);
+    expect(await inboxRows()).toBe(1);
   });
 });

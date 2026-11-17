@@ -1,14 +1,11 @@
 /** The six list routes read `limit` (and orders `offset`) through one reader that refuses anything but a plain in-range integer. */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -20,6 +17,7 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import { logAction } from "../src/platform/audit/logger.ts";
+import { batch, stmt } from "../src/db/index.ts";
 import adminRoutes from "../src/routes/admin.ts";
 import analyticsRoutes from "../src/routes/analytics.ts";
 import orderRoutes from "../src/routes/orders.ts";
@@ -33,30 +31,32 @@ type Route = {
   name: string;
   path: string;
   fallback: number;
-  seed(tenant: TenantFixture, userId: string, count: number): void;
+  seed(tenant: TenantFixture, userId: string, count: number): Promise<void>;
   count(body: unknown): number;
 };
 
-function seedLlmCalls(
+async function seedLlmCalls(
   tenant: TenantFixture,
   count: number,
   status: "success" | "error",
-): void {
-  const insert = db.prepare(
-    `INSERT INTO llm_calls
+): Promise<void> {
+  await batch(
+    Array.from({ length: count }, () =>
+      stmt(
+        `INSERT INTO llm_calls
        (id, tenant_id, channel_account_id, phone_number, operation, model,
         prompt, user_message, status, error_message, latency_ms)
      VALUES (?, ?, ?, ?, 'classify', 'test-model', 'p', 'm', ?, 'boom', 5)`,
+        [
+          crypto.randomUUID(),
+          tenant.tenantId,
+          tenant.channelAccountId,
+          CUSTOMER,
+          status,
+        ],
+      ),
+    ),
   );
-  for (let i = 0; i < count; i++) {
-    insert.run(
-      crypto.randomUUID(),
-      tenant.tenantId,
-      tenant.channelAccountId,
-      CUSTOMER,
-      status,
-    );
-  }
 }
 
 const ROUTES: Route[] = [
@@ -64,26 +64,28 @@ const ROUTES: Route[] = [
     name: "orders",
     path: "/api/orders",
     fallback: 50,
-    seed(tenant, _userId, count) {
-      const insert = db.prepare(
-        `INSERT INTO orders
+    async seed(tenant, _userId, count) {
+      await batch(
+        Array.from({ length: count }, (_, i) =>
+          stmt(
+            `INSERT INTO orders
            (id, tenant_id, channel_account_id, order_number, conversation_phone,
             client_name, client_dni, products, total_amount, delivery_address,
             status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 'Ana', '12345678', '[]', 10, 'Av. Lima 123',
                  'pending', ?, ?)`,
+            [
+              crypto.randomUUID(),
+              tenant.tenantId,
+              tenant.channelAccountId,
+              `ORD-TEST-${i}`,
+              CUSTOMER,
+              Date.now() + i,
+              Date.now() + i,
+            ],
+          ),
+        ),
       );
-      for (let i = 0; i < count; i++) {
-        insert.run(
-          crypto.randomUUID(),
-          tenant.tenantId,
-          tenant.channelAccountId,
-          `ORD-TEST-${i}`,
-          CUSTOMER,
-          Date.now() + i,
-          Date.now() + i,
-        );
-      }
     },
     count: (body) => (body as unknown[]).length,
   },
@@ -91,20 +93,22 @@ const ROUTES: Route[] = [
     name: "analytics events",
     path: "/api/analytics/events",
     fallback: 50,
-    seed(tenant, _userId, count) {
-      const insert = db.prepare(
-        `INSERT INTO analytics_events
+    async seed(tenant, _userId, count) {
+      await batch(
+        Array.from({ length: count }, () =>
+          stmt(
+            `INSERT INTO analytics_events
            (id, tenant_id, channel_account_id, phone_number, event_type)
          VALUES (?, ?, ?, ?, 'session_start')`,
+            [
+              crypto.randomUUID(),
+              tenant.tenantId,
+              tenant.channelAccountId,
+              CUSTOMER,
+            ],
+          ),
+        ),
       );
-      for (let i = 0; i < count; i++) {
-        insert.run(
-          crypto.randomUUID(),
-          tenant.tenantId,
-          tenant.channelAccountId,
-          CUSTOMER,
-        );
-      }
     },
     count: (body) => (body as { events: unknown[] }).events.length,
   },
@@ -133,9 +137,13 @@ const ROUTES: Route[] = [
     name: "audit",
     path: "/api/admin/audit",
     fallback: 100,
-    seed(tenant, userId, count) {
+    async seed(tenant, userId, count) {
       for (let i = 0; i < count; i++) {
-        logAction({ userId, tenantId: tenant.tenantId }, `test.${i}`, "thing");
+        await logAction(
+          { userId, tenantId: tenant.tenantId },
+          `test.${i}`,
+          "thing",
+        );
       }
     },
     count: (body) => (body as { logs: unknown[] }).logs.length,
@@ -151,8 +159,7 @@ describe("limit and offset on the list routes", () => {
   const get = (path: string, query: string) =>
     app.request(`${path}?${query}`, { headers: auth });
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/orders", orderRoutes);
@@ -164,17 +171,13 @@ describe("limit and offset on the list routes", () => {
     app.route("/api/admin", adminRoutes);
     app.onError(errorHandler);
 
-    tenant = createTenantFixture("list-paging");
-    insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
+    tenant = await createTenantFixture("list-paging");
+    await insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
 
-    ({ userId } = createMember(tenant, "admin"));
+    ({ userId } = await createMember(tenant, "admin"));
     const token = generateSessionToken();
-    createSession(token, userId, tenant.tenantId);
+    await createSession(token, userId, tenant.tenantId);
     auth = { Cookie: `session=${token}` };
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
   });
 
   describe.each(ROUTES)("$name", (route) => {
@@ -198,7 +201,7 @@ describe("limit and offset on the list routes", () => {
     });
 
     it("takes limit=1 and limit=500", async () => {
-      route.seed(tenant, userId, route.fallback + 1);
+      await route.seed(tenant, userId, route.fallback + 1);
 
       const one = await get(route.path, "limit=1");
       expect(one.status).toBe(200);
@@ -210,7 +213,7 @@ describe("limit and offset on the list routes", () => {
     });
 
     it("uses the route's own default for an absent or empty limit", async () => {
-      route.seed(tenant, userId, route.fallback + 1);
+      await route.seed(tenant, userId, route.fallback + 1);
 
       for (const query of ["", "limit="]) {
         const response = await get(route.path, query);
@@ -235,7 +238,7 @@ describe("limit and offset on the list routes", () => {
     );
 
     it("skips that many rows, and reads an absent, empty or zero offset as none", async () => {
-      orders.seed(tenant, userId, 3);
+      await orders.seed(tenant, userId, 3);
 
       for (const [query, expected] of [
         ["offset=1", 2],

@@ -1,13 +1,11 @@
 /** A new simulation takes its phone number from the server, never from the client. */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -24,25 +22,23 @@ describe("simulated conversation phone numbers", () => {
   let tenant: TenantFixture;
   let headers: Record<string, string>;
 
-  beforeEach(() => {
-    applySchema();
-
+  beforeEach(async () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/simulator", simulatorRoutes);
 
-    tenant = createTenantFixture("sim-phones");
+    tenant = await createTenantFixture("sim-phones");
 
     const token = generateSessionToken();
-    createSession(token, createMember(tenant, "admin").userId, tenant.tenantId);
+    await createSession(
+      token,
+      (await createMember(tenant, "admin")).userId,
+      tenant.tenantId,
+    );
     headers = {
       Cookie: `session=${token}`,
       "Content-Type": "application/json",
     };
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
   });
 
   async function create(): Promise<string> {
@@ -93,7 +89,7 @@ describe("simulated conversation phone numbers", () => {
   it("skips a number a real conversation already holds", async () => {
     const first = await create();
     await remove(first);
-    insertConversation(tenant.ref(first), { clientName: "Cliente Real" });
+    await insertConversation(tenant.ref(first), { clientName: "Cliente Real" });
 
     const next = await create();
 
@@ -101,7 +97,7 @@ describe("simulated conversation phone numbers", () => {
   });
 
   it("never allocates the reserved replay contact", async () => {
-    insertConversation(tenant.ref("51999999999"), { isSimulation: true });
+    await insertConversation(tenant.ref("51999999999"), { isSimulation: true });
 
     const phone = await create();
 
@@ -110,10 +106,14 @@ describe("simulated conversation phone numbers", () => {
   });
 
   it("numbers each tenant on its own", async () => {
-    const other = createTenantFixture("sim-phones-other");
+    const other = await createTenantFixture("sim-phones-other");
     try {
       const token = generateSessionToken();
-      createSession(token, createMember(other, "admin").userId, other.tenantId);
+      await createSession(
+        token,
+        (await createMember(other, "admin")).userId,
+        other.tenantId,
+      );
 
       await create();
       const response = await app.request("/api/simulator/conversations", {
@@ -129,7 +129,6 @@ describe("simulated conversation phone numbers", () => {
         ((await response.json()) as { phone_number: string }).phone_number,
       ).toBe("51900000001");
     } finally {
-      dropTenantFixture(other);
     }
   });
 });

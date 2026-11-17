@@ -1,13 +1,11 @@
 /** The admin create and reset routes enforce `MIN_PASSWORD_LENGTH`. */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
-import { db } from "../src/db/index.ts";
+import { getOne } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -37,19 +35,14 @@ describe("the password minimum on the admin user routes", () => {
   const exactlyMinimum = "x".repeat(MIN_PASSWORD_LENGTH);
   const oneShort = "x".repeat(MIN_PASSWORD_LENGTH - 1);
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = buildApp();
-    tenant = createTenantFixture("password-minimum");
+    tenant = await createTenantFixture("password-minimum");
 
-    const admin = createMember(tenant, "admin");
+    const admin = await createMember(tenant, "admin");
     const token = generateSessionToken();
-    createSession(token, admin.userId, tenant.tenantId);
+    await createSession(token, admin.userId, tenant.tenantId);
     cookie = `session=${token}`;
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
   });
 
   function create(username: string, password: unknown) {
@@ -73,17 +66,17 @@ describe("the password minimum on the admin user routes", () => {
     });
   }
 
-  function userNamed(username: string) {
-    return db
-      .prepare("SELECT id FROM users WHERE username = ?")
-      .get(username) as { id: string } | null;
+  async function userNamed(username: string) {
+    return (await getOne("SELECT id FROM users WHERE username = ?", [
+      username,
+    ])) as { id: string } | undefined;
   }
 
-  function hashOf(userId: string): string {
+  async function hashOf(userId: string): Promise<string> {
     return (
-      db
-        .prepare("SELECT password_hash FROM users WHERE id = ?")
-        .get(userId) as { password_hash: string }
+      (await getOne("SELECT password_hash FROM users WHERE id = ?", [
+        userId,
+      ])) as { password_hash: string }
     ).password_hash;
   }
 
@@ -97,28 +90,28 @@ describe("the password minimum on the admin user routes", () => {
       expect(((await response.json()) as { error: string }).error).toContain(
         String(MIN_PASSWORD_LENGTH),
       );
-      expect(userNamed(username)).toBeNull();
+      expect(await userNamed(username)).toBeUndefined();
     });
 
     it("refuses a password that is not a string", async () => {
       const username = `number-${crypto.randomUUID().slice(0, 8)}`;
 
       expect((await create(username, 123456789012345)).status).toBe(400);
-      expect(userNamed(username)).toBeNull();
+      expect(await userNamed(username)).toBeUndefined();
     });
 
     it("accepts a password of exactly the minimum", async () => {
       const username = `exact-${crypto.randomUUID().slice(0, 8)}`;
 
       expect((await create(username, exactlyMinimum)).status).toBe(200);
-      expect(userNamed(username)).not.toBeNull();
+      expect(await userNamed(username)).not.toBeNull();
     });
   });
 
   describe("resetting a password", () => {
     it("refuses a password one character short, with the rule in the message", async () => {
-      const member = createMember(tenant, "sales_agent").userId;
-      const before = hashOf(member);
+      const member = (await createMember(tenant, "sales_agent")).userId;
+      const before = await hashOf(member);
 
       const response = await reset(member, oneShort);
 
@@ -126,23 +119,23 @@ describe("the password minimum on the admin user routes", () => {
       expect(((await response.json()) as { error: string }).error).toContain(
         String(MIN_PASSWORD_LENGTH),
       );
-      expect(hashOf(member)).toBe(before);
+      expect(await hashOf(member)).toBe(before);
     });
 
     it("refuses a password that is not a string", async () => {
-      const member = createMember(tenant, "sales_agent").userId;
-      const before = hashOf(member);
+      const member = (await createMember(tenant, "sales_agent")).userId;
+      const before = await hashOf(member);
 
       expect((await reset(member, 123456789012345)).status).toBe(400);
-      expect(hashOf(member)).toBe(before);
+      expect(await hashOf(member)).toBe(before);
     });
 
     it("accepts a password of exactly the minimum", async () => {
-      const member = createMember(tenant, "sales_agent").userId;
-      const before = hashOf(member);
+      const member = (await createMember(tenant, "sales_agent")).userId;
+      const before = await hashOf(member);
 
       expect((await reset(member, exactlyMinimum)).status).toBe(200);
-      expect(hashOf(member)).not.toBe(before);
+      expect(await hashOf(member)).not.toBe(before);
     });
   });
 });

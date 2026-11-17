@@ -4,7 +4,7 @@
  * message as processed.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 
 import type { ConversationPhase } from "@vendeya/core";
@@ -18,10 +18,8 @@ import {
 } from "../src/platform/auth/session.ts";
 import simulatorRoutes from "../src/routes/simulator.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -41,15 +39,16 @@ describe("a simulated message whose turn fails", () => {
   let tenant: TenantFixture;
   let cookie: string;
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/simulator", simulatorRoutes);
 
-    tenant = createTenantFixture("simulator-failed-turn");
-    const account = ChannelAccountService.getDefaultForTenant(tenant.tenantId)!;
-    insertConversation(
+    tenant = await createTenantFixture("simulator-failed-turn");
+    const account = (await ChannelAccountService.getDefaultForTenant(
+      tenant.tenantId,
+    ))!;
+    await insertConversation(
       {
         tenantId: tenant.tenantId,
         channelAccountId: account.id,
@@ -73,13 +72,16 @@ describe("a simulated message whose turn fails", () => {
     });
 
     const token = generateSessionToken();
-    createSession(token, createMember(tenant, "admin").userId, tenant.tenantId);
+    await createSession(
+      token,
+      (await createMember(tenant, "admin")).userId,
+      tenant.tenantId,
+    );
     cookie = `session=${token}`;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     enrichmentRegistry.clear();
-    dropTenantFixture(tenant);
   });
 
   it("answers failed with the reason instead of processed", async () => {

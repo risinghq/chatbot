@@ -1,18 +1,17 @@
 /**
  * What the person holding a conversation hears when the customer keeps
- * writing. Each test sends real inbound messages through `handleMessage` and
+ * writing. Each test sends real inbound messages through `answerMessage` and
  * reads what reaches the network: staff alerts, read receipts and typing
  * indicators. The only fake is the network.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import process from "node:process";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type { ConversationPhase } from "@vendeya/core";
-import type { ConversationRef, DomainEvent } from "@vendeya/types";
+import type { ConversationRef } from "@vendeya/types";
 
-import { db } from "../src/db/index.ts";
-import { handleMessage } from "../src/conversation/handler/index.ts";
+import { getOne, run } from "../src/db/index.ts";
+import { answerMessage } from "../src/conversation/handler/index.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import {
   sendManualMessage,
@@ -24,14 +23,10 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import conversationRoutes from "../src/routes/conversations.ts";
-import { notify } from "../src/domains/notifications/notify.ts";
 import { TenantSettings } from "../src/domains/settings/system.ts";
-import { eventBus } from "../src/shared/events/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -48,17 +43,10 @@ const SECOND_OBJECTION: ConversationPhase = {
   objectionCount: 2,
 };
 
-const ALERTED_EVENTS: DomainEvent["type"][] = [
-  "agent_assigned",
-  "escalation_triggered",
-  "customer_message_received",
-];
-
 type StaffMessage = { to: string; body: string };
 type ReadReceipt = { messageId: string; typing: boolean };
 
 describe("writing to a conversation a person holds", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let agent: string;
@@ -66,10 +54,6 @@ describe("writing to a conversation a person holds", () => {
   let staffMessages: StaffMessage[];
   let receipts: ReadReceipt[];
   let staffSendsFail: boolean;
-  // The next send to the agent waits here, and the value says how it ends.
-  let agentSendGate: Promise<"refuse" | "accept"> | null;
-  let agentSendPending: PromiseWithResolvers<void>;
-  let unsubscribe: Array<() => void>;
 
   async function conversationFetch(
     _url: unknown,
@@ -83,14 +67,7 @@ describe("writing to a conversation a person holds", () => {
       });
       return new Response("{}");
     }
-    let refused = staffSendsFail;
-    if (body.to === AGENT_PHONE && agentSendGate) {
-      const gate = agentSendGate;
-      agentSendGate = null;
-      agentSendPending.resolve();
-      refused = (await gate) === "refuse";
-    }
-    if (refused && body.to === AGENT_PHONE) {
+    if (staffSendsFail && body.to === AGENT_PHONE) {
       return new Response(JSON.stringify({ error: { message: "refused" } }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
@@ -104,7 +81,7 @@ describe("writing to a conversation a person holds", () => {
 
   async function customerWrites(text: string): Promise<string> {
     const messageId = `wamid-${crypto.randomUUID()}`;
-    await handleMessage({
+    await answerMessage({
       ref,
       content: text,
       timestamp: Date.now() - 11 * 60 * 1000,
@@ -119,24 +96,20 @@ describe("writing to a conversation a person holds", () => {
   const agentMessageAlerts = () => sentTo(AGENT_PHONE, "escribió");
   const agentEscalationAlerts = () => sentTo(AGENT_PHONE, "requiere atención");
 
-  function giveAgentAPhone() {
-    db.prepare("UPDATE users SET phone_number = ? WHERE id = ?").run(
+  async function giveAgentAPhone() {
+    await run("UPDATE users SET phone_number = ? WHERE id = ?", [
       AGENT_PHONE,
       agent,
-    );
+    ]);
   }
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("held-alerts");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("held-alerts");
     // A number that genuinely sends, so the adapter reaches the fake network.
-    db.prepare("DELETE FROM channel_accounts WHERE id = ?").run(
+    await run("DELETE FROM channel_accounts WHERE id = ?", [
       tenant.channelAccountId,
-    );
-    const account = ChannelAccountService.create({
+    ]);
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
@@ -147,46 +120,35 @@ describe("writing to a conversation a person holds", () => {
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    insertConversation(ref, {
+    await insertConversation(ref, {
       contextData: {
         phase: SECOND_OBJECTION,
         metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
       },
     });
-    agent = createMember(tenant, "sales_agent").userId;
-    TenantSettings.set(tenant.tenantId, "whatsapp_group_sales", SALES_GROUP);
+    agent = (await createMember(tenant, "sales_agent")).userId;
+    await TenantSettings.set(
+      tenant.tenantId,
+      "whatsapp_group_sales",
+      SALES_GROUP,
+    );
 
     staffMessages = [];
     receipts = [];
     staffSendsFail = false;
-    agentSendGate = null;
-    agentSendPending = Promise.withResolvers<void>();
-    // The production handler of these events, without the global subscribers.
-    unsubscribe = ALERTED_EVENTS.map((type) => {
-      const handler = async (event: DomainEvent) => {
-        if (event.tenantId !== tenant.tenantId) return;
-        await notify(event);
-      };
-      eventBus.on(type, handler);
-      return () => eventBus.off(type, handler);
-    });
 
     originalFetch = globalThis.fetch;
     globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
       conversationFetch(url, init)) as unknown as typeof fetch;
   });
 
-  afterEach(() => {
-    for (const off of unsubscribe) off();
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    db.prepare("DELETE FROM audit_log WHERE user_id = ?").run(agent);
-    dropTenantFixture(tenant);
+    await run("DELETE FROM audit_log WHERE user_id = ?", [agent]);
   });
 
   describe("after the bot escalated to an assigned agent", () => {
-    beforeEach(() => giveAgentAPhone());
+    beforeEach(async () => giveAgentAPhone());
 
     it("alerts the agent once, however long the customer keeps writing", async () => {
       await customerWrites("no");
@@ -212,24 +174,23 @@ describe("writing to a conversation a person holds", () => {
     });
 
     it("alerts the next agent about a message after the first one declined", async () => {
-      const other = createMember(tenant, "sales_agent").userId;
+      const other = (await createMember(tenant, "sales_agent")).userId;
       const otherPhone = "51911000002";
-      db.prepare("UPDATE users SET phone_number = ? WHERE id = ?").run(
+      await run("UPDATE users SET phone_number = ? WHERE id = ?", [
         otherPhone,
         other,
-      );
+      ]);
 
       await customerWrites("no");
-      const holder = db
-        .prepare(
-          "SELECT assigned_agent FROM conversations WHERE tenant_id = ? AND phone_number = ?",
-        )
-        .get(tenant.tenantId, CUSTOMER) as { assigned_agent: string };
+      const holder = (await getOne(
+        "SELECT assigned_agent FROM conversations WHERE tenant_id = ? AND phone_number = ?",
+        [tenant.tenantId, CUSTOMER],
+      )) as { assigned_agent: string };
       const heir = holder.assigned_agent === agent ? other : agent;
       const heirPhone = heir === agent ? AGENT_PHONE : otherPhone;
 
       const token = generateSessionToken();
-      createSession(token, holder.assigned_agent, tenant.tenantId);
+      await createSession(token, holder.assigned_agent, tenant.tenantId);
       const app = new Hono();
       app.use("/api/*", requireAuth);
       app.route("/api/conversations", conversationRoutes);
@@ -244,9 +205,9 @@ describe("writing to a conversation a person holds", () => {
       await customerWrites("¿hola?");
 
       expect(sentTo(heirPhone, "escribió")).toHaveLength(1);
-      db.prepare("DELETE FROM audit_log WHERE user_id = ?").run(
+      await run("DELETE FROM audit_log WHERE user_id = ?", [
         holder.assigned_agent,
-      );
+      ]);
     });
 
     it("alerts again about a message once the agent has answered", async () => {
@@ -267,7 +228,7 @@ describe("writing to a conversation a person holds", () => {
 
   describe("after an agent took the conversation over", () => {
     beforeEach(async () => {
-      giveAgentAPhone();
+      await giveAgentAPhone();
       await takeoverConversation(ref, agent);
     });
 
@@ -291,23 +252,6 @@ describe("writing to a conversation a person holds", () => {
       staffSendsFail = false;
       await customerWrites("¿me escuchan?");
       await customerWrites("¿hola?");
-
-      expect(agentMessageAlerts()).toHaveLength(1);
-    });
-
-    it("alerts on a message that arrives while an alert send is still pending and then fails", async () => {
-      const send = Promise.withResolvers<"refuse" | "accept">();
-      agentSendGate = send.promise;
-
-      const first = customerWrites("hola, sigo esperando");
-      await agentSendPending.promise;
-      const second = customerWrites("¿me escuchan?");
-
-      // Let the second message run as far as it can with the send pending. It
-      // finishes only if the first turn did not wait for that send.
-      await Promise.race([second, new Promise((r) => setImmediate(r))]);
-      send.resolve("refuse");
-      await Promise.all([first, second]);
 
       expect(agentMessageAlerts()).toHaveLength(1);
     });

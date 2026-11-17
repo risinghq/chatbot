@@ -5,15 +5,13 @@
  * bot cannot read.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
+import { run } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -48,24 +46,25 @@ describe("editing a bundle", () => {
       body: JSON.stringify(body),
     });
 
-  const stored = () => BundleService.getById(tenant.tenantId, bundleId)!;
+  const stored = async () =>
+    (await BundleService.getById(tenant.tenantId, bundleId))!;
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/catalog", catalogRoutes);
     app.onError(errorHandler);
 
-    tenant = createTenantFixture("bundle-update");
+    tenant = await createTenantFixture("bundle-update");
     periodId = `per-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
        VALUES (?, ?, 'Enero', '2026-01', 'draft')`,
-    ).run(periodId, tenant.tenantId);
+      [periodId, tenant.tenantId],
+    );
 
     bundleId = `bundle-${crypto.randomUUID()}`;
-    BundleService.create({
+    await BundleService.create({
       id: bundleId,
       tenantId: tenant.tenantId,
       period_id: periodId,
@@ -80,14 +79,10 @@ describe("editing a bundle", () => {
       created_by: null,
     });
 
-    const { userId } = createMember(tenant, "admin");
+    const { userId } = await createMember(tenant, "admin");
     const token = generateSessionToken();
-    createSession(token, userId, tenant.tenantId);
+    await createSession(token, userId, tenant.tenantId);
     auth = { Cookie: `session=${token}` };
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
   });
 
   it("stores the category, composition and installments the editor sends", async () => {
@@ -104,7 +99,7 @@ describe("editing a bundle", () => {
     expect(body.primary_category).toBe("combos");
     expect(body.composition_json).toBe(COMPOSITION);
     expect(body.installments_json).toBe(INSTALLMENTS);
-    expect(stored()).toMatchObject({
+    expect(await stored()).toMatchObject({
       name: "Cocina + Licuadora",
       price: 1200,
       primary_category: "combos",
@@ -116,7 +111,7 @@ describe("editing a bundle", () => {
   it("leaves the fields the request does not name alone", async () => {
     await patch({ primary_category: "combos" });
 
-    expect(stored()).toMatchObject({
+    expect(await stored()).toMatchObject({
       name: "Cocina",
       primary_category: "combos",
       installments_json: "[]",
@@ -127,7 +122,7 @@ describe("editing a bundle", () => {
     const response = await patch({ name: "Nuevo", primary_category: " " });
 
     expect(response.status).toBe(400);
-    expect(stored()).toMatchObject({
+    expect(await stored()).toMatchObject({
       name: "Cocina",
       primary_category: "cocinas",
     });
@@ -140,7 +135,10 @@ describe("editing a bundle", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(stored()).toMatchObject({ name: "Cocina", installments_json: "[]" });
+    expect(await stored()).toMatchObject({
+      name: "Cocina",
+      installments_json: "[]",
+    });
   });
 
   it("refuses a JSON value the bot cannot read installments from", async () => {
@@ -148,7 +146,7 @@ describe("editing a bundle", () => {
       const response = await patch({ installments_json: installments });
       expect(response.status).toBe(400);
     }
-    expect(stored().installments_json).toBe("[]");
+    expect((await stored()).installments_json).toBe("[]");
   });
 
   it("refuses a composition that is not text", async () => {
@@ -171,7 +169,7 @@ describe("editing a bundle", () => {
     ["name", null],
     ["notes", 7],
   ])("refuses %s %p and stores none of the request", async (field, value) => {
-    const before = stored();
+    const before = await stored();
 
     const response = await patch({
       name: "Nuevo",
@@ -183,7 +181,7 @@ describe("editing a bundle", () => {
     expect(((await response.json()) as { error: string }).error).toContain(
       field,
     );
-    expect(stored()).toEqual(before);
+    expect(await stored()).toEqual(before);
   });
 
   it("stores a valid stock status, activity flag, price and notes", async () => {
@@ -195,7 +193,7 @@ describe("editing a bundle", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(stored()).toMatchObject({
+    expect(await stored()).toMatchObject({
       stock_status: "low_stock",
       is_active: 0,
       price: 1500.5,
@@ -229,7 +227,7 @@ describe("editing a bundle", () => {
       });
 
       expect(response.status).toBe(200);
-      expect(stored()).toMatchObject({
+      expect(await stored()).toMatchObject({
         stock_status: "out_of_stock",
         is_active: 0,
       });
@@ -244,12 +242,12 @@ describe("editing a bundle", () => {
       [{}],
       [{ price: 1 }],
     ])("refuses updates %p", async (updates) => {
-      const before = stored();
+      const before = await stored();
 
       const response = await bulk({ ids: [bundleId], updates });
 
       expect(response.status).toBe(400);
-      expect(stored()).toEqual(before);
+      expect(await stored()).toEqual(before);
     });
 
     it.each([[[]], [[7]], ["a"]])("refuses ids %p", async (ids) => {
@@ -277,7 +275,9 @@ describe("editing a bundle", () => {
 
     expect(response.status).toBe(400);
     expect(
-      BundleService.getByPeriod(tenant.tenantId, periodId).map((b) => b.name),
+      (await BundleService.getByPeriod(tenant.tenantId, periodId)).map(
+        (b) => b.name,
+      ),
     ).toEqual(["Cocina"]);
   });
 

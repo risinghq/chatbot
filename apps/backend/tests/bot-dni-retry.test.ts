@@ -4,7 +4,7 @@
  * core reads the eligibility result.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type {
   ConversationMetadata,
   ConversationPhase,
@@ -16,9 +16,7 @@ import { createMockProvider } from "@vendeya/intelligence";
 import { runEnrichmentLoop } from "../src/conversation/handler/enrichment-loop.ts";
 import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -31,10 +29,9 @@ describe("DNI retry", () => {
   let phase: ConversationPhase;
   let metadata: ConversationMetadata;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("dni-retry");
-    insertConversation(tenant.ref(CUSTOMER));
+  beforeEach(async () => {
+    tenant = await createTenantFixture("dni-retry");
+    await insertConversation(tenant.ref(CUSTOMER));
     checked = [];
     phase = { phase: "collecting_dni" };
     metadata = { createdAt: Date.now(), lastActivityAt: Date.now() };
@@ -51,9 +48,8 @@ describe("DNI retry", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     enrichmentRegistry.clear();
-    dropTenantFixture(tenant);
   });
 
   async function say(message: string): Promise<TransitionResult> {

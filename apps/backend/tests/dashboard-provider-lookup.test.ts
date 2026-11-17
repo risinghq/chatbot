@@ -4,11 +4,9 @@
  * route, and render it with the page's result card.
  */
 
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import path from "node:path";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
-import { db } from "../src/db/index.ts";
-import { applySchema } from "./helpers/tenancy.ts";
+import { run } from "../src/db/index.ts";
 
 import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
@@ -20,20 +18,15 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import providerRoutes from "../src/routes/providers.ts";
+import { frontendPath, importFrontend } from "./helpers/frontend.ts";
 
-// Loaded by a computed path: `svelte` resolves only from the frontend.
-const FRONTEND = path.resolve(import.meta.dir, "../../frontend/src/lib");
-const RENDER_PATH = path.join(FRONTEND, "testing/render.ts");
-const CARD_PATH = path.join(
-  FRONTEND,
-  "components/providers/lookup-result.svelte",
-);
-const { renderComponent } = (await import(RENDER_PATH)) as {
+const CARD_PATH = frontendPath("lib/components/providers/lookup-result.svelte");
+const { renderComponent } = await importFrontend<{
   renderComponent: (
     path: string,
     props: Record<string, unknown>,
   ) => Promise<string>;
-};
+}>("lib/testing/render.ts");
 
 const DNI = "12345678";
 
@@ -44,7 +37,7 @@ describe("the provider lookup page", () => {
   app.onError(errorHandler);
 
   let cookie: string;
-  let execute: ReturnType<typeof spyOn>;
+  let execute: ReturnType<typeof vi.spyOn>;
 
   /** What the browser gets for a lookup, rendered the way the page shows it. */
   async function lookupPage(): Promise<string> {
@@ -56,27 +49,27 @@ describe("the provider lookup page", () => {
     return renderComponent(CARD_PATH, { result });
   }
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     const userId = `u-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
        VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-    ).run(userId, `operator-${userId.slice(2, 10)}`);
+      [userId, `operator-${userId.slice(2, 10)}`],
+    );
     const token = generateSessionToken();
-    createSession(token, userId, null);
+    await createSession(token, userId, null);
     cookie = `session=${token}`;
-    execute = spyOn(eligibilityHandler, "execute");
+    execute = vi.spyOn(eligibilityHandler, "execute");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     execute.mockRestore();
   });
 
   it("shows an FNB approval with the name and the credit line", async () => {
     execute.mockResolvedValue(
       Ok(
-        mapEligibilityToEnrichment(null, {
+        await mapEligibilityToEnrichment(null, {
           eligible: true,
           credit: 1500,
           name: "Ana Pérez",
@@ -97,7 +90,7 @@ describe("the provider lookup page", () => {
   it("shows a GASO approval with its NSE", async () => {
     execute.mockResolvedValue(
       Ok(
-        mapEligibilityToEnrichment(null, {
+        await mapEligibilityToEnrichment(null, {
           eligible: true,
           credit: 2500,
           name: "Luis Ríos",
@@ -116,7 +109,7 @@ describe("the provider lookup page", () => {
   it("shows a refusal without a credit line", async () => {
     execute.mockResolvedValue(
       Ok(
-        mapEligibilityToEnrichment(null, { eligible: false, credit: 0 }),
+        await mapEligibilityToEnrichment(null, { eligible: false, credit: 0 }),
       ) as never,
     );
 
@@ -132,7 +125,7 @@ describe("the provider lookup page", () => {
   it("says when no provider answered, not that the customer was refused", async () => {
     execute.mockResolvedValue(
       Ok(
-        mapEligibilityToEnrichment(null, {
+        await mapEligibilityToEnrichment(null, {
           eligible: false,
           credit: 0,
           needsHuman: true,

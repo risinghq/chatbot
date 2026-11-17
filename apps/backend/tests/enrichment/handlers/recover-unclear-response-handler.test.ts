@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "vitest";
 import { createMockProvider } from "@vendeya/intelligence";
 import { RecoverUnclearResponseHandler } from "../../../src/conversation/enrichment/handlers/recover-unclear-response-handler.ts";
 
@@ -12,7 +12,7 @@ describe("RecoverUnclearResponseHandler", () => {
   let handler: RecoverUnclearResponseHandler;
   let mockProvider: ReturnType<typeof createMockProvider>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     handler = new RecoverUnclearResponseHandler();
     mockProvider = createMockProvider();
   });

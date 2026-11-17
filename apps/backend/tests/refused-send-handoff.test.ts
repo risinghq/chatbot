@@ -1,20 +1,18 @@
 /**
  * A bot reply that `WhatsAppService` refuses before the adapter is called must
  * not vanish. Each test sends through `WhatsAppService.sendMessage` and runs the
- * outbox worker's real handoff pass. The only fake is the network, and a
- * refused send must never reach it.
+ * cron sweep, which wakes each conversation owed a handoff. The only fake is
+ * the network, and a refused send must never reach it.
  */
 
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import process from "node:process";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { db } from "../src/db/index.ts";
+import { getAll, getOne, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
+  setChannelStatus,
 } from "./helpers/tenancy.ts";
 
 import type { ConversationRef, DomainEvent } from "@vendeya/types";
@@ -24,15 +22,14 @@ import {
   WhatsAppService,
 } from "../src/adapters/whatsapp/index.ts";
 import type { OutboxRow } from "../src/conversation/outbox.ts";
-import { processDueOutbox } from "../src/conversation/outbox-worker.ts";
+import { logsDuring } from "./helpers/logs.ts";
+import { sweepAt } from "./helpers/turn.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
-import { createLogger } from "../src/lib/logger.ts";
 import { eventBus } from "../src/shared/events/index.ts";
 
 const CUSTOMER = "51900777001";
 
 describe("a reply WhatsAppService refuses before it reaches the adapter", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let originalFetch: typeof globalThis.fetch;
@@ -43,105 +40,63 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
     if (event.tenantId === tenant.tenantId) alerts.push(event);
   };
 
-  function outboxOf(of: ConversationRef): OutboxRow[] {
-    return db
-      .prepare(
-        `SELECT * FROM outbox
+  async function outboxOf(of: ConversationRef): Promise<OutboxRow[]> {
+    return (await getAll(
+      `SELECT * FROM outbox
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
          ORDER BY id`,
-      )
-      .all(of.tenantId, of.channelAccountId, of.phoneNumber) as OutboxRow[];
+      [of.tenantId, of.channelAccountId, of.phoneNumber],
+    )) as OutboxRow[];
   }
 
-  function outboundStatuses(of: ConversationRef): string[] {
+  async function outboundStatuses(of: ConversationRef): Promise<string[]> {
     return (
-      db
-        .prepare(
-          `SELECT status FROM messages
+      (await getAll(
+        `SELECT status FROM messages
            WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
              AND direction = 'outbound'
            ORDER BY created_at, ROWID`,
-        )
-        .all(of.tenantId, of.channelAccountId, of.phoneNumber) as Array<{
+        [of.tenantId, of.channelAccountId, of.phoneNumber],
+      )) as Array<{
         status: string;
       }>
     ).map((row) => row.status);
   }
 
-  function messageCount(): number {
+  async function messageCount(): Promise<number> {
     return (
-      db.prepare("SELECT COUNT(*) AS n FROM messages").get() as { n: number }
+      (await getOne("SELECT COUNT(*) AS n FROM messages")) as { n: number }
     ).n;
   }
 
-  function conversationOf(of: ConversationRef) {
-    return db
-      .prepare(
-        `SELECT status, handover_reason FROM conversations
+  async function conversationOf(of: ConversationRef) {
+    return (await getOne(
+      `SELECT status, handover_reason FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(of.tenantId, of.channelAccountId, of.phoneNumber) as {
+      [of.tenantId, of.channelAccountId, of.phoneNumber],
+    )) as {
       status: string;
       handover_reason: string | null;
     };
   }
 
-  function setTenantStatus(status: "active" | "suspended"): void {
-    db.prepare("UPDATE tenants SET status = ? WHERE id = ?").run(
+  async function setTenantStatus(
+    status: "active" | "suspended",
+  ): Promise<void> {
+    await run("UPDATE tenants SET status = ? WHERE id = ?", [
       status,
       tenant.tenantId,
-    );
+    ]);
   }
 
-  /** The JSON lines the loggers wrote at warn level or above while `run` ran. */
-  async function warningsDuring(
-    run: () => Promise<void>,
-  ): Promise<Array<Record<string, any>>> {
-    // Every logger shares the root logger's stream, which pino keeps under a
-    // symbol on the root of the prototype chain.
-    let stream: { write: (line: string) => unknown } | undefined;
-    for (
-      let node: object | null = createLogger("refused-send-test");
-      node && !stream;
-      node = Object.getPrototypeOf(node)
-    ) {
-      for (const symbol of Object.getOwnPropertySymbols(node)) {
-        if (symbol.description === "pino.stream") {
-          stream = (node as Record<symbol, any>)[symbol];
-        }
-      }
-    }
-    if (!stream) throw new Error("The logger stream could not be found");
-
-    const lines: string[] = [];
-    const write = spyOn(stream, "write");
-    write.mockImplementation((line: string) => {
-      lines.push(line);
-      return true;
-    });
-    try {
-      await run();
-    } finally {
-      write.mockRestore();
-    }
-
-    return lines
-      .map((line) => JSON.parse(line) as Record<string, any>)
-      .filter((entry) => entry.level >= 40);
-  }
-
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("refused-send");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("refused-send");
     // A number that genuinely sends, so a refusal is the only thing that
     // keeps a reply off the fake network.
-    db.prepare("DELETE FROM channel_accounts WHERE id = ?").run(
+    await run("DELETE FROM channel_accounts WHERE id = ?", [
       tenant.channelAccountId,
-    );
-    const account = ChannelAccountService.create({
+    ]);
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
@@ -152,7 +107,7 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    insertConversation(ref);
+    await insertConversation(ref);
 
     alerts = [];
     eventBus.on("escalation_triggered", onAlert);
@@ -167,17 +122,14 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
     }) as unknown as typeof fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     eventBus.off("escalation_triggered", onAlert);
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    dropTenantFixture(tenant);
   });
 
   describe("for a tenant that is not active", () => {
     it("records a failed outbox row, and says nothing to the customer", async () => {
-      setTenantStatus("suspended");
+      await setTenantStatus("suspended");
 
       const outcome = await WhatsAppService.sendMessage(ref, "¿Sigue ahí?", {
         retry: true,
@@ -189,8 +141,8 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
         reason: "tenant_not_active",
       });
       expect(requests).toBe(0);
-      expect(outboundStatuses(ref)).toEqual(["failed"]);
-      expect(outboxOf(ref)).toMatchObject([
+      expect(await outboundStatuses(ref)).toEqual(["failed"]);
+      expect(await outboxOf(ref)).toMatchObject([
         {
           status: "failed",
           attempts: 1,
@@ -202,40 +154,40 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
     });
 
     it("alerts nobody while it stays suspended", async () => {
-      setTenantStatus("suspended");
+      await setTenantStatus("suspended");
       await WhatsAppService.sendMessage(ref, "¿Sigue ahí?", { retry: true });
 
-      await processDueOutbox();
+      await sweepAt();
 
       expect(alerts).toEqual([]);
-      expect(outboxOf(ref)[0]!.handed_off_at).toBeNull();
-      expect(conversationOf(ref).status).toBe("active");
+      expect((await outboxOf(ref))[0]!.handed_off_at).toBeNull();
+      expect((await conversationOf(ref)).status).toBe("active");
       expect(requests).toBe(0);
     });
 
     it("hands the conversation to a person once, when the tenant reopens", async () => {
-      setTenantStatus("suspended");
+      await setTenantStatus("suspended");
       await WhatsAppService.sendMessage(ref, "¿Sigue ahí?", { retry: true });
-      await processDueOutbox();
+      await sweepAt();
 
-      setTenantStatus("active");
-      await processDueOutbox();
-      await processDueOutbox();
+      await setTenantStatus("active");
+      await sweepAt();
+      await sweepAt();
 
       expect(alerts).toHaveLength(1);
       expect(alerts[0]!.payload).toMatchObject({
         reason: "reply_undeliverable",
         phoneNumber: CUSTOMER,
       });
-      expect(outboxOf(ref)[0]!.handed_off_at).toBeGreaterThan(0);
-      expect(conversationOf(ref)).toMatchObject({
+      expect((await outboxOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);
+      expect(await conversationOf(ref)).toMatchObject({
         handover_reason: "reply_undeliverable",
       });
       expect(requests).toBe(0);
     });
 
     it("keeps a manual reply out of the outbox, so the agent sees the error", async () => {
-      setTenantStatus("suspended");
+      await setTenantStatus("suspended");
 
       const outcome = await WhatsAppService.sendMessage(ref, "Buenas tardes");
 
@@ -244,11 +196,11 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
         kind: "permanent",
         reason: "tenant_not_active",
       });
-      expect(outboxOf(ref)).toEqual([]);
-      expect(outboundStatuses(ref)).toEqual(["failed"]);
+      expect(await outboxOf(ref)).toEqual([]);
+      expect(await outboundStatuses(ref)).toEqual(["failed"]);
 
-      setTenantStatus("active");
-      await processDueOutbox();
+      await setTenantStatus("active");
+      await sweepAt();
       expect(alerts).toEqual([]);
     });
   });
@@ -275,8 +227,8 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
       {
         name: "an account of another tenant",
         reason: "tenant_mismatch",
-        refusedRef: () => {
-          other = createTenantFixture("refused-send-other");
+        refusedRef: async () => {
+          other = await createTenantFixture("refused-send-other");
           return {
             tenantId: tenant.tenantId,
             channelAccountId: other.channelAccountId,
@@ -289,8 +241,8 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
     for (const { name, reason, refusedRef } of cases) {
       for (const retry of [true, false]) {
         it(`refuses ${name} as a permanent outcome${retry ? " for a bot reply" : " for a manual reply"}, and writes nothing`, async () => {
-          const refused = refusedRef();
-          const before = messageCount();
+          const refused = await refusedRef();
+          const before = await messageCount();
 
           const outcome = await WhatsAppService.sendMessage(refused, "hola", {
             retry,
@@ -302,19 +254,21 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
             reason,
           });
           expect(requests).toBe(0);
-          expect(messageCount()).toBe(before);
-          expect(outboxOf(refused)).toEqual([]);
+          expect(await messageCount()).toBe(before);
+          expect(await outboxOf(refused)).toEqual([]);
         });
       }
 
       it(`logs ${name} at error level, naming the account`, async () => {
-        const refused = refusedRef();
+        const refused = await refusedRef();
 
-        const warnings = await warningsDuring(async () => {
+        const warnings = await logsDuring("warn", async () => {
           await WhatsAppService.sendMessage(refused, "hola", { retry: true });
         });
 
-        expect(warnings.filter((line) => line.level >= 50)).toContainEqual(
+        expect(
+          warnings.filter((line) => line.level === "error"),
+        ).toContainEqual(
           expect.objectContaining({
             channelAccountId: refused.channelAccountId,
           }),
@@ -322,18 +276,17 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
       });
     }
 
-    afterEach(() => {
-      dropTenantFixture(other);
+    afterEach(async () => {
       other = undefined;
     });
   });
 
   describe("for an account that is switched off", () => {
     it("throws, queues nothing, alerts nobody, and logs which account", async () => {
-      ChannelAccountService.updateStatus(tenant.channelAccountId, "disabled");
+      await setChannelStatus(tenant.channelAccountId, "disabled");
 
       let error: unknown;
-      const warnings = await warningsDuring(async () => {
+      const warnings = await logsDuring("warn", async () => {
         error = await WhatsAppService.sendMessage(ref, "¿Sigue ahí?", {
           retry: true,
         }).catch((caught) => caught);
@@ -341,7 +294,7 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
 
       expect(error).toBeInstanceOf(ChannelUnavailableError);
       expect(requests).toBe(0);
-      expect(outboxOf(ref)).toEqual([]);
+      expect(await outboxOf(ref)).toEqual([]);
       expect(warnings).toContainEqual(
         expect.objectContaining({
           channelAccountId: tenant.channelAccountId,
@@ -349,7 +302,7 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
         }),
       );
 
-      await processDueOutbox();
+      await sweepAt();
       expect(alerts).toEqual([]);
     });
   });

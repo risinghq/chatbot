@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "vitest";
 import { createMockProvider } from "@vendeya/intelligence";
 import { ShouldEscalateHandler } from "../../../src/conversation/enrichment/handlers/should-escalate-handler.ts";
 
@@ -12,7 +12,7 @@ describe("ShouldEscalateHandler", () => {
   let handler: ShouldEscalateHandler;
   let mockProvider: ReturnType<typeof createMockProvider>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     handler = new ShouldEscalateHandler();
     mockProvider = createMockProvider();
   });

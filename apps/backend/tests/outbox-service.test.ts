@@ -4,17 +4,15 @@
  * agent is looking at the error. The only fake is the network.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import process from "node:process";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { db } from "../src/db/index.ts";
+import { getAll, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createMember,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
+  setChannelStatus,
 } from "./helpers/tenancy.ts";
 
 import type { ConversationRef } from "@vendeya/types";
@@ -28,7 +26,6 @@ import { sendManualMessage } from "../src/domains/conversations/write.ts";
 const CUSTOMER = "51900777001";
 
 describe("a send the turn asked to keep", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let agent: string;
@@ -53,27 +50,22 @@ describe("a send the turn asked to keep", () => {
       headers: { "Content-Type": "application/json" },
     });
 
-  function outboxRows(): OutboxRow[] {
-    return db
-      .prepare(
-        `SELECT * FROM outbox
+  async function outboxRows(): Promise<OutboxRow[]> {
+    return (await getAll(
+      `SELECT * FROM outbox
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
          ORDER BY id`,
-      )
-      .all(ref.tenantId, ref.channelAccountId, ref.phoneNumber) as OutboxRow[];
+      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    )) as OutboxRow[];
   }
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("outbox-service");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("outbox-service");
     // A number that genuinely sends, so the adapter reaches the fake network.
-    db.prepare("DELETE FROM channel_accounts WHERE id = ?").run(
+    await run("DELETE FROM channel_accounts WHERE id = ?", [
       tenant.channelAccountId,
-    );
-    const account = ChannelAccountService.create({
+    ]);
+    const account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
@@ -84,8 +76,8 @@ describe("a send the turn asked to keep", () => {
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    insertConversation(ref);
-    agent = createMember(tenant, "sales_agent").userId;
+    await insertConversation(ref);
+    agent = (await createMember(tenant, "sales_agent")).userId;
 
     requests = 0;
     answer = accepted;
@@ -96,12 +88,9 @@ describe("a send the turn asked to keep", () => {
     }) as unknown as typeof globalThis.fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    db.prepare("DELETE FROM audit_log WHERE user_id = ?").run(agent);
-    dropTenantFixture(tenant);
+    await run("DELETE FROM audit_log WHERE user_id = ?", [agent]);
   });
 
   it("queues a text WhatsApp could not take, and marks its message queued", async () => {
@@ -116,7 +105,7 @@ describe("a send the turn asked to keep", () => {
       kind: "transient",
       queued: true,
     });
-    const rows = outboxRows();
+    const rows = await outboxRows();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       type: "text",
@@ -130,7 +119,7 @@ describe("a send the turn asked to keep", () => {
     });
     expect(rows[0]!.next_attempt_at).toBe(rows[0]!.created_at + 5000);
 
-    const history = MessageStore.getHistory(ref);
+    const history = await MessageStore.getHistory(ref);
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({ status: "queued", content: "hola" });
     expect(history[0]!.id).toBe(rows[0]!.message_id);
@@ -148,13 +137,13 @@ describe("a send the turn asked to keep", () => {
     );
 
     expect(result).toMatchObject({ queued: true });
-    expect(outboxRows()[0]).toMatchObject({
+    expect((await outboxRows())[0]).toMatchObject({
       type: "image",
       content: "images/img-1.jpg",
       caption: "Cocina 4 hornillas",
       status: "pending",
     });
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
       type: "image",
       status: "queued",
       product_id: "bundle-1",
@@ -170,14 +159,16 @@ describe("a send the turn asked to keep", () => {
 
     expect(result).toMatchObject({ ok: false, kind: "permanent" });
     expect(result.queued).toBeUndefined();
-    expect(outboxRows()[0]).toMatchObject({
+    expect((await outboxRows())[0]).toMatchObject({
       status: "failed",
       attempts: 1,
       last_kind: "permanent",
       last_reason: "http_400:131047",
       handed_off_at: null,
     });
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({ status: "failed" });
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
+      status: "failed",
+    });
   });
 
   it("writes no row and no second message for an accepted send", async () => {
@@ -186,8 +177,8 @@ describe("a send the turn asked to keep", () => {
     });
 
     expect(result).toEqual({ ok: true, messageId: "wamid.OK" });
-    expect(outboxRows()).toEqual([]);
-    const history = MessageStore.getHistory(ref);
+    expect(await outboxRows()).toEqual([]);
+    const history = await MessageStore.getHistory(ref);
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({
       status: "sent",
@@ -207,7 +198,7 @@ describe("a send the turn asked to keep", () => {
 
     expect(requests).toBe(requestsAfterFirst);
     expect(result).toMatchObject({ ok: false, queued: true });
-    const rows = outboxRows();
+    const rows = await outboxRows();
     expect(rows.map((row) => row.content)).toEqual(["primero", "segundo"]);
     expect(rows[1]).toMatchObject({
       status: "pending",
@@ -223,16 +214,16 @@ describe("a send the turn asked to keep", () => {
   it("queues behind a reply already waiting even when it is being sent", async () => {
     answer = unreachable;
     await WhatsAppService.sendMessage(ref, "primero", { retry: true });
-    db.prepare("UPDATE outbox SET status = 'sending' WHERE tenant_id = ?").run(
+    await run("UPDATE outbox SET status = 'sending' WHERE tenant_id = ?", [
       ref.tenantId,
-    );
+    ]);
     const requestsAfterFirst = requests;
     answer = accepted;
 
     await WhatsAppService.sendMessage(ref, "segundo", { retry: true });
 
     expect(requests).toBe(requestsAfterFirst);
-    expect(outboxRows().map((row) => row.status)).toEqual([
+    expect((await outboxRows()).map((row) => row.status)).toEqual([
       "sending",
       "pending",
     ]);
@@ -243,7 +234,7 @@ describe("a send the turn asked to keep", () => {
     await WhatsAppService.sendMessage(ref, "primero", { retry: true });
 
     const other = { ...ref, phoneNumber: "51900777002" };
-    insertConversation(other);
+    await insertConversation(other);
     answer = accepted;
 
     const result = await WhatsAppService.sendMessage(other, "hola", {
@@ -251,7 +242,7 @@ describe("a send the turn asked to keep", () => {
     });
 
     expect(result).toEqual({ ok: true, messageId: "wamid.OK" });
-    expect(outboxRows()).toHaveLength(1);
+    expect(await outboxRows()).toHaveLength(1);
   });
 
   it("keeps nothing when the caller did not ask for it", async () => {
@@ -261,8 +252,10 @@ describe("a send the turn asked to keep", () => {
 
     expect(result).toMatchObject({ ok: false, kind: "transient" });
     expect(result.queued).toBeUndefined();
-    expect(outboxRows()).toEqual([]);
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({ status: "failed" });
+    expect(await outboxRows()).toEqual([]);
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
+      status: "failed",
+    });
   });
 
   it("keeps nothing for an agent's manual reply", async () => {
@@ -271,17 +264,19 @@ describe("a send the turn asked to keep", () => {
     const result = await sendManualMessage(ref, "Hola, soy Ana", agent);
 
     expect(result.success).toBe(false);
-    expect(outboxRows()).toEqual([]);
-    expect(MessageStore.getHistory(ref)[0]).toMatchObject({ status: "failed" });
+    expect(await outboxRows()).toEqual([]);
+    expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
+      status: "failed",
+    });
   });
 
   it("still throws for a number switched off, and queues nothing", async () => {
-    ChannelAccountService.updateStatus(ref.channelAccountId, "disabled");
+    await setChannelStatus(ref.channelAccountId, "disabled");
 
     await expect(
       WhatsAppService.sendMessage(ref, "hola", { retry: true }),
     ).rejects.toThrow("is disabled, not active");
     expect(requests).toBe(0);
-    expect(outboxRows()).toEqual([]);
+    expect(await outboxRows()).toEqual([]);
   });
 });

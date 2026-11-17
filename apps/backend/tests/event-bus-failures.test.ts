@@ -4,8 +4,8 @@
  * `await` or fire `eventBus.emit` and have no handler of their own for it.
  */
 
-import { describe, expect, it } from "bun:test";
-import type { Logger } from "@vendeya/logger";
+import { describe, expect, it } from "vitest";
+import type { Logger } from "../src/lib/logger.ts";
 import { EventBus, createEvent } from "../src/shared/events/index.ts";
 
 type LogCall = { fields: Record<string, unknown>; message: string };

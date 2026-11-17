@@ -5,16 +5,11 @@
  * on the record too.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 
-import { db } from "../src/db/index.ts";
-import {
-  applySchema,
-  createTenantFixture,
-  dropTenantFixture,
-  type TenantFixture,
-} from "./helpers/tenancy.ts";
+import { getAll, run } from "../src/db/index.ts";
+import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 
 import { requireAuth, requireRole } from "../src/middleware/auth.ts";
 import {
@@ -43,17 +38,16 @@ function buildApp() {
 }
 
 /** Every audit entry for one action, whichever tenant it belongs to. */
-function entriesFor(action: string): AuditRow[] {
-  return db
-    .prepare(
-      "SELECT tenant_id, action, metadata FROM audit_log WHERE action = ? ORDER BY created_at",
-    )
-    .all(action) as AuditRow[];
+async function entriesFor(action: string): Promise<AuditRow[]> {
+  return (await getAll(
+    "SELECT tenant_id, action, metadata FROM audit_log WHERE action = ? ORDER BY created_at",
+    [action],
+  )) as AuditRow[];
 }
 
-function login(userId: string, tenantId: string | null): string {
+async function login(userId: string, tenantId: string | null): Promise<string> {
   const token = generateSessionToken();
-  createSession(token, userId, tenantId);
+  await createSession(token, userId, tenantId);
   return `session=${token}`;
 }
 
@@ -63,27 +57,25 @@ describe("auditing an operations sweep", () => {
   let beta: TenantFixture;
   let operator: string;
 
-  beforeEach(() => {
-    applySchema();
+  beforeEach(async () => {
     app = buildApp();
 
-    alpha = createTenantFixture("alpha-ops");
-    beta = createTenantFixture("beta-ops");
+    alpha = await createTenantFixture("alpha-ops");
+    beta = await createTenantFixture("beta-ops");
 
     const operatorId = `u-${crypto.randomUUID()}`;
-    db.prepare(
+    await run(
       `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
        VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-    ).run(operatorId, `op-${operatorId.slice(2, 12)}`);
+      [operatorId, `op-${operatorId.slice(2, 12)}`],
+    );
 
     // No tenant pinned: this is the cross-tenant support session.
-    operator = login(operatorId, null);
+    operator = await login(operatorId, null);
   });
 
-  afterEach(() => {
-    db.prepare("DELETE FROM audit_log WHERE tenant_id IS NULL").run();
-    dropTenantFixture(alpha);
-    dropTenantFixture(beta);
+  afterEach(async () => {
+    await run("DELETE FROM audit_log WHERE tenant_id IS NULL");
   });
 
   function post(path: string, cookie: string) {
@@ -97,18 +89,19 @@ describe("auditing an operations sweep", () => {
    */
   it("splits the retry sweep's counts by tenant", async () => {
     for (const fixture of [alpha, beta]) {
-      db.prepare(
+      await run(
         `INSERT INTO conversations
            (tenant_id, channel_account_id, phone_number, context_data)
          VALUES (?, ?, ?, ?)`,
-      ).run(
-        fixture.tenantId,
-        fixture.channelAccountId,
-        CUSTOMER,
-        JSON.stringify({
-          phase: { phase: "waiting_for_recovery", dni: "12345678" },
-          metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-        }),
+        [
+          fixture.tenantId,
+          fixture.channelAccountId,
+          CUSTOMER,
+          JSON.stringify({
+            phase: { phase: "waiting_for_recovery", dni: "12345678" },
+            metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
+          }),
+        ],
       );
     }
 
@@ -142,7 +135,7 @@ describe("auditing an operations sweep", () => {
     const response = await post("/api/admin/retry-eligibility", operator);
     expect(response.status).toBe(200);
 
-    const entries = entriesFor("retry_eligibility");
+    const entries = await entriesFor("retry_eligibility");
 
     expect(entries).toHaveLength(1);
     expect(entries[0]!.tenant_id).toBeNull();

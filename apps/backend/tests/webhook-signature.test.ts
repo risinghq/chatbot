@@ -3,19 +3,15 @@
  * decides that before the body is parsed or any channel account is consulted.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import process from "node:process";
+import { env } from "cloudflare:workers";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { db } from "../src/db/index.ts";
-import {
-  applySchema,
-  createTenantFixture,
-  dropTenantFixture,
-  type TenantFixture,
-} from "./helpers/tenancy.ts";
-import { signWebhookBody, TEST_APP_SECRET } from "./helpers/webhook.ts";
+import { getOne } from "../src/db/index.ts";
+import { TEST_BINDINGS } from "./bindings.ts";
+import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
+import { signWebhookBody } from "./helpers/webhook.ts";
 
-import webhook from "../src/routes/webhook.ts";
+import { webhookRequest } from "./helpers/turn.ts";
 
 const CUSTOMER = "51900777888";
 
@@ -25,9 +21,8 @@ describe("webhook signature", () => {
   let rawBody: string;
   let validSignature: string;
 
-  beforeEach(() => {
-    applySchema();
-    tenant = createTenantFixture("signature");
+  beforeEach(async () => {
+    tenant = await createTenantFixture("signature");
     messageId = `wamid-${crypto.randomUUID()}`;
     rawBody = JSON.stringify({
       object: "whatsapp_business_account",
@@ -55,11 +50,7 @@ describe("webhook signature", () => {
         },
       ],
     });
-    validSignature = signWebhookBody(rawBody);
-  });
-
-  afterEach(() => {
-    dropTenantFixture(tenant);
+    validSignature = await signWebhookBody(rawBody);
   });
 
   function post(signature: string | undefined, body = rawBody) {
@@ -67,21 +58,22 @@ describe("webhook signature", () => {
       "Content-Type": "application/json",
     };
     if (signature !== undefined) headers["X-Hub-Signature-256"] = signature;
-    return webhook.request("/", { method: "POST", headers, body });
+    return webhookRequest("/", { method: "POST", headers, body });
   }
 
-  function inboxRows(): number {
+  async function inboxRows(): Promise<number> {
     return (
-      db
-        .prepare("SELECT COUNT(*) as c FROM message_inbox WHERE message_id = ?")
-        .get(messageId) as { c: number }
+      (await getOne(
+        "SELECT COUNT(*) as c FROM message_inbox WHERE message_id = ?",
+        [messageId],
+      )) as { c: number }
     ).c;
   }
 
   async function expectRefused(response: Response) {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "invalid_signature" });
-    expect(inboxRows()).toBe(0);
+    expect(await inboxRows()).toBe(0);
   }
 
   it("accepts a valid signature and processes the message", async () => {
@@ -91,7 +83,7 @@ describe("webhook signature", () => {
     expect(await response.json()).toEqual({
       results: [{ phoneNumberId: tenant.phoneNumberId, status: "received" }],
     });
-    expect(inboxRows()).toBe(1);
+    expect(await inboxRows()).toBe(1);
   });
 
   it("refuses a request without the header", async () => {
@@ -113,7 +105,9 @@ describe("webhook signature", () => {
   });
 
   it("refuses a signature made with another secret", async () => {
-    await expectRefused(await post(signWebhookBody(rawBody, "someone-else")));
+    await expectRefused(
+      await post(await signWebhookBody(rawBody, "someone-else")),
+    );
   });
 
   it("refuses a body changed after signing", async () => {
@@ -135,21 +129,18 @@ describe("webhook signature", () => {
     const unsigned = await post(undefined, garbage);
     expect(unsigned.status).toBe(401);
 
-    const signed = await post(signWebhookBody(garbage), garbage);
+    const signed = await post(await signWebhookBody(garbage), garbage);
     expect(signed.status).toBe(400);
     expect(await signed.json()).toEqual({ error: "invalid_payload" });
   });
 
   describe("when WHATSAPP_APP_SECRET is unset", () => {
-    let saved: string | undefined;
-
     beforeEach(() => {
-      saved = process.env.WHATSAPP_APP_SECRET;
-      delete process.env.WHATSAPP_APP_SECRET;
+      env.WHATSAPP_APP_SECRET = "";
     });
 
     afterEach(() => {
-      process.env.WHATSAPP_APP_SECRET = saved ?? TEST_APP_SECRET;
+      env.WHATSAPP_APP_SECRET = TEST_BINDINGS.WHATSAPP_APP_SECRET;
     });
 
     it("answers 503 even for a signature that would have matched", async () => {
@@ -159,23 +150,16 @@ describe("webhook signature", () => {
       expect(await response.json()).toEqual({
         error: "webhook_not_configured",
       });
-      expect(inboxRows()).toBe(0);
+      expect(await inboxRows()).toBe(0);
     });
   });
 
   it("leaves the GET verification handshake unsigned", async () => {
-    const saved = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
-    process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = "handshake-token";
-    try {
-      const response = await webhook.request(
-        "/?hub.mode=subscribe&hub.verify_token=handshake-token&hub.challenge=abc123",
-      );
+    const response = await webhookRequest(
+      `/?hub.mode=subscribe&hub.verify_token=${TEST_BINDINGS.WHATSAPP_WEBHOOK_VERIFY_TOKEN}&hub.challenge=abc123`,
+    );
 
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe("abc123");
-    } finally {
-      if (saved === undefined) delete process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
-      else process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = saved;
-    }
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("abc123");
   });
 });

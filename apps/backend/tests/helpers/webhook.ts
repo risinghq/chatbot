@@ -1,26 +1,80 @@
-import { createHmac } from "node:crypto";
-
-export const TEST_APP_SECRET = "test-meta-app-secret";
+import { encodeHexLowerCase } from "@oslojs/encoding";
+import { TEST_BINDINGS } from "../bindings.ts";
 
 /** The `X-Hub-Signature-256` value Meta would send for this raw body. */
-export function signWebhookBody(
+export async function signWebhookBody(
   rawBody: string,
-  secret = TEST_APP_SECRET,
-): string {
-  return `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`;
+  secret: string = TEST_BINDINGS.WHATSAPP_APP_SECRET,
+): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
+  return `sha256=${encodeHexLowerCase(new Uint8Array(digest))}`;
 }
 
-/** Init for `webhook.request("/", ...)`: a JSON body carrying a valid signature. */
-export function signedWebhookRequest(body: unknown): RequestInit {
+/** Init for a POST to the webhook: a JSON body carrying a valid signature. */
+export async function signedWebhookRequest(
+  body: unknown,
+): Promise<RequestInit> {
   const rawBody = JSON.stringify(body);
   return {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Hub-Signature-256": signWebhookBody(rawBody),
+      "X-Hub-Signature-256": await signWebhookBody(rawBody),
     },
     body: rawBody,
   };
+}
+
+/** The body Meta posts for one inbound message to `phoneNumberId`. */
+export function inboundMessage(
+  phoneNumberId: string,
+  message: Record<string, unknown>,
+) {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "waba-test",
+        changes: [
+          {
+            field: "messages",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: {
+                display_phone_number: "51900000000",
+                phone_number_id: phoneNumberId,
+              },
+              messages: [message],
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** The body Meta posts for one inbound text message to `phoneNumberId`. */
+export function inboundText(
+  phoneNumberId: string,
+  from: string,
+  text: string,
+  options: { id?: string; sentAt?: number } = {},
+) {
+  return inboundMessage(phoneNumberId, {
+    from,
+    id: options.id ?? `wamid-${crypto.randomUUID()}`,
+    timestamp: String(Math.floor((options.sentAt ?? Date.now()) / 1000)),
+    type: "text",
+    text: { body: text },
+  });
 }
 
 /**

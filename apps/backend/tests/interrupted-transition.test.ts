@@ -4,16 +4,14 @@
  * rows or domain events), and the retry must record each exactly once.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import process from "node:process";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { db } from "../src/db/index.ts";
+import { getAll, getOne, run } from "../src/db/index.ts";
 import {
-  applySchema,
   createTenantFixture,
-  dropTenantFixture,
   insertConversation,
   type TenantFixture,
+  setChannelStatus,
 } from "./helpers/tenancy.ts";
 
 import { GREETING } from "@vendeya/core";
@@ -24,11 +22,7 @@ import type {
 } from "@vendeya/core";
 import type { ChannelAccount, ConversationRef } from "@vendeya/types";
 
-import { getReadyForAggregation } from "../src/conversation/message-inbox.ts";
-import {
-  processGroup,
-  processReadyMessages,
-} from "../src/conversation/aggregator-worker.ts";
+import { conversationStub } from "../src/conversation/stub.ts";
 import { executeCommands } from "../src/conversation/handler/command-executor.ts";
 import { ChannelUnavailableError } from "../src/adapters/whatsapp/index.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
@@ -39,95 +33,97 @@ import { eventBus } from "../src/shared/events/index.ts";
 const CUSTOMER = "51900777001";
 
 describe("a send refused partway through a transition", () => {
-  let savedKey: string | undefined;
   let tenant: TenantFixture;
   /** A number that genuinely sends: active, with a token behind it. */
   let account: ChannelAccount;
   let ref: ConversationRef;
   let sends: number;
   /** Runs inside the send that makes this count, before it answers. */
-  let onSend: (count: number) => void;
+  let onSend: (count: number) => Promise<void>;
+  /** Runs inside a read receipt, before it answers. */
+  let onReceipt: () => Promise<void>;
   let originalFetch: typeof globalThis.fetch;
   let originalRandom: typeof Math.random;
 
-  function setStatus(status: ChannelAccount["status"]): void {
-    ChannelAccountService.updateStatus(account.id, status);
+  async function setStatus(status: ChannelAccount["status"]): Promise<void> {
+    await setChannelStatus(account.id, status);
   }
 
-  function queue(text: string): void {
-    db.prepare(
+  async function answerQueued(): Promise<void> {
+    await conversationStub(ref).wake(ref);
+  }
+
+  async function queue(text: string): Promise<void> {
+    await run(
       `INSERT INTO message_inbox
          (tenant_id, channel_account_id, phone_number, message_text, message_id,
           whatsapp_timestamp, status, created_at)
        VALUES (?, ?, ?, ?, ?, 1, 'pending', ?)`,
-    ).run(
-      ref.tenantId,
-      ref.channelAccountId,
-      ref.phoneNumber,
-      text,
-      `wamid-${crypto.randomUUID()}`,
-      Date.now() - 60_000,
+      [
+        ref.tenantId,
+        ref.channelAccountId,
+        ref.phoneNumber,
+        text,
+        `wamid-${crypto.randomUUID()}`,
+        Date.now() - 60_000,
+      ],
     );
   }
 
-  /** Dequeued while the number is on, then switched off before the reply. */
+  /**
+   * The turn starts while the number is on, and the number is switched off as
+   * the turn marks the message read, before the first reply.
+   */
   async function answerWithNumberSwitchedOffMidFlight(): Promise<void> {
-    const group = getReadyForAggregation(0).find(
-      (g) => g.channel_account_id === account.id,
-    );
-    if (!group) throw new Error("The queued message was not dequeued");
-
-    setStatus("disabled");
-    await processGroup(group);
+    onReceipt = async () => {
+      onReceipt = async () => {};
+      await setStatus("disabled");
+    };
+    await answerQueued();
   }
 
-  function queueStatuses(): string[] {
+  async function queueStatuses(): Promise<string[]> {
     return (
-      db
-        .prepare(
-          "SELECT status FROM message_inbox WHERE channel_account_id = ? ORDER BY id",
-        )
-        .all(account.id) as Array<{ status: string }>
+      (await getAll(
+        "SELECT status FROM message_inbox WHERE channel_account_id = ? ORDER BY id",
+        [account.id],
+      )) as Array<{ status: string }>
     ).map((row) => row.status);
   }
 
-  function storedPhase(): ConversationPhase {
-    const row = db
-      .prepare(
-        `SELECT context_data FROM conversations
+  async function storedPhase(): Promise<ConversationPhase> {
+    const row = (await getOne(
+      `SELECT context_data FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      )
-      .get(ref.tenantId, ref.channelAccountId, ref.phoneNumber) as {
+      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    )) as {
       context_data: string;
     };
     return JSON.parse(row.context_data).phase;
   }
 
-  function analytics(eventType: string): number {
+  async function analytics(eventType: string): Promise<number> {
     return (
-      db
-        .prepare(
-          `SELECT COUNT(*) as c FROM analytics_events
+      (await getOne(
+        `SELECT COUNT(*) as c FROM analytics_events
            WHERE channel_account_id = ? AND phone_number = ? AND event_type = ?`,
-        )
-        .get(account.id, CUSTOMER, eventType) as { c: number }
+        [account.id, CUSTOMER, eventType],
+      )) as { c: number }
     ).c;
   }
 
-  function outbound(): Array<{ content: string; status: string }> {
-    return MessageStore.getHistory(ref, 100)
+  async function outbound(): Promise<
+    Array<{ content: string; status: string }>
+  > {
+    return (await MessageStore.getHistory(ref, 100))
       .filter((m) => m.direction === "outbound")
       .reverse()
       .map((m) => ({ content: m.content, status: m.status }));
   }
 
-  beforeEach(() => {
-    savedKey = process.env.SECRETS_KEY;
-    process.env.SECRETS_KEY = "e5".repeat(32);
-
-    applySchema();
-    tenant = createTenantFixture("interrupted");
-    account = ChannelAccountService.create({
+  beforeEach(async () => {
+    tenant = await createTenantFixture("interrupted");
+    account = await ChannelAccountService.create({
       tenantId: tenant.tenantId,
       phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
       accessToken: "EAAG-a-real-looking-token",
@@ -139,15 +135,21 @@ describe("a send refused partway through a transition", () => {
     };
 
     sends = 0;
-    onSend = () => {};
+    onSend = async () => {};
+    onReceipt = async () => {};
     originalRandom = Math.random;
     // Fix the one-message purchase-confirmation variant so this test does not
     // depend on pacing sleeps.
     Math.random = () => 0.999999;
     originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      if (JSON.parse(String(init?.body ?? "{}")).status === "read") {
+        await onReceipt();
+        return new Response("{}");
+      }
       sends++;
-      onSend(sends);
+      await onSend(sends);
+
       return new Response(
         JSON.stringify({ messages: [{ id: `wamid-out-${sends}` }] }),
         { headers: { "Content-Type": "application/json" } },
@@ -155,12 +157,9 @@ describe("a send refused partway through a transition", () => {
     }) as unknown as typeof globalThis.fetch;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     Math.random = originalRandom;
     globalThis.fetch = originalFetch;
-    if (savedKey === undefined) delete process.env.SECRETS_KEY;
-    else process.env.SECRETS_KEY = savedKey;
-    dropTenantFixture(tenant);
   });
 
   /**
@@ -169,33 +168,33 @@ describe("a send refused partway through a transition", () => {
    * before the first send.
    */
   describe("on a new contact's first message", () => {
-    beforeEach(() => {
-      queue("hola");
+    beforeEach(async () => {
+      await queue("hola");
     });
 
     it("neither moves the conversation on nor counts a session", async () => {
       await answerWithNumberSwitchedOffMidFlight();
 
-      expect(queueStatuses()).toEqual(["pending"]);
+      expect(await queueStatuses()).toEqual(["pending"]);
       // The phase stays `greeting`. `confirming_client` would read the next
       // "hola" as the answer to a question never asked.
-      expect(storedPhase()).toEqual({ phase: "greeting" });
-      expect(analytics("session_start")).toBe(0);
+      expect(await storedPhase()).toEqual({ phase: "greeting" });
+      expect(await analytics("session_start")).toBe(0);
       expect(sends).toBe(0);
     });
 
     it("greets them, once, when the number comes back", async () => {
       await answerWithNumberSwitchedOffMidFlight();
 
-      setStatus("active");
-      await processReadyMessages();
+      await setStatus("active");
+      await answerQueued();
 
-      expect(queueStatuses()).toEqual(["processed"]);
-      expect(storedPhase()).toEqual({ phase: "confirming_client" });
-      expect(analytics("session_start")).toBe(1);
+      expect(await queueStatuses()).toEqual(["processed"]);
+      expect(await storedPhase()).toEqual({ phase: "confirming_client" });
+      expect(await analytics("session_start")).toBe(1);
 
       const greetings = GREETING.flat();
-      const last = outbound().at(-1);
+      const last = (await outbound()).at(-1);
       expect(last?.status).toBe("sent");
       expect(greetings).toContain(last?.content ?? "");
     });
@@ -212,8 +211,8 @@ describe("a send refused partway through a transition", () => {
       confirmations++;
     };
 
-    beforeEach(() => {
-      insertConversation(ref, {
+    beforeEach(async () => {
+      await insertConversation(ref, {
         contextData: {
           phase: {
             phase: "confirming_selection",
@@ -233,35 +232,35 @@ describe("a send refused partway through a transition", () => {
           },
         },
       });
-      queue("sí");
+      await queue("sí");
 
       confirmations = 0;
       eventBus.on("purchase_confirmed", countConfirmation);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       eventBus.off("purchase_confirmed", countConfirmation);
     });
 
     it("confirms nothing until the confirmation reaches the customer", async () => {
       await answerWithNumberSwitchedOffMidFlight();
 
-      expect(queueStatuses()).toEqual(["pending"]);
+      expect(await queueStatuses()).toEqual(["pending"]);
       expect(confirmations).toBe(0);
-      expect(analytics("purchase_confirmed")).toBe(0);
-      expect(storedPhase().phase).toBe("confirming_selection");
+      expect(await analytics("purchase_confirmed")).toBe(0);
+      expect((await storedPhase()).phase).toBe("confirming_selection");
     });
 
     it("confirms the sale exactly once when the number comes back", async () => {
       await answerWithNumberSwitchedOffMidFlight();
 
-      setStatus("active");
-      await processReadyMessages();
+      await setStatus("active");
+      await answerQueued();
 
-      expect(queueStatuses()).toEqual(["processed"]);
+      expect(await queueStatuses()).toEqual(["processed"]);
       expect(confirmations).toBe(1);
-      expect(analytics("purchase_confirmed")).toBe(1);
-      expect(storedPhase().phase).toBe("closing");
+      expect(await analytics("purchase_confirmed")).toBe(1);
+      expect((await storedPhase()).phase).toBe("closing");
     });
   });
 
@@ -277,7 +276,7 @@ describe("a send refused partway through a transition", () => {
      * send, and never for a batch that did not finish.
      */
     it("repeats a message that went out before the refusal, and records nothing until the batch completes", async () => {
-      insertConversation(ref);
+      await insertConversation(ref);
 
       const batch: TransitionResult = {
         type: "update",
@@ -291,36 +290,36 @@ describe("a send refused partway through a transition", () => {
 
       // The first message goes out, and the number is switched off before the
       // second.
-      onSend = (count) => {
-        if (count === 1) setStatus("disabled");
+      onSend = async (count) => {
+        if (count === 1) await setStatus("disabled");
       };
 
       await expect(
         executeCommands(batch, ref, metadata, false, "trace-1"),
       ).rejects.toThrow(ChannelUnavailableError);
 
-      expect(outbound()).toEqual([
+      expect(await outbound()).toEqual([
         { content: "uno", status: "sent" },
         { content: "dos", status: "failed" },
       ]);
       // The TRACK_EVENT sat *between* the two sends and still was not written.
-      expect(analytics("session_start")).toBe(0);
-      expect(storedPhase()).toEqual({ phase: "greeting" });
+      expect(await analytics("session_start")).toBe(0);
+      expect(await storedPhase()).toEqual({ phase: "greeting" });
 
-      onSend = () => {};
-      setStatus("active");
+      onSend = async () => {};
+      await setStatus("active");
 
       await executeCommands(batch, ref, metadata, false, "trace-2");
 
-      expect(outbound()).toEqual([
+      expect(await outbound()).toEqual([
         { content: "uno", status: "sent" },
         { content: "dos", status: "failed" },
         // The accepted duplicate.
         { content: "uno", status: "sent" },
         { content: "dos", status: "sent" },
       ]);
-      expect(analytics("session_start")).toBe(1);
-      expect(storedPhase()).toEqual({ phase: "confirming_client" });
+      expect(await analytics("session_start")).toBe(1);
+      expect(await storedPhase()).toEqual({ phase: "confirming_client" });
     });
 
     /**
@@ -330,13 +329,14 @@ describe("a send refused partway through a transition", () => {
      */
     it("keeps the products a bundle command showed on the phase it persists", async () => {
       const periodId = `per-${crypto.randomUUID()}`;
-      db.prepare(
+      await run(
         `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
          VALUES (?, ?, 'Enero', '2026-01', 'active')`,
-      ).run(periodId, tenant.tenantId);
+        [periodId, tenant.tenantId],
+      );
 
       const bundleId = `bundle-${crypto.randomUUID()}`;
-      BundleService.create({
+      await BundleService.create({
         id: bundleId,
         tenantId: tenant.tenantId,
         period_id: periodId,
@@ -351,7 +351,7 @@ describe("a send refused partway through a transition", () => {
         created_by: null,
       });
 
-      insertConversation(ref);
+      await insertConversation(ref);
 
       await executeCommands(
         {
@@ -370,7 +370,7 @@ describe("a send refused partway through a transition", () => {
         "trace-bundle",
       );
 
-      expect(storedPhase()).toMatchObject({
+      expect(await storedPhase()).toMatchObject({
         phase: "offering_products",
         sentProducts: [{ productId: bundleId, position: 1, price: 1200 }],
         lastAction: { type: "showed_products", productCount: 1 },
