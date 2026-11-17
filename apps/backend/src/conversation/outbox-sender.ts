@@ -128,9 +128,8 @@ function recordedOutcome(row: OutboxRow, step: OutboxStep) {
 }
 
 /**
- * Turns each row an ended object left `sending` into one ambiguous attempt.
- * The caller holds the lock in a fresh object, so such a row cannot belong to
- * a live attempt.
+ * Turns each row left `sending` into one ambiguous attempt. The caller holds
+ * the lock, so such a row cannot belong to a live attempt.
  */
 export async function recoverInterruptedSends(
   ref: ConversationRef,

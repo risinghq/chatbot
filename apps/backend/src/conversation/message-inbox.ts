@@ -239,11 +239,12 @@ export async function recordFailedTurn(
 }
 
 /**
- * Settles the conversation's rows left `processing` by a turn that ended with
- * the object running it. The caller holds the conversation lock in a fresh
- * object, so no turn is alive. The dead turn counts as one attempt, on the
- * rows' highest count. When that is the last attempt, the conversation's
- * `pending` rows fail with it.
+ * Settles the conversation's rows left `processing` by a turn that ended
+ * mid-run, whether the object died with it or the write that records the
+ * outcome threw. The caller holds the conversation lock, so no turn is
+ * alive. The dead turn counts as one attempt, on the rows' highest count.
+ * When that is the last attempt, the conversation's `pending` rows fail with
+ * it.
  */
 export async function recoverInterruptedTurns(
   ref: ConversationRef,

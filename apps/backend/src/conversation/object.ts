@@ -45,15 +45,15 @@ const REF_KEY = "ref";
  * by setting it again from the database, so the alarm never outlives the work
  * it stands for.
  *
- * A row left `processing` or `sending` belongs to an instance that ended
- * mid-turn. The first locked call of a new instance settles those rows before
- * anything else, because no turn can be alive in it yet.
+ * A row left `processing` or `sending` belongs to a call that ended mid-turn:
+ * the object died with it, or the write that records the outcome threw. Every
+ * locked call settles those rows before anything else, because the lock means
+ * none of them can still be running.
  */
 export class ConversationObject extends DurableObject<Env> {
   /** Public so a test can hold it, as a long turn would. */
   readonly lock = new ConversationLock();
   #ref: ConversationRef | undefined;
-  #recovered = false;
 
   /** Runs whatever the conversation owes now and sets the alarm for the rest. */
   wake(ref: ConversationRef): Promise<Locked<void>> {
@@ -133,7 +133,6 @@ export class ConversationObject extends DurableObject<Env> {
   }
 
   async #recover(ref: ConversationRef): Promise<void> {
-    if (this.#recovered) return;
     const turns = await recoverInterruptedTurns(ref);
     if (turns > 0) {
       logger.warn(
@@ -142,7 +141,6 @@ export class ConversationObject extends DurableObject<Env> {
       );
     }
     await recoverInterruptedSends(ref);
-    this.#recovered = true;
   }
 
   async #schedule(ref: ConversationRef): Promise<void> {
