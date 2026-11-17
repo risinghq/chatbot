@@ -138,17 +138,22 @@ window of its pending messages, or the next outbox attempt. Each locked call
 sets the alarm again from D1. The object's own storage holds only the
 conversation's identity, which the alarm handler needs.
 
-A row left `processing` or `sending` belongs to an object instance that ended
-mid-turn. A new instance settles those rows before its first locked call.
+A row left `processing` or `sending` belongs to a call that ended mid-turn: the
+object died with it, or the write that records the outcome threw. Every locked
+call settles those rows before anything else, because the lock means none of
+them can still be running.
 
 ### The cron sweep
 
 The cron trigger runs [`sweep.ts`](../apps/backend/src/sweep.ts) every minute.
 It wakes the objects of conversations that are due, which their own alarm may
 not know: a number or tenant switched back on, a lost wake, a row an ended
-instance left mid-flight. It hands assignments not taken within 5 minutes to the
-next agent. Once an hour it deletes processed inbox rows and finished outbox
-rows past their retention.
+instance left mid-flight. One sweep wakes at most `MAX_WAKES_PER_SWEEP`
+conversations, because each wake spends one of the invocation's subrequests; a
+bigger backlog drains over successive sweeps. It hands assignments not taken
+within 5 minutes to the next agent, oldest first and bounded the same way. Once
+an hour it deletes processed inbox rows and finished outbox rows past their
+retention.
 
 ### Shared stores
 

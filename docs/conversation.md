@@ -91,18 +91,23 @@ conversation, including one that arrived while the second attempt ran.
 because the number was switched off counts no attempt.
 
 An object that ends mid-turn, by a crash, an exceeded limit or a restart of the
-Worker, leaves its rows `processing`. The first call into the conversation's
-next object, before anything else runs, settles them as one failed attempt with
-`last_error` `interrupted: the turn ended mid-run`, on the same rule, so a
-message that ends the object every time reaches a person. When that is the
-second attempt, the conversation's `pending` rows fail with it. The commit comes
-after the sends, so a reply that went out before the object ended is sent again
-on the rerun, as with a send that throws partway through a batch.
+Worker, leaves its rows `processing`. The write that records a turn's outcome
+can leave them the same way if it throws. Every locked call into the object
+settles such rows before anything else — under the lock none of them can still
+be running — as one failed attempt with `last_error`
+`interrupted: the turn ended mid-run`, on the same rule, so a message whose turn
+never records reaches a person. When that is the second attempt, the
+conversation's `pending` rows fail with it. The commit comes after the sends, so
+a reply that went out before the object ended is sent again on the rerun, as
+with a send that throws partway through a batch.
 
 The minute sweep wakes every conversation of an open tenant with a pending group
 past its quiet window, a row still `processing`, a reply due, or a failed row
 not handed off. It catches a wake that was lost and a number or tenant switched
-back on.
+back on. One sweep wakes at most
+[`MAX_WAKES_PER_SWEEP`](../apps/backend/src/sweep.ts) conversations, because
+each wake spends one of the invocation's subrequests; a bigger backlog is woken
+over successive sweeps.
 
 Processed rows are kept 7 days, because the Meta message id on them is what
 recognizes a redelivery
@@ -298,9 +303,9 @@ rows past an hour, then sends the due rows one at a time, lowest-numbered first,
 and records each outcome on the outbox and `messages` rows in one batch. It
 sends at most 10 rows a pass. The object's alarm is set to the next row's
 `next_attempt_at`, so each retry runs on time. A number switched off defers the
-row 60 s without counting an attempt. A row left `sending` by an object that
-ended is recorded, by the next object's first call, as one `ambiguous` attempt
-with reason `interrupted`.
+row 60 s without counting an attempt. A row left `sending` by a call that ended
+is recorded, by the next locked call, as one `ambiguous` attempt with reason
+`interrupted`.
 
 Final rows are deleted after 7 days, by the hourly sweep.
 

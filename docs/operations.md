@@ -15,7 +15,8 @@ The backend's cron trigger runs the sweep every minute
 
 - It wakes each conversation with work its own alarm cannot know about: a reply
   due to send, messages waiting for a turn, a failed turn, a handoff not yet
-  made.
+  made. One sweep wakes at most `MAX_WAKES_PER_SWEEP` of them; the rest are
+  taken by the next minute's sweep.
 - It hands an assignment that was not accepted in time to the next agent.
 - At minute 0 of each hour it deletes processed inbox rows and finished outbox
   rows past their retention.
