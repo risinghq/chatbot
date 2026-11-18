@@ -133,8 +133,12 @@ The first answers JSON with `"status":"healthy"`. The second answers `200`.
 
 ## The first accounts
 
-The `account` command writes to the deployed database with `--remote`. Run these
-at the repository root:
+The `account` command writes to the deployed database with `--remote`, over the
+Cloudflare API. It needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in
+the shell — the same two values the
+[deploy workflow](#deploys-from-github-actions) uses — never `wrangler login`.
+The token needs **Account > D1 > Edit**, and `bun run seed --remote` also needs
+**Account > Workers R2 Storage > Edit**. Run these at the repository root:
 
 ```sh
 bun run account create ops --platform-operator --remote
@@ -156,7 +160,7 @@ It reads the access token from a hidden prompt.
 to point Meta's webhook at `https://<hostname>/api/webhook`.
 
 `bun run seed --remote` writes the default tenant `totem` and its sample catalog
-to the deployed database, without the test conversations.
+to the deployed database and bucket, without the test conversations.
 
 ## Deploys from GitHub Actions
 

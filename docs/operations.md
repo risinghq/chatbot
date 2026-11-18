@@ -71,7 +71,9 @@ credentials.
 
 The seed creates no user. Every first account comes from the command line
 ([`cli/account.ts`](../apps/backend/src/cli/account.ts)). Each form writes to
-the local D1 database, or with `--remote` to the deployed one:
+the local D1 database, or with `--remote` to the deployed one, which reads
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` from the environment
+([Deploy](./deploy.md#the-first-accounts)):
 
 ```sh
 bun run account create <username> [--platform-operator | --tenant <tenant>] [--name <display name>]
