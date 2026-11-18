@@ -30,8 +30,13 @@ task's name. The other tasks still run, and the task runs again the next minute.
 curl http://localhost:8787/cdn-cgi/local/scheduled
 ```
 
-Nothing is checked when a Worker starts. A missing provider credential or LLM
-key shows up the first time it is used.
+Nothing is checked when a Worker starts. A missing LLM key shows up the first
+time it is used. The provider credentials are not on the Worker at all: each
+tenant's Cálidda login and the platform's Power BI report ids are settings,
+entered on `/dashboard/admin/settings` (see
+[Eligibility](./eligibility.md#the-two-providers)). A tenant with no Cálidda
+login, or a platform with no report ids, gets the unavailable path on every
+check.
 
 ## Variables and secrets
 
@@ -41,22 +46,19 @@ takes effect at the next deploy. Secrets are set with `wrangler secret put` and
 take effect at once. Locally, `apps/backend/.dev.vars` sets both and overrides
 the values in `wrangler.jsonc`.
 
-| Name                                                                                  | Kind     | Without it                                                                                                             |
-| ------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ENVIRONMENT`                                                                         | variable | anything but `production` serves the simulator routes, and a 500 carries the error's message and stack                 |
-| `PUBLIC_URL`                                                                          | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:` |
-| `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL`                                             | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                      |
-| `CALIDDA_BASE_URL`                                                                    | variable | every FNB check fails                                                                                                  |
-| `BOT_RESPONSE_DELAY_MS`                                                               | variable | 2300                                                                                                                   |
-| `PLATFORM_OPS_PHONE_NUMBER_ID`                                                        | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one          |
-| `WHATSAPP_GROUP_AGENT`, `WHATSAPP_GROUP_DEV`                                          | variable | sales and dev alerts with no tenant setting have no target. See [Alerts](#alerts)                                      |
-| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`                                                     | variable | `info`. See [Logs](#logs)                                                                                              |
-| `SECRETS_KEY`                                                                         | secret   | no channel token can be stored or read                                                                                 |
-| `WHATSAPP_APP_SECRET`                                                                 | secret   | every webhook POST answers 503                                                                                         |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN`                                                       | secret   | the handshake answers only a channel account's own verify token                                                        |
-| `OPENAI_API_KEY`                                                                      | secret   | any message the regexes miss gets no reply                                                                             |
-| `CALIDDA_USERNAME`, `CALIDDA_PASSWORD`                                                | secret   | every FNB check fails                                                                                                  |
-| `POWERBI_RESOURCE_KEY`, `POWERBI_REPORT_ID`, `POWERBI_DATASET_ID`, `POWERBI_MODEL_ID` | secret   | every Gaso check fails                                                                                                 |
+| Name                                         | Kind     | Without it                                                                                                             |
+| -------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ENVIRONMENT`                                | variable | anything but `production` serves the simulator routes, and a 500 carries the error's message and stack                 |
+| `PUBLIC_URL`                                 | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:` |
+| `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL`    | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                      |
+| `BOT_RESPONSE_DELAY_MS`                      | variable | 2300                                                                                                                   |
+| `PLATFORM_OPS_PHONE_NUMBER_ID`               | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one          |
+| `WHATSAPP_GROUP_AGENT`, `WHATSAPP_GROUP_DEV` | variable | sales and dev alerts with no tenant setting have no target. See [Alerts](#alerts)                                      |
+| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`            | variable | `info`. See [Logs](#logs)                                                                                              |
+| `SECRETS_KEY`                                | secret   | no channel token can be stored or read                                                                                 |
+| `WHATSAPP_APP_SECRET`                        | secret   | every webhook POST answers 503                                                                                         |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN`              | secret   | the handshake answers only a channel account's own verify token                                                        |
+| `OPENAI_API_KEY`                             | secret   | any message the regexes miss gets no reply                                                                             |
 
 In production `wrangler deploy` refuses to deploy while a secret is missing.
 `WHATSAPP_PHONE_ID` and `WHATSAPP_TOKEN` are read only by the seed, from
@@ -140,7 +142,7 @@ The bucket has no backup ([Deploy](./deploy.md#backups)).
 ## Health
 
 ```sh
-curl https://vendeya.rising.sh/api/health
+curl https://sales.rising.sh/api/health
 ```
 
 `GET /api/health` needs no session. It runs `SELECT 1` against D1 and answers
@@ -180,8 +182,9 @@ computed:
 
 - The circuit breaker blocks `powerbi`, never `gaso`, and `powerbi` is not in
   the computation. A blocked Power BI leaves `status` unchanged.
-- `providers` is the circuit breaker's state in KV and the last error it
-  recorded. It is not a live check of the providers.
+- `providers` is the platform-wide circuit breaker's state in KV and the last
+  error it recorded. FNB blocks are per tenant and do not appear here. It is not
+  a live check of the providers.
 
 `lastError` carries the provider's raw error message.
 
@@ -223,7 +226,7 @@ The sales target is the tenant setting `whatsapp_group_sales`, else
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
   -d '{"whatsapp_group_sales":"<number or group id>"}' \
-  https://vendeya.rising.sh/api/admin/settings
+  https://sales.rising.sh/api/admin/settings
 ```
 
 An alert about a tenant goes out on the event's own number, else the tenant's

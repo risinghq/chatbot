@@ -76,7 +76,7 @@ curl -X POST -b "session=<token>" -H 'content-type: application/json' \
     "accessToken": "<permanent access token>",
     "verifyToken": "<verify token>"
   }' \
-  https://vendeya.rising.sh/api/admin/channels
+  https://sales.rising.sh/api/admin/channels
 ```
 
 The answer is the account, without its secrets. An account created with an
@@ -87,11 +87,11 @@ answers 409. The routes are in
 To list the tenant's numbers, replace a token, or switch a number off:
 
 ```sh
-curl -b "session=<token>" https://vendeya.rising.sh/api/admin/channels
+curl -b "session=<token>" https://sales.rising.sh/api/admin/channels
 curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"accessToken":"<new token>"}' https://vendeya.rising.sh/api/admin/channels/<id>
+  -d '{"accessToken":"<new token>"}' https://sales.rising.sh/api/admin/channels/<id>
 curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"status":"disabled"}' https://vendeya.rising.sh/api/admin/channels/<id>
+  -d '{"status":"disabled"}' https://sales.rising.sh/api/admin/channels/<id>
 ```
 
 `status` accepts `active`, `pending` and `disabled`. An account with no access
@@ -109,7 +109,7 @@ In the app's WhatsApp configuration, set the callback URL to the public host
 followed by `/api/webhook`:
 
 ```text
-https://vendeya.rising.sh/api/webhook
+https://sales.rising.sh/api/webhook
 ```
 
 The backend Worker's route on `/api/*` takes the request straight from Meta
@@ -127,7 +127,7 @@ the token matches the verify token of any channel account, or
 carries no phone number id, so any stored verify token passes it.
 
 ```sh
-curl "https://vendeya.rising.sh/api/webhook?hub.mode=subscribe&hub.verify_token=<verify token>&hub.challenge=42"
+curl "https://sales.rising.sh/api/webhook?hub.mode=subscribe&hub.verify_token=<verify token>&hub.challenge=42"
 ```
 
 prints `42`.
@@ -151,7 +151,7 @@ body='{"entry":[]}'
 sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$WHATSAPP_APP_SECRET" | sed 's/^.* //')
 curl -X POST -H 'content-type: application/json' \
   -H "X-Hub-Signature-256: sha256=$sig" -d "$body" \
-  https://vendeya.rising.sh/api/webhook
+  https://sales.rising.sh/api/webhook
 ```
 
 prints `{"results":[]}`. Each message of a real delivery adds one entry with its

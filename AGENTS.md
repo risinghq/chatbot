@@ -49,9 +49,9 @@ commit. A page that is wrong is worse than none.
 ## Environment hazards
 
 - `bun run dev`, `seed` and `account` read `apps/backend/.dev.vars`. If it holds
-  real `WHATSAPP_*`, `CALIDDA_*` or `OPENAI_API_KEY` values, a local run uses
-  them: it can seed a live number, query Cálidda and send real messages. Point
-  `GRAPH_API_BASE_URL` at a fake server for local probes.
+  real `WHATSAPP_*` or `OPENAI_API_KEY` values, a local run uses them: it can
+  seed a live number and send real messages. Point `GRAPH_API_BASE_URL` at a
+  fake server for local probes.
 - `seed --remote`, `account --remote` and `db:migrate:remote` write to the
   deployed D1 database and R2 bucket. Run them only when you mean to.
 - The backend's tests run in workerd with their own D1, KV and R2 per test, and

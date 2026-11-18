@@ -51,14 +51,14 @@ entry point. The backend's entry point,
 
 The backend's bindings:
 
-| Binding         | Kind           | Holds                                                   |
-| --------------- | -------------- | ------------------------------------------------------- |
-| `DB`            | D1             | Every table, for every tenant.                          |
-| `CONVERSATIONS` | Durable Object | `ConversationObject`, one per conversation.             |
-| `KV`            | KV             | The FNB session token and the provider circuit breaker. |
-| `FILES`         | R2             | Catalog images, contracts and call recordings.          |
-| `IMAGES`        | Images         | Resizes an uploaded catalog image to a 1024 px JPEG.    |
-| `LOGIN_LIMITER` | Rate limit     | Login attempts: 10 per minute per client address.       |
+| Binding         | Kind           | Holds                                                               |
+| --------------- | -------------- | ------------------------------------------------------------------- |
+| `DB`            | D1             | Every table, for every tenant.                                      |
+| `CONVERSATIONS` | Durable Object | `ConversationObject`, one per conversation.                         |
+| `KV`            | KV             | The per-tenant FNB session tokens and the provider circuit breaker. |
+| `FILES`         | R2             | Catalog images, contracts and call recordings.                      |
+| `IMAGES`        | Images         | Resizes an uploaded catalog image to a 1024 px JPEG.                |
+| `LOGIN_LIMITER` | Rate limit     | Login attempts: 10 per minute per client address.                   |
 
 Code reads bindings and secrets from `env` in `cloudflare:workers`. The Worker
 uses no `nodejs_compat` flag.

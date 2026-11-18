@@ -5,12 +5,11 @@ its customers. Before it offers anything, it checks the customer's DNI against
 two Cálidda sources and learns whether they qualify, for how much, and under
 which program.
 
-These are one business's rules written into code. The providers, the
-credentials, the thresholds and the segment names are fixed, and every tenant
-shares them. So does the copy: the bot introduces itself as Cálidda for every
-tenant. A tenant configures its own catalog, periods and personas, and nothing
-else here. Onboarding a business that does not sell on Cálidda credit needs code
-changes first.
+These are one business's rules written into code. The providers, the thresholds
+and the segment names are fixed, and every tenant shares them. So does the copy:
+the bot introduces itself as Cálidda for every tenant. What a tenant configures
+is its own Cálidda login, plus its catalog, periods and personas. Onboarding a
+business that does not sell on Cálidda credit needs code changes first.
 
 ## The two providers
 
@@ -22,17 +21,27 @@ changes first.
 FNB answers with a credit line and a name. Power BI answers with a status, a
 name, a balance and an NSE (socio-economic stratum).
 
-The credentials are one Cálidda login (`CALIDDA_BASE_URL`, `CALIDDA_USERNAME`,
-`CALIDDA_PASSWORD`) and one Power BI report (`POWERBI_RESOURCE_KEY`,
-`POWERBI_REPORT_ID`, `POWERBI_DATASET_ID`, `POWERBI_MODEL_ID`), read from the
-Worker's environment when a check runs
-([`config.ts`](../apps/backend/src/config.ts)). A missing value makes that
-provider fail at each check.
+The credentials are set on the dashboard, not as deploy-time secrets. The
+Cálidda login is per tenant — each business sells on its own Cálidda account —
+so a tenant admin enters the username and the password on the settings page
+(`calidda_username`, `calidda_password`). The username lives in
+`tenant_settings`; the password is encrypted in `tenant_secrets` under
+`SECRETS_KEY` and is never sent back to the browser
+([`domains/settings/calidda.ts`](../apps/backend/src/domains/settings/calidda.ts)).
+The Cálidda API host is the same for every business, so `CALIDDA_BASE_URL` stays
+a platform variable on the Worker, not a setting. The Power BI report is one
+public report for every tenant, so its four ids are platform settings
+(`powerbi_resource_key`, `powerbi_report_id`, `powerbi_dataset_id`,
+`powerbi_model_id`) that a platform operator enters on the same page. A tenant
+with no login, or a platform with no report ids or no base URL, fails that
+provider's checks as unavailable, the same as an outage. Saving a login drops
+the tenant's cached FNB session and its breaker block, so the next check
+authenticates with the new credentials.
 
 Timeouts are 10 s for the FNB login, 15 s for the FNB query and 20 s for each
 Power BI query ([`config/timeouts.ts`](../apps/backend/src/config/timeouts.ts)).
-Nothing is retried. The FNB login token is kept in KV for 3500 s and shared by
-every tenant and every isolate
+Nothing is retried. A tenant's FNB login token is kept in KV for 3500 s, keyed
+by tenant, and shared by every isolate
 ([`fnb-client.ts`](../apps/backend/src/adapters/providers/fnb-client.ts)).
 
 ## Which answer wins
@@ -100,7 +109,7 @@ alerts the dev group, and the customer's conversation waits in
 every waiting conversation in scope:
 
 ```sh
-curl -X POST -b "session=<token>" https://vendeya.rising.sh/api/admin/retry-eligibility
+curl -X POST -b "session=<token>" https://sales.rising.sh/api/admin/retry-eligibility
 ```
 
 The dashboard has no button for it. `GET /api/admin/outage-status` counts the
@@ -118,9 +127,11 @@ When one provider fails and the other answers, the backend emits
 blocks a provider for 30 minutes when its error message contains `auth`, `401`
 or `403` (or `bloqueado`, for FNB). A blocked provider fails at once without a
 request. A block is a KV key that expires when the block ends, so every isolate
-sees it. KV takes up to a minute to show a write everywhere, so an isolate
-elsewhere may try the provider once more after the block. A deploy does not
-clear it. `/api/health` reports it (see [Operations](./operations.md#health)).
+sees it. An FNB block is per tenant — a bad password is one business's problem —
+while the Power BI block is platform-wide. KV takes up to a minute to show a
+write everywhere, so an isolate elsewhere may try the provider once more after
+the block. A deploy does not clear it. `/api/health` reports the platform-wide
+blocks (see [Operations](./operations.md#health)).
 
 ## The kill switches
 
@@ -148,9 +159,13 @@ persona queries the real providers.
 A platform operator can check a DNI outside any conversation:
 
 ```sh
-curl -b "session=<token>" https://vendeya.rising.sh/api/providers/<dni>
+curl -b "session=<token>" https://sales.rising.sh/api/providers/<dni>
 ```
 
-It runs the same parallel check with no tenant, so no catalog is consulted
+It runs the same parallel check with no conversation, so no catalog is
+consulted. `?tenant=<slug>` names the tenant whose Cálidda login the FNB leg
+runs on; without it FNB reports it needs a tenant and the answer comes from the
+Power BI report
 ([`routes/providers.ts`](../apps/backend/src/routes/providers.ts)). The
-dashboard's Proveedores tile, shown to platform operators only, calls it.
+dashboard's Proveedores tile, shown to platform operators only, offers the
+tenant picker and calls it.

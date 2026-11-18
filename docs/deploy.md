@@ -7,7 +7,7 @@ what the Workers do once they run, see [Architecture](./architecture.md) and
 
 VendeYa is two Workers on one hostname. `vendeya-backend` answers `/api/*` and
 `/media/*`. `vendeya-dashboard` answers every other path. The repository deploys
-them to `vendeya.rising.sh`.
+them to `sales.rising.sh`.
 
 ## What you need
 
@@ -74,12 +74,13 @@ The backend refuses to deploy until every secret in `secrets.required` of
 | `WHATSAPP_APP_SECRET`           | Meta app dashboard, **App settings > Basic > App secret**           |
 | `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | `bun scripts/generate-token.ts webhook`, run at the repository root |
 | `OPENAI_API_KEY`                | an OpenAI API key                                                   |
-| `CALIDDA_USERNAME`              | the Cálidda FNB account                                             |
-| `CALIDDA_PASSWORD`              | the Cálidda FNB account                                             |
-| `POWERBI_RESOURCE_KEY`          | the Cálidda Gaso Power BI report                                    |
-| `POWERBI_REPORT_ID`             | the Cálidda Gaso Power BI report                                    |
-| `POWERBI_DATASET_ID`            | the Cálidda Gaso Power BI report                                    |
-| `POWERBI_MODEL_ID`              | the Cálidda Gaso Power BI report                                    |
+
+`CALIDDA_BASE_URL` stays a plain variable in `wrangler.jsonc` — the Cálidda API
+host is the same for every business. The rest of the Cálidda and Power BI values
+are not deploy-time settings at all: each tenant's Cálidda username and password
+are entered by its admin on `/dashboard/admin/settings`, and the Power BI
+report's four ids are platform settings an operator enters on the same page (see
+[Eligibility](./eligibility.md#the-two-providers)).
 
 Write them to a file outside the repository, one `NAME=value` per line, such as
 `~/vendeya-production.env`. Keep a copy of `SECRETS_KEY` somewhere safe. Without
@@ -121,8 +122,8 @@ its DNS record and certificate. The backend's deploy adds the `/api/*` and
 Check both from outside:
 
 ```sh
-curl https://vendeya.rising.sh/api/health
-curl -I https://vendeya.rising.sh/login
+curl https://sales.rising.sh/api/health
+curl -I https://sales.rising.sh/login
 ```
 
 The first answers JSON with `"status":"healthy"`. The second answers `200`.

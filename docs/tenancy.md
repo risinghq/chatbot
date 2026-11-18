@@ -23,7 +23,7 @@ or through the API:
 
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"slug":"acme","name":"Acme"}' https://vendeya.rising.sh/api/tenants
+  -d '{"slug":"acme","name":"Acme"}' https://sales.rising.sh/api/tenants
 ```
 
 A new tenant has no catalog, no periods and no channel account. The dashboard
@@ -111,7 +111,7 @@ operator, and a member of several, starts unpinned and picks one:
 
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"tenantId":"<id>"}' https://vendeya.rising.sh/api/tenants/active
+  -d '{"tenantId":"<id>"}' https://sales.rising.sh/api/tenants/active
 ```
 
 The dashboard does this from the tenant selector. The active tenant is the only
@@ -184,6 +184,21 @@ every use. Without it, a token cannot be stored: the seed leaves the account
 `pending`, and the channels API answers 503. With the wrong key, stored tokens
 cannot be read: sends fail with `no_token` while the account stays `active`.
 There is no key rotation tool.
+
+## The tenant's Cálidda login
+
+Each business sells on its own Cálidda account, at the same API host as every
+other business (`CALIDDA_BASE_URL`, a platform variable). A tenant admin enters
+the login on the settings page: `calidda_username` is a plain tenant setting,
+and `calidda_password` is encrypted in `tenant_secrets` under `SECRETS_KEY`, the
+same scheme as `channel_secrets`
+([`domains/settings/tenant-secrets.ts`](../apps/backend/src/domains/settings/tenant-secrets.ts)).
+The API never returns the password: `GET /api/admin/settings` reports
+`_has_calidda_password`, and posting a `calidda_password` value stores it
+encrypted — an empty value clears it — while a platform-scoped post refuses the
+key. A tenant with either part missing has no login, and its FNB checks take the
+unavailable path. Saving a login drops the tenant's cached FNB session and its
+breaker block. The login's FNB token cache in KV is keyed by tenant.
 
 ## How a webhook reaches a tenant
 
