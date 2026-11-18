@@ -68,29 +68,32 @@ bun run db:migrate:remote
 The backend refuses to deploy until every secret in `secrets.required` of
 `apps/backend/wrangler.jsonc` is set.
 
-| Secret                          | Value                                                               |
-| ------------------------------- | ------------------------------------------------------------------- |
-| `SECRETS_KEY`                   | `bun scripts/generate-token.ts secrets`, run at the repository root |
-| `WHATSAPP_APP_SECRET`           | Meta app dashboard, **App settings > Basic > App secret**           |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | `bun scripts/generate-token.ts webhook`, run at the repository root |
-| `OPENAI_API_KEY`                | an OpenAI API key                                                   |
+| Secret        | Value                                                               |
+| ------------- | ------------------------------------------------------------------- |
+| `SECRETS_KEY` | `bun scripts/generate-token.ts secrets`, run at the repository root |
+
+`SECRETS_KEY` is the only secret the Worker needs. It is the root key that
+encrypts every credential stored in D1 — each number's WhatsApp access token and
+Meta app secret, and each tenant's OpenAI key and Cálidda password. Those
+credentials are entered after the deploy: each tenant's OpenAI key and Cálidda
+login by its admin on `/dashboard/admin/settings`, each number's credentials on
+`/dashboard/admin/channels` or the `account channel create` command (see
+[Connecting WhatsApp](./whatsapp.md)). Saving one takes effect at once, without
+a deploy.
 
 `CALIDDA_BASE_URL` stays a plain variable in `wrangler.jsonc` — the Cálidda API
-host is the same for every business. The rest of the Cálidda and Power BI values
-are not deploy-time settings at all: each tenant's Cálidda username and password
-are entered by its admin on `/dashboard/admin/settings`, and the Power BI
-report's four ids are platform settings an operator enters on the same page (see
+host is the same for every business. The Power BI report's four ids are platform
+settings an operator enters on `/dashboard/admin/settings` (see
 [Eligibility](./eligibility.md#the-two-providers)).
 
-Write them to a file outside the repository, one `NAME=value` per line, such as
-`~/vendeya-production.env`. Keep a copy of `SECRETS_KEY` somewhere safe. Without
-it no stored WhatsApp token can be read, and a new key cannot read the old
-tokens.
+Write `SECRETS_KEY` to a file outside the repository, such as
+`~/vendeya-production.env`. Keep a copy somewhere safe. Without it no stored
+credential can be read, and a new key cannot read the old ones.
 
-To change one secret later:
+To change the secret later:
 
 ```sh
-bunx wrangler secret put OPENAI_API_KEY
+bunx wrangler secret put SECRETS_KEY
 ```
 
 A secret takes effect at once, without a deploy. Secrets are never deleted by a

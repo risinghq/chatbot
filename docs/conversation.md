@@ -215,8 +215,10 @@ The loop stops after 10 rounds and escalates with reason
 `enrichment_loop_exceeded`. A handler that throws ends the turn with no reply:
 the error is logged as "Message processing failed", a `system_error_occurred`
 alert goes to the dev group, and the turn is retried and then handed off (see
-[the inbox](#the-inbox-and-the-aggregator)). With no `OPENAI_API_KEY`, every
-message the regexes do not recognize ends this way.
+[the inbox](#the-inbox-and-the-aggregator)). The bot calls OpenAI with the
+tenant's own key, stored encrypted as the `openai_api_key` tenant secret; a
+tenant with no key — like an OpenAI outage — ends every message the regexes do
+not recognize this way.
 
 ## The executor
 

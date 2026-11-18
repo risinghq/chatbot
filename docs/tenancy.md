@@ -172,16 +172,16 @@ pending one.
 
 ## Encrypted credentials
 
-An account's access token and webhook verify token are stored in
-`channel_secrets`, AES-256-GCM encrypted under `SECRETS_KEY`
+An account's access token, webhook verify token and Meta app secret are stored
+in `channel_secrets`, AES-256-GCM encrypted under `SECRETS_KEY`
 ([`platform/crypto/secrets.ts`](../apps/backend/src/platform/crypto/secrets.ts)).
 The account row holds only a reference to each secret. Each ciphertext records a
 `key_id`, the first 16 hex characters of the SHA-256 of the key, and a different
 key cannot decrypt it.
 
 `SECRETS_KEY` is 32 bytes, as 64 hex characters or as base64. It is read on
-every use. Without it, a token cannot be stored: the seed leaves the account
-`pending`, and the channels API answers 503. With the wrong key, stored tokens
+every use. Without it, no credential can be stored: the seed skips the channel
+account, and the channels API answers 503. With the wrong key, stored tokens
 cannot be read: sends fail with `no_token` while the account stays `active`.
 There is no key rotation tool.
 
@@ -200,14 +200,24 @@ key. A tenant with either part missing has no login, and its FNB checks take the
 unavailable path. Saving a login drops the tenant's cached FNB session and its
 breaker block. The login's FNB token cache in KV is keyed by tenant.
 
+## The tenant's OpenAI key
+
+Each business brings its own OpenAI key. A tenant admin enters it on
+`/dashboard/admin/settings`, where it is stored in `tenant_secrets` under the
+key `openai_api_key`, write-only like the Cálidda password. There is no platform
+key: the turn builds the OpenAI client from the tenant's stored key, and a
+tenant with none takes the same unavailable path as an OpenAI outage. The
+dashboard's system status says the key is missing while it is unset.
+
 ## How a webhook reaches a tenant
 
 Meta's payload names the receiving number in
 `entry[].changes[].value.metadata.phone_number_id`.
 [`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts) looks the id up in
-`channel_accounts`. The account names the tenant. A batch that spans two tenants
-delivers to both. One app secret, `WHATSAPP_APP_SECRET`, signs every number's
-webhooks.
+`channel_accounts`. The account names the tenant, and the number's own app
+secret — stored in `channel_secrets` — is what the delivery's signature is
+checked against. A batch that spans two tenants delivers to both, once the
+signature has passed for every number it names.
 
 ## Suspension
 

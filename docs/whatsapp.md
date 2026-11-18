@@ -4,12 +4,12 @@ Each business number is a channel account on a tenant (see
 [Tenancy](./tenancy.md#channel-accounts)). Connecting one takes four values from
 Meta and one registration call:
 
-| Value                        | From Meta                                | Stored as                                 |
-| ---------------------------- | ---------------------------------------- | ----------------------------------------- |
-| Phone number id              | the number's id in the WhatsApp settings | `channel_accounts.phone_number_id`        |
-| WhatsApp Business Account id | the account the number belongs to        | `channel_accounts.waba_id`                |
-| Permanent access token       | a system user's token                    | encrypted in `channel_secrets`            |
-| App secret                   | the Meta app's basic settings            | `WHATSAPP_APP_SECRET`, one per deployment |
+| Value                        | From Meta                                | Stored as                          |
+| ---------------------------- | ---------------------------------------- | ---------------------------------- |
+| Phone number id              | the number's id in the WhatsApp settings | `channel_accounts.phone_number_id` |
+| WhatsApp Business Account id | the account the number belongs to        | `channel_accounts.waba_id`         |
+| Permanent access token       | a system user's token                    | encrypted in `channel_secrets`     |
+| App secret                   | the Meta app's basic settings            | encrypted in `channel_secrets`     |
 
 The phone number id is not the phone number.
 
@@ -46,7 +46,7 @@ built by `graphUrl` in [`config/graph.ts`](../apps/backend/src/config/graph.ts).
 ## Registering the number
 
 A platform operator registers the number from the command line, with no deploy.
-The command reads the access token from a hidden prompt:
+The command reads the access token and the app secret from hidden prompts:
 
 ```sh
 SECRETS_KEY=<the deployed key> bun run account channel create --tenant <slug> \
@@ -54,17 +54,13 @@ SECRETS_KEY=<the deployed key> bun run account channel create --tenant <slug> \
   --display-phone-number "+51 999 999 999" --label Ventas --remote
 ```
 
-[Operations](./operations.md#accounts) explains the key and the other forms. A
-number made this way has no verify token of its own, so Meta's handshake uses
-the secret `WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
+[Operations](./operations.md#accounts) explains the key and the other forms. The
+system generates the number's webhook verify token when the account is created;
+`/dashboard/admin/channels` shows it with the webhook URL.
 
 A platform operator pinned to the tenant can also register the number through
-the API. `SECRETS_KEY` must be set on the backend, or a request carrying a token
-answers 503.
-
-```sh
-bun scripts/generate-token.ts webhook    # prints a verify token
-```
+the API. `SECRETS_KEY` must be set on the backend, or a request carrying a
+credential answers 503.
 
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
@@ -74,14 +70,15 @@ curl -X POST -b "session=<token>" -H 'content-type: application/json' \
     "displayPhoneNumber": "+51 999 999 999",
     "label": "Ventas",
     "accessToken": "<permanent access token>",
-    "verifyToken": "<verify token>"
+    "appSecret": "<app secret>"
   }' \
   https://sales.rising.sh/api/admin/channels
 ```
 
-The answer is the account, without its secrets. An account created with an
-access token is `active` at once. A `phoneNumberId` another account holds
-answers 409. The routes are in
+The answer is the account with its `verify_token` and `webhook_url`; the access
+token and app secret never come back, only `has_access_token` and
+`has_app_secret`. An account created with an access token is `active` at once. A
+`phoneNumberId` another account holds answers 409. The routes are in
 [`routes/admin/channels.ts`](../apps/backend/src/routes/admin/channels.ts).
 
 To list the tenant's numbers, replace a token, or switch a number off:
@@ -98,7 +95,7 @@ curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
 token cannot be made `active`.
 
 The seed registers one number for the default tenant from `.dev.vars`:
-`WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN` and `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
+`WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN` and `WHATSAPP_APP_SECRET`
 ([`db/seeds/tenants.ts`](../apps/backend/src/db/seeds/tenants.ts)). It imports a
 credential only when the account does not have one yet, so a token replaced
 through the API survives the next seed.
@@ -122,9 +119,9 @@ reads only the `messages` in a delivery and ignores delivery statuses.
 
 When the callback URL is saved, Meta sends a GET with `hub.mode=subscribe`, a
 `hub.verify_token` and a `hub.challenge`. The backend answers the challenge if
-the token matches the verify token of any channel account, or
-`WHATSAPP_WEBHOOK_VERIFY_TOKEN`. Anything else answers 403. The handshake
-carries no phone number id, so any stored verify token passes it.
+the token matches the verify token of any channel account. Anything else
+answers 403. The handshake carries no phone number id, so any stored verify
+token passes it. `/dashboard/admin/channels` shows each number's token.
 
 ```sh
 curl "https://sales.rising.sh/api/webhook?hub.mode=subscribe&hub.verify_token=<verify token>&hub.challenge=42"
@@ -136,13 +133,14 @@ prints `42`.
 
 Meta signs every delivery with the app secret, in the header
 `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the raw body>`. The backend
-checks it against `WHATSAPP_APP_SECRET` and answers 401 on a mismatch
-([`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts)). While the secret
-is unset, every POST answers 503 and logs "Webhook POST refused:
-WHATSAPP_APP_SECRET is not set". The GET handshake does not need it.
-
-The deployment holds one app secret, so every number it serves must deliver its
-webhooks through the same Meta app.
+reads the phone number ids the body names, finds each number's channel account,
+and checks the signature against every named account's app secret before
+processing anything. A number that is not registered, an account with no app
+secret, a missing header or a mismatch all answer 401 and nothing is stored
+([`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts)). A delivery that
+names numbers on several channel accounts must verify against each of them,
+which in practice means the numbers belong to Meta apps that share the app
+secret.
 
 A signed test delivery with no messages:
 

@@ -55,14 +55,17 @@ the values in `wrangler.jsonc`.
 | `PLATFORM_OPS_PHONE_NUMBER_ID`               | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one          |
 | `WHATSAPP_GROUP_AGENT`, `WHATSAPP_GROUP_DEV` | variable | sales and dev alerts with no tenant setting have no target. See [Alerts](#alerts)                                      |
 | `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`            | variable | `info`. See [Logs](#logs)                                                                                              |
-| `SECRETS_KEY`                                | secret   | no channel token can be stored or read                                                                                 |
-| `WHATSAPP_APP_SECRET`                        | secret   | every webhook POST answers 503                                                                                         |
-| `WHATSAPP_WEBHOOK_VERIFY_TOKEN`              | secret   | the handshake answers only a channel account's own verify token                                                        |
-| `OPENAI_API_KEY`                             | secret   | any message the regexes miss gets no reply                                                                             |
+| `SECRETS_KEY`                                | secret   | no stored credential can be written or read                                                                            |
 
-In production `wrangler deploy` refuses to deploy while a secret is missing.
-`WHATSAPP_PHONE_ID` and `WHATSAPP_TOKEN` are read only by the seed, from
-`.dev.vars`. They give the default tenant its number.
+`SECRETS_KEY` is the only secret the Worker needs. It encrypts every credential
+stored in D1: each number's access token and app secret, each tenant's OpenAI
+key and Cálidda password. The credentials themselves are entered on the
+dashboard or the `account` command, not in `.dev.vars` or `wrangler secret`.
+
+In production `wrangler deploy` refuses to deploy while the secret is missing.
+`WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN` and `WHATSAPP_APP_SECRET` are read only by
+the seed, from `.dev.vars`. They give the default tenant its number and its Meta
+credentials.
 
 ## Accounts
 
@@ -276,6 +279,7 @@ bunx wrangler d1 execute vendeya --remote \
 | Check                                    | Where                                                                                        |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------- |
 | Webhooks arrive at all                   | the backend's logs: "Webhook POST rejected" or "refused" names the signature, size or secret |
+| The tenant's OpenAI key is set           | `_has_openai_api_key` in `GET /api/admin/settings`; the dashboard's status names it too      |
 | The number is `active`                   | `GET /api/admin/channels`                                                                    |
 | The tenant is not suspended              | `GET /api/tenants`                                                                           |
 | The turn failed                          | the log line "Message processing failed", and the dev alert                                  |

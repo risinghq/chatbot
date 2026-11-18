@@ -38,8 +38,8 @@ bun scripts/generate-token.ts secrets
 prints a line such as `SECRETS_KEY="IiGTB0N-..."`. Put it in
 `apps/backend/.dev.vars`.
 
-Without `SECRETS_KEY`, no access token can be stored. The seed leaves the
-default number `pending`, the account command refuses a token, and nothing can
+Without `SECRETS_KEY`, no credential can be stored. The seed skips the channel
+account and says so, the account command refuses to create one, and nothing can
 be sent to WhatsApp. The simulator still works, because it sends nothing. A
 different key later cannot read the tokens stored under this one.
 
@@ -161,10 +161,11 @@ skips `51999999999`, which the replay of a real conversation uses, and any
 number a real conversation holds. A deleted conversation never frees a number
 another simulation holds.
 
-Without `OPENAI_API_KEY`, a message the bot's patterns do not recognize gets no
+Without an OpenAI key, a message the bot's patterns do not recognize gets no
 reply, the backend logs "Message processing failed", and the simulator answers
-500 with `{"status":"failed","error":"..."}`. Set the key in `.dev.vars` to let
-the bot answer questions and recover from unclear replies.
+500 with `{"status":"failed","error":"..."}`. Each tenant brings its own key:
+the admin enters it on `/dashboard/admin/settings`, under OpenAI, and the bot
+can answer questions and recover from unclear replies.
 
 ## Next
 
