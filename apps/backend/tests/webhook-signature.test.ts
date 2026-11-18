@@ -1,19 +1,51 @@
 /**
- * POST /api/webhook accepts only what Meta signed with the app secret, and
- * decides that before the body is parsed or any channel account is consulted.
+ * POST /api/webhook accepts only what Meta signed with the app secret of the
+ * channel the body addresses, and decides that before any message is read. A
+ * body naming numbers on several channels must verify against each of them.
  */
 
-import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { getOne } from "../src/db/index.ts";
-import { TEST_BINDINGS } from "./bindings.ts";
-import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
+import {
+  addChannelAccount,
+  createTenantFixture,
+  type TenantFixture,
+} from "./helpers/tenancy.ts";
 import { signWebhookBody } from "./helpers/webhook.ts";
 
 import { webhookRequest } from "./helpers/turn.ts";
 
 const CUSTOMER = "51900777888";
+
+function delivery(phoneNumberId: string, messageId: string, text = "hola") {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "waba-signature",
+        changes: [
+          {
+            field: "messages",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: { phone_number_id: phoneNumberId },
+              messages: [
+                {
+                  from: CUSTOMER,
+                  id: messageId,
+                  timestamp: String(Math.floor(Date.now() / 1000)),
+                  type: "text",
+                  text: { body: text },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
 
 describe("webhook signature", () => {
   let tenant: TenantFixture;
@@ -24,33 +56,8 @@ describe("webhook signature", () => {
   beforeEach(async () => {
     tenant = await createTenantFixture("signature");
     messageId = `wamid-${crypto.randomUUID()}`;
-    rawBody = JSON.stringify({
-      object: "whatsapp_business_account",
-      entry: [
-        {
-          id: "waba-signature",
-          changes: [
-            {
-              field: "messages",
-              value: {
-                messaging_product: "whatsapp",
-                metadata: { phone_number_id: tenant.phoneNumberId },
-                messages: [
-                  {
-                    from: CUSTOMER,
-                    id: messageId,
-                    timestamp: String(Math.floor(Date.now() / 1000)),
-                    type: "text",
-                    text: { body: "hola" },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      ],
-    });
-    validSignature = await signWebhookBody(rawBody);
+    rawBody = JSON.stringify(delivery(tenant.phoneNumberId, messageId));
+    validSignature = await signWebhookBody(rawBody, tenant.appSecret);
   });
 
   function post(signature: string | undefined, body = rawBody) {
@@ -76,7 +83,7 @@ describe("webhook signature", () => {
     expect(await inboxRows()).toBe(0);
   }
 
-  it("accepts a valid signature and processes the message", async () => {
+  it("accepts a signature made with the channel's app secret", async () => {
     const response = await post(validSignature);
 
     expect(response.status).toBe(200);
@@ -86,8 +93,94 @@ describe("webhook signature", () => {
     expect(await inboxRows()).toBe(1);
   });
 
+  it("refuses a signature made with another channel's secret", async () => {
+    const other = await addChannelAccount(tenant, {
+      appSecret: "other-app-secret",
+    });
+
+    const body = JSON.stringify(delivery(other.phoneNumberId, messageId));
+    await expectRefused(
+      await post(await signWebhookBody(body, tenant.appSecret), body),
+    );
+  });
+
   it("refuses a request without the header", async () => {
     await expectRefused(await post(undefined));
+  });
+
+  it("refuses a body that names an unknown number, whatever the signature", async () => {
+    const body = JSON.stringify(delivery("pnid-unknown", messageId));
+    await expectRefused(
+      await post(await signWebhookBody(body, tenant.appSecret), body),
+    );
+    await expectRefused(await post(undefined, body));
+  });
+
+  it("refuses a delivery to a channel that has no app secret", async () => {
+    const noSecret = await addChannelAccount(tenant);
+    const { getById } = await import(
+      "../src/domains/channels/accounts.ts"
+    ).then((m) => ({ getById: m.ChannelAccountService.getById }));
+    const account = (await getById(noSecret.channelAccountId))!;
+    await (await import("../src/db/index.ts")).run(
+      "UPDATE channel_accounts SET app_secret_secret_id = NULL WHERE id = ?",
+      [account.id],
+    );
+
+    const body = JSON.stringify(delivery(noSecret.phoneNumberId, messageId));
+    await expectRefused(
+      await post(await signWebhookBody(body, noSecret.appSecret), body),
+    );
+  });
+
+  it("verifies a batch spanning two channels against each secret", async () => {
+    const other = await addChannelAccount(tenant);
+    const body = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "waba-1",
+          changes: [
+            {
+              field: "messages",
+              value: {
+                messaging_product: "whatsapp",
+                metadata: { phone_number_id: tenant.phoneNumberId },
+                messages: [
+                  {
+                    from: CUSTOMER,
+                    id: messageId,
+                    timestamp: String(Math.floor(Date.now() / 1000)),
+                    type: "text",
+                    text: { body: "hola" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          id: "waba-2",
+          changes: [
+            {
+              field: "messages",
+              value: {
+                messaging_product: "whatsapp",
+                metadata: { phone_number_id: other.phoneNumberId },
+                messages: [],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    // Both channels share the test secret, so the delivery verifies.
+    const response = await post(
+      await signWebhookBody(body, tenant.appSecret),
+      body,
+    );
+    expect(response.status).toBe(200);
   });
 
   it("refuses a digest without the sha256= prefix", async () => {
@@ -104,12 +197,6 @@ describe("webhook signature", () => {
     await expectRefused(await post(`${validSignature}00`));
   });
 
-  it("refuses a signature made with another secret", async () => {
-    await expectRefused(
-      await post(await signWebhookBody(rawBody, "someone-else")),
-    );
-  });
-
   it("refuses a body changed after signing", async () => {
     const tampered = rawBody.replace("hola", "chao");
     expect(tampered).not.toBe(rawBody);
@@ -123,43 +210,50 @@ describe("webhook signature", () => {
     await expectRefused(await post("!".repeat(200_000)));
   });
 
-  it("checks the signature before looking at the payload", async () => {
+  it("refuses a body that is not JSON, signed or not", async () => {
     const garbage = "not json at all";
-
-    const unsigned = await post(undefined, garbage);
-    expect(unsigned.status).toBe(401);
-
-    const signed = await post(await signWebhookBody(garbage), garbage);
-    expect(signed.status).toBe(400);
-    expect(await signed.json()).toEqual({ error: "invalid_payload" });
+    await expectRefused(await post(undefined, garbage));
+    await expectRefused(
+      await post(await signWebhookBody(garbage, tenant.appSecret), garbage),
+    );
   });
 
-  describe("when WHATSAPP_APP_SECRET is unset", () => {
-    beforeEach(() => {
-      env.WHATSAPP_APP_SECRET = "";
+  it("refuses a body that names no phone_number_id", async () => {
+    const empty = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [],
     });
+    await expectRefused(await post(undefined, empty));
 
-    afterEach(() => {
-      env.WHATSAPP_APP_SECRET = TEST_BINDINGS.WHATSAPP_APP_SECRET;
+    const noMetadata = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "waba-signature",
+          changes: [{ field: "messages", value: { messages: [] } }],
+        },
+      ],
     });
-
-    it("answers 503 even for a signature that would have matched", async () => {
-      const response = await post(validSignature);
-
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({
-        error: "webhook_not_configured",
-      });
-      expect(await inboxRows()).toBe(0);
-    });
+    await expectRefused(await post(undefined, noMetadata));
   });
 
-  it("leaves the GET verification handshake unsigned", async () => {
+  it("answers the GET handshake for the channel's generated verify token", async () => {
+    const token = await tenant.verifyToken();
+    expect(token).toBeTruthy();
+
     const response = await webhookRequest(
-      `/?hub.mode=subscribe&hub.verify_token=${TEST_BINDINGS.WHATSAPP_WEBHOOK_VERIFY_TOKEN}&hub.challenge=abc123`,
+      `/?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=abc123`,
     );
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("abc123");
+  });
+
+  it("refuses the GET handshake for a token no channel holds", async () => {
+    const response = await webhookRequest(
+      "/?hub.mode=subscribe&hub.verify_token=nobody&hub.challenge=abc123",
+    );
+
+    expect(response.status).toBe(403);
   });
 });

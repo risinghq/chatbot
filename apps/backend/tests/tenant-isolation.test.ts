@@ -678,12 +678,14 @@ describe("tenant isolation", () => {
       expect(await MessageStore.getHistory(betaRef)).toHaveLength(1);
     });
 
-    it("drops a message for an unknown phone-number id", async () => {
+    it("refuses a delivery for an unknown phone-number id", async () => {
       const response = await post(
         payload("pnid-not-registered", SHARED_PHONE, "hola"),
       );
 
-      expect(await statuses(response)).toEqual(["unknown_channel_account"]);
+      // The signature cannot be checked without the channel's app secret, so
+      // the whole body is refused before anything is read.
+      expect(response.status).toBe(401);
       expect(
         await getOne(
           "SELECT COUNT(*) as count FROM message_inbox WHERE phone_number = ?",
@@ -728,15 +730,16 @@ describe("tenant isolation", () => {
       ).toEqual({ count: 0 });
     });
 
-    it("ignores a payload with no phone-number id", async () => {
+    it("refuses a payload with no phone-number id", async () => {
       const body = payload(beta.phoneNumberId, SHARED_PHONE, "hola") as any;
       delete body.entry[0].changes[0].value.metadata;
 
       const response = await post(body);
 
-      expect(await statuses(response)).toEqual([
-        "unroutable_no_phone_number_id",
-      ]);
+      // A body naming no number has no app secret to check the signature
+      // against, so it is refused like a bad signature.
+      expect(response.status).toBe(401);
+      expect(await queued()).toEqual([]);
     });
 
     /**
@@ -768,7 +771,7 @@ describe("tenant isolation", () => {
       ]);
     });
 
-    it("delivers the rest of a batch when one number is unknown", async () => {
+    it("refuses the whole batch when one number is unknown", async () => {
       const response = await post(
         batch([
           { phoneNumberId: "pnid-not-registered", bodies: ["huérfano"] },
@@ -776,13 +779,10 @@ describe("tenant isolation", () => {
         ]),
       );
 
-      expect(await statuses(response)).toEqual([
-        "unknown_channel_account",
-        "received",
-      ]);
-      expect(await queued()).toEqual([
-        { tenant_id: beta.tenantId, message_text: "beta uno" },
-      ]);
+      // A body the signature cannot be checked against is refused whole:
+      // nothing is delivered, not even the messages a known number carried.
+      expect(response.status).toBe(401);
+      expect(await queued()).toEqual([]);
     });
 
     it("ignores a message it has already queued", async () => {

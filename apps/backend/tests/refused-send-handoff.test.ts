@@ -11,6 +11,7 @@ import { getAll, getOne, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
   setChannelStatus,
 } from "./helpers/tenancy.ts";
@@ -100,6 +101,7 @@ describe("a reply WhatsAppService refuses before it reaches the adapter", () => 
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
     ref = {

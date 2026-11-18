@@ -10,6 +10,7 @@ import { getAll, getOne, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
   setChannelStatus,
 } from "./helpers/tenancy.ts";
@@ -127,6 +128,7 @@ describe("a send refused partway through a transition", () => {
       tenantId: tenant.tenantId,
       phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     ref = {
       tenantId: tenant.tenantId,

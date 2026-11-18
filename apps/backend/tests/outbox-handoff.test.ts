@@ -12,6 +12,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -154,6 +155,7 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
     ref = {

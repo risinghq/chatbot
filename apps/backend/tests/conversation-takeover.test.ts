@@ -14,6 +14,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 import {
@@ -210,6 +211,7 @@ describe("a person takes over a conversation", () => {
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
     ref = {

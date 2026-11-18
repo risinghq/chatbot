@@ -1,15 +1,21 @@
 import type { ConversationRef } from "@vendeya/types";
 import { run } from "../../src/db/index.ts";
+import { ChannelAccountService } from "../../src/domains/channels/accounts.ts";
 import { TenantSecrets } from "../../src/domains/settings/tenant-secrets.ts";
 import {
   SystemSettings,
   TenantSettings,
 } from "../../src/domains/settings/system.ts";
 
+/** The app secret every fixture number signs with, unless a test sets another. */
+export const TEST_APP_SECRET = "test-meta-app-secret";
+
 export type TenantFixture = {
   tenantId: string;
   channelAccountId: string;
   phoneNumberId: string;
+  appSecret: string;
+  verifyToken: () => Promise<string | null>;
   ref(phoneNumber: string): ConversationRef;
 };
 
@@ -29,16 +35,24 @@ export async function createTenantFixture(
     "INSERT INTO tenants (id, slug, name, status) VALUES (?, ?, ?, 'active')",
     [tenantId, `${slug}-${tenantId.slice(3, 11)}`, slug],
   );
-  await run(
-    `INSERT INTO channel_accounts (id, tenant_id, channel_type, phone_number_id, status)
-     VALUES (?, ?, 'whatsapp', ?, 'active')`,
-    [channelAccountId, tenantId, phoneNumberId],
-  );
+  const account = await ChannelAccountService.create({
+    id: channelAccountId,
+    tenantId,
+    phoneNumberId,
+    accessToken: "test-access-token",
+    appSecret: TEST_APP_SECRET,
+    status: "active",
+  });
 
   const fixture: TenantFixture = {
     tenantId,
     channelAccountId,
     phoneNumberId,
+    appSecret: TEST_APP_SECRET,
+    verifyToken: async () =>
+      ChannelAccountService.getVerifyToken(
+        (await ChannelAccountService.getById(channelAccountId)) ?? account,
+      ),
     ref: (phoneNumber: string) => ({
       tenantId,
       channelAccountId: fixture.channelAccountId,
@@ -52,23 +66,32 @@ export async function createTenantFixture(
  * A second WhatsApp number for the same tenant. One contact writing to both is
  * two conversations, which is what the ambiguity guards are about.
  */
-export async function addChannelAccount(fixture: TenantFixture): Promise<{
+export async function addChannelAccount(
+  fixture: TenantFixture,
+  options: { appSecret?: string } = {},
+): Promise<{
   channelAccountId: string;
   phoneNumberId: string;
+  appSecret: string;
   ref(phoneNumber: string): ConversationRef;
 }> {
   const channelAccountId = `ch-${crypto.randomUUID()}`;
   const phoneNumberId = `pnid-${crypto.randomUUID().slice(0, 8)}`;
+  const appSecret = options.appSecret ?? TEST_APP_SECRET;
 
-  await run(
-    `INSERT INTO channel_accounts (id, tenant_id, channel_type, phone_number_id, status)
-     VALUES (?, ?, 'whatsapp', ?, 'active')`,
-    [channelAccountId, fixture.tenantId, phoneNumberId],
-  );
+  await ChannelAccountService.create({
+    id: channelAccountId,
+    tenantId: fixture.tenantId,
+    phoneNumberId,
+    accessToken: "test-access-token",
+    appSecret,
+    status: "active",
+  });
 
   return {
     channelAccountId,
     phoneNumberId,
+    appSecret,
     ref: (phoneNumber: string) => ({
       tenantId: fixture.tenantId,
       channelAccountId,

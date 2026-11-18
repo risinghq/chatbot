@@ -10,8 +10,5 @@ export const TEST_BINDINGS = {
   GRAPH_API_BASE_URL: "https://graph.test",
   BOT_RESPONSE_DELAY_MS: "0",
   SECRETS_KEY: "0".repeat(64),
-  WHATSAPP_APP_SECRET: "test-meta-app-secret",
-  WHATSAPP_WEBHOOK_VERIFY_TOKEN: "test-verify-token",
-  OPENAI_API_KEY: "",
   CALIDDA_BASE_URL: "https://calidda.test",
 } as const;

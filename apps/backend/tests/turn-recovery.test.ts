@@ -21,6 +21,7 @@ import { eventBus } from "../src/shared/events/index.ts";
 import {
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 import { customerWrites } from "./helpers/turn.ts";
@@ -135,6 +136,7 @@ describe("a customer whose turn fails", () => {
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
 

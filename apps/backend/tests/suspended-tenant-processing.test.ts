@@ -13,6 +13,7 @@ import {
   createTenantFixture,
   createMember,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -137,6 +138,7 @@ describe("a suspended tenant", () => {
         tenantId: fixture.tenantId,
         phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
         accessToken: "EAAG-a-real-looking-token",
+        appSecret: TEST_APP_SECRET,
       });
       const ref = {
         tenantId: fixture.tenantId,

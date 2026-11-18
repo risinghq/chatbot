@@ -11,6 +11,7 @@ import { getAll, getOne, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 import { customerWrites, wakeAt } from "./helpers/turn.ts";
@@ -123,6 +124,7 @@ describe("a turn whose first reply could not be sent", () => {
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
     ref = {

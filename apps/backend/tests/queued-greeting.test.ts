@@ -7,7 +7,11 @@ import { getOne, run } from "../src/db/index.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { quietWindowPasses, webhookRequest } from "./helpers/turn.ts";
-import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
+import {
+  createTenantFixture,
+  TEST_APP_SECRET,
+  type TenantFixture,
+} from "./helpers/tenancy.ts";
 import { signedWebhookRequest } from "./helpers/webhook.ts";
 
 const CUSTOMER = "51900555001";
@@ -26,6 +30,7 @@ describe("messages queued before the greeting is processed", () => {
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
 

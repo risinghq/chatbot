@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import { hashPassword } from "../src/platform/auth/password.ts";
 import { frontendPath, importFrontend } from "./helpers/frontend.ts";
@@ -1461,6 +1462,9 @@ describe("HTTP authorization", () => {
       it("does not half-apply the rest of the request", async () => {
         // The verify token is written before the status in the handler's own
         // order, so a refusal decided afterwards would leave it stored.
+        const before = (await ChannelAccountService.getById(pendingId))!
+          .verify_token_secret_id;
+
         await patch(`/api/admin/channels/${pendingId}`, alphaAdmin, {
           verifyToken: "verify-me",
           status: "active",
@@ -1469,7 +1473,7 @@ describe("HTTP authorization", () => {
         expect(
           (await ChannelAccountService.getById(pendingId))
             ?.verify_token_secret_id,
-        ).toBeNull();
+        ).toBe(before);
       });
 
       it("allows it when the token arrives in the same request", async () => {
@@ -1522,6 +1526,38 @@ describe("HTTP authorization", () => {
         }
       });
     });
+  });
+
+  // Creation always stores the generated verify token encrypted, so without
+  // SECRETS_KEY the POST refuses rather than dying inside `create`.
+  it("refuses a channel create with no credentials when SECRETS_KEY is unset", async () => {
+    const operator = await login(
+      await createUser({
+        tenantId: alpha.tenantId,
+        isPlatformOperator: true,
+      }),
+      alpha.tenantId,
+    );
+
+    const phoneNumberId = `pnid-${crypto.randomUUID().slice(0, 8)}`;
+    const previous = env.SECRETS_KEY;
+    try {
+      (env as unknown as Record<string, string>).SECRETS_KEY = "";
+
+      const response = await post("/api/admin/channels", operator, {
+        phoneNumberId,
+      });
+
+      expect(response.status).toBe(503);
+      expect(
+        await getOne(
+          "SELECT COUNT(*) as count FROM channel_accounts WHERE phone_number_id = ?",
+          [phoneNumberId],
+        ),
+      ).toEqual({ count: 0 });
+    } finally {
+      (env as unknown as Record<string, string>).SECRETS_KEY = previous;
+    }
   });
 
   /**

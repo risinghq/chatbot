@@ -11,6 +11,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
   setChannelStatus,
 } from "./helpers/tenancy.ts";
@@ -69,6 +70,7 @@ describe("a send the turn asked to keep", () => {
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
     ref = {

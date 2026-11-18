@@ -12,6 +12,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  TEST_APP_SECRET,
   type TenantFixture,
   setChannelStatus,
 } from "./helpers/tenancy.ts";
@@ -123,6 +124,7 @@ describe("the outbox sender", () => {
       tenantId: tenant.tenantId,
       phoneNumberId: tenant.phoneNumberId,
       accessToken: "EAAG-a-real-looking-token",
+      appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
     ref = {

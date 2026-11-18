@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { env } from "cloudflare:workers";
 import { decodeHex } from "@oslojs/encoding";
 import type {
   ChannelAccount,
@@ -51,26 +50,19 @@ function constantTimeEquals(a: string, b: string): boolean {
 }
 
 /**
- * Meta's verification handshake carries no phone-number id, so the token is the
- * only thing identifying the caller. Any channel account whose verify token
- * matches answers the challenge. The env var stays as the fallback for the
- * account seeded from it.
+ * Meta's verification handshake carries no phone-number id, so the token is
+ * the only thing identifying the caller. Any channel account whose generated
+ * verify token matches answers the challenge.
  */
 async function verifyTokenMatches(
   token: string,
-): Promise<ChannelAccount | "env" | null> {
+): Promise<ChannelAccount | null> {
   for (const account of await ChannelAccountService.listWithVerifyToken()) {
     const stored = await ChannelAccountService.getVerifyToken(account);
     if (stored && constantTimeEquals(stored, token)) {
       return account;
     }
   }
-
-  const envToken = env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
-  if (envToken && constantTimeEquals(envToken, token)) {
-    return "env";
-  }
-
   return null;
 }
 
@@ -124,16 +116,67 @@ webhook.get("/", async (c) => {
     return c.text("Forbidden", 403);
   }
 
-  logger.info(
-    {
-      channelAccountId: match === "env" ? null : match.id,
-      source: match === "env" ? "env" : "channel_account",
-    },
-    "Webhook verification succeeded",
-  );
+  logger.info({ channelAccountId: match.id }, "Webhook verification succeeded");
 
   return c.text(challenge || "");
 });
+
+/**
+ * The phone_number_id every change's metadata names. Read before the body is
+ * fully parsed: the signature can be checked only against the app secret of
+ * the channel each number belongs to.
+ */
+function phoneNumberIdsOf(body: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (typeof body !== "object" || body === null) return ids;
+
+  const entries = (body as { entry?: unknown }).entry;
+  if (!Array.isArray(entries)) return ids;
+
+  for (const entry of entries) {
+    const changes = (entry as { changes?: unknown })?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const change of changes) {
+      const metadata = (change as { value?: { metadata?: unknown } })?.value
+        ?.metadata;
+      const id = (metadata as { phone_number_id?: unknown })?.phone_number_id;
+      if (typeof id === "string" && id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * The app secrets the signature must satisfy: one per channel the body
+ * addresses, or why the delivery is refused. Meta retries a 5xx, so an
+ * unsigned or unverifiable delivery is a 401 even though the cause is a
+ * missing secret on our side.
+ */
+async function appSecretsFor(
+  ids: Set<string>,
+): Promise<{ secrets: Map<string, string> } | { refused: string }> {
+  const secrets = new Map<string, string>();
+  for (const id of ids) {
+    const account = await ChannelAccountService.getByPhoneNumberId(id);
+    if (!account) {
+      logger.warn(
+        { phoneNumberId: id },
+        "Webhook POST refused: unknown channel account",
+      );
+      return { refused: "unknown_channel_account" };
+    }
+    const secret = await ChannelAccountService.getAppSecret(account);
+    if (!secret) {
+      logger.warn(
+        { phoneNumberId: id, channelAccountId: account.id },
+        "Webhook POST refused: channel account has no app secret",
+      );
+      return { refused: "no_app_secret" };
+    }
+    secrets.set(id, secret);
+  }
+  return { secrets };
+}
 
 /**
  * Where a change's messages are meant to go, or why they go nowhere. Resolving
@@ -308,27 +351,47 @@ async function handleInbound(
  * the conversation's object.
  */
 webhook.post("/", limitWebhookBody, async (c) => {
-  const appSecret = env.WHATSAPP_APP_SECRET;
-  if (!appSecret) {
-    logger.warn("Webhook POST refused: WHATSAPP_APP_SECRET is not set");
-    return c.json({ error: "webhook_not_configured" }, 503);
+  const rawBody = await c.req.text();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    logger.warn("Webhook POST refused: body is not JSON");
+    return c.json({ error: "invalid_signature" }, 401);
   }
 
-  const rawBody = await c.req.text();
-  const failure = await signatureFailure(
-    rawBody,
-    c.req.header("X-Hub-Signature-256") ?? null,
-    appSecret,
-  );
-  if (failure) {
-    logger.warn({ reason: failure }, "Webhook POST rejected: bad signature");
+  // The signature is checked against the app secret of every channel the
+  // body addresses, before any message is read. A delivery naming numbers
+  // on more than one channel must verify against each of them; one naming
+  // none has no secret to check against and is refused like a bad signature.
+  const phoneNumberIds = phoneNumberIdsOf(parsed);
+  if (phoneNumberIds.size === 0) {
+    logger.warn("Webhook POST refused: body names no phone_number_id");
     return c.json({ error: "invalid_signature" }, 401);
+  }
+
+  const resolved = await appSecretsFor(phoneNumberIds);
+  if ("refused" in resolved) {
+    return c.json({ error: "invalid_signature" }, 401);
+  }
+
+  const header = c.req.header("X-Hub-Signature-256") ?? null;
+  for (const [phoneNumberId, secret] of resolved.secrets) {
+    const failure = await signatureFailure(rawBody, header, secret);
+    if (failure) {
+      logger.warn(
+        { reason: failure, phoneNumberId },
+        "Webhook POST rejected: bad signature",
+      );
+      return c.json({ error: "invalid_signature" }, 401);
+    }
   }
 
   let changes: ParsedChange[];
 
   try {
-    changes = parseWebhookBody(JSON.parse(rawBody));
+    changes = parseWebhookBody(parsed);
   } catch (error) {
     logger.error({ error }, "Webhook body could not be parsed");
     return c.json({ error: "invalid_payload" }, 400);

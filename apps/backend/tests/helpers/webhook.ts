@@ -1,10 +1,10 @@
 import { encodeHexLowerCase } from "@oslojs/encoding";
-import { TEST_BINDINGS } from "../bindings.ts";
+import { TEST_APP_SECRET } from "./tenancy.ts";
 
 /** The `X-Hub-Signature-256` value Meta would send for this raw body. */
 export async function signWebhookBody(
   rawBody: string,
-  secret: string = TEST_BINDINGS.WHATSAPP_APP_SECRET,
+  secret: string = TEST_APP_SECRET,
 ): Promise<string> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
