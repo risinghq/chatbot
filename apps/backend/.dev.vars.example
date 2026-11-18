@@ -21,14 +21,6 @@ WHATSAPP_APP_SECRET=
 WHATSAPP_WEBHOOK_VERIFY_TOKEN=
 # Without it, a message the regexes miss gets no reply.
 OPENAI_API_KEY=
-# Cálidda FNB. Without them every FNB check fails.
-CALIDDA_USERNAME=
-CALIDDA_PASSWORD=
-# Cálidda Gaso (Power BI). Without them every Gaso check fails.
-POWERBI_RESOURCE_KEY=
-POWERBI_REPORT_ID=
-POWERBI_DATASET_ID=
-POWERBI_MODEL_ID=
 
 # Seed only. `bun run seed` gives the default tenant this number and token.
 # Without them the tenant gets a pending placeholder number.

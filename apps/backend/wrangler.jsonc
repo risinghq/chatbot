@@ -9,8 +9,8 @@
   // The dashboard Worker owns the custom domain. These routes send the API, the
   // webhook and the public catalog images straight to this Worker.
   "routes": [
-    { "pattern": "vendeya.rising.sh/api/*", "zone_name": "rising.sh" },
-    { "pattern": "vendeya.rising.sh/media/*", "zone_name": "rising.sh" },
+    { "pattern": "sales.rising.sh/api/*", "zone_name": "rising.sh" },
+    { "pattern": "sales.rising.sh/media/*", "zone_name": "rising.sh" },
   ],
   "d1_databases": [
     {
@@ -48,7 +48,7 @@
   // docs/operations.md says what each variable and secret changes.
   "vars": {
     "ENVIRONMENT": "production",
-    "PUBLIC_URL": "https://vendeya.rising.sh",
+    "PUBLIC_URL": "https://sales.rising.sh",
     "LOG_LEVEL": "info",
     "GRAPH_API_VERSION": "v26.0",
     "GRAPH_API_BASE_URL": "https://graph.facebook.com",
@@ -65,12 +65,6 @@
       "WHATSAPP_APP_SECRET",
       "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
       "OPENAI_API_KEY",
-      "CALIDDA_USERNAME",
-      "CALIDDA_PASSWORD",
-      "POWERBI_RESOURCE_KEY",
-      "POWERBI_REPORT_ID",
-      "POWERBI_DATASET_ID",
-      "POWERBI_MODEL_ID",
     ],
   },
 }
