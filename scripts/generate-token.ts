@@ -1,5 +1,4 @@
 const PRESETS = {
-  webhook: { bytes: 32, variable: "WHATSAPP_WEBHOOK_VERIFY_TOKEN" },
   secrets: { bytes: 32, variable: "SECRETS_KEY" },
 } as const;
 
@@ -18,11 +17,8 @@ function main() {
   let length: number;
   let variable = "GENERATED_TOKEN";
 
-  if (!arg) {
-    length = PRESETS.webhook.bytes;
-    variable = PRESETS.webhook.variable;
-  } else if (arg in PRESETS) {
-    const preset = arg as PresetName;
+  if (!arg || arg in PRESETS) {
+    const preset = (arg ?? "secrets") as PresetName;
     length = PRESETS[preset].bytes;
     variable = PRESETS[preset].variable;
   } else {
@@ -31,13 +27,10 @@ function main() {
       console.error("Error: Length must be a number >= 16");
       console.log("\nUsage:");
       console.log(
-        "  bun run scripts/generate-token.ts           # Generate webhook token (default)",
+        "  bun run scripts/generate-token.ts           # SECRETS_KEY (default)",
       );
       console.log(
         "  bun run scripts/generate-token.ts <length>  # Custom length (min 16)",
-      );
-      console.log(
-        "  bun run scripts/generate-token.ts webhook   # Webhook verify token (32 bytes)",
       );
       console.log(
         "  bun run scripts/generate-token.ts secrets   # SECRETS_KEY (32 bytes)",

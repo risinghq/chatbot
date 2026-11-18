@@ -60,11 +60,6 @@
   },
   // Set each with `wrangler secret put <NAME>`. Local values live in .dev.vars.
   "secrets": {
-    "required": [
-      "SECRETS_KEY",
-      "WHATSAPP_APP_SECRET",
-      "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
-      "OPENAI_API_KEY",
-    ],
+    "required": ["SECRETS_KEY"],
   },
 }
