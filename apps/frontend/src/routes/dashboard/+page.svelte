@@ -5,6 +5,13 @@ import PageTitle from "#lib/components/shared/page-title.svelte";
 import type { PageData } from "./$types";
 
 let { data }: { data: PageData } = $props();
+
+// The tenant's OpenAI key is what lets the bot think. The tenant list the
+// layout loaded says whether it is stored, so the status can warn before a
+// customer finds out.
+let aiConfigured = $derived(
+  auth.tenants.find((t) => t.id === auth.activeTenantId)?.ai_configured ?? true,
+);
 </script>
 
 <PageTitle title="Dashboard" />
@@ -32,13 +39,32 @@ let { data }: { data: PageData } = $props();
 						Estado del sistema
 					</p>
 					<div class="flex items-center gap-2">
-						<span
-							class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
-						></span>
-						<span class="text-sm font-mono text-ink-600"
-							>Operativo</span
-						>
+						{#if aiConfigured}
+							<span
+								class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
+							></span>
+							<span class="text-sm font-mono text-ink-600"
+								>Operativo</span
+							>
+						{:else}
+							<span
+								class="w-2 h-2 rounded-full bg-orange-500 animate-pulse"
+							></span>
+							<span class="text-sm font-mono text-ink-600"
+								>Sin clave de OpenAI</span
+							>
+						{/if}
 					</div>
+					{#if !aiConfigured}
+						<p class="text-xs text-ink-400 mt-2 leading-relaxed">
+							Falta la clave de OpenAI del negocio. El bot no puede
+							interpretar mensajes. El administrador la configura en
+							<a
+								href="/dashboard/admin/settings"
+								class="underline hover:text-ink-600">Configuración</a
+							>.
+						</p>
+					{/if}
 				</div>
 
 				{#if auth.isSalesAgent}

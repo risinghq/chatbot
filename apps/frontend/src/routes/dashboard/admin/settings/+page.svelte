@@ -14,14 +14,16 @@ let loading = $state(true);
 let saving = $state(false);
 let showConfirmModal = $state(false);
 
-// The Cálidda password is write-only: the API reports `_has_calidda_password`,
-// never the value. The field stays out of `settings` so a save posts it only
-// when the admin typed a new one.
+// The Cálidda password and the OpenAI key are write-only: the API reports
+// `_has_<key>`, never the value. Each field stays out of `settings` so a save
+// posts it only when the admin typed a new one.
 let caliddaPassword = $state("");
+let openaiKey = $state("");
 
 let hasChanges = $derived(
   JSON.stringify(settings) !== JSON.stringify(initialSettings) ||
-    caliddaPassword !== "",
+    caliddaPassword !== "" ||
+    openaiKey !== "",
 );
 
 // The Calidda integrations are shared platform infrastructure, not per
@@ -69,6 +71,7 @@ async function confirmSave() {
       Object.entries(settings).filter(([key]) => !key.startsWith("_")),
     );
     if (caliddaPassword) payload.calidda_password = caliddaPassword;
+    if (openaiKey) payload.openai_api_key = openaiKey;
 
     await fetchApi("/api/admin/settings", {
       method: "POST",
@@ -76,9 +79,17 @@ async function confirmSave() {
       body: JSON.stringify(payload),
     });
 
-    initialSettings = { ...settings, _has_calidda_password: "true" };
-    settings._has_calidda_password = "true";
+    initialSettings = {
+      ...settings,
+      _has_calidda_password:
+        caliddaPassword || settings._has_calidda_password ? "true" : "false",
+      _has_openai_api_key:
+        openaiKey || settings._has_openai_api_key ? "true" : "false",
+    };
+    if (caliddaPassword) settings._has_calidda_password = "true";
+    if (openaiKey) settings._has_openai_api_key = "true";
     caliddaPassword = "";
+    openaiKey = "";
     toast.success("Configuración actualizada");
   } catch (e) {
     toast.error("Error al guardar configuración");
@@ -313,6 +324,36 @@ onMount(() => {
         </FormField>
       </div>
     </SectionShell>
+
+    <SectionShell
+      title="OpenAI"
+      description="La clave de API de OpenAI de este negocio. El bot la usa para entender y responder mensajes."
+    >
+      <div class="p-6">
+        {#if settings._has_openai_api_key !== "true"}
+          <div
+            class="mb-4 flex items-center gap-2 text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded border border-orange-100"
+          >
+            Sin clave configurada: el bot no puede interpretar mensajes fuera de
+            sus patrones.
+          </div>
+        {/if}
+        <FormField label="Clave de API" for="openai-api-key">
+          <Input
+            id="openai-api-key"
+            type="password"
+            bind:value={openaiKey}
+            placeholder={settings._has_openai_api_key === "true"
+              ? "Configurada — escribe para reemplazarla"
+              : "Sin configurar"}
+          />
+          <p class="text-xs text-ink-500 mt-1">
+            Se guarda cifrada y no se vuelve a mostrar. Deja el campo vacío para
+            conservar la actual.
+          </p>
+        </FormField>
+      </div>
+    </SectionShell>
   {/if}
 
   {#if hasChanges}
@@ -369,6 +410,12 @@ onMount(() => {
           <li class="flex justify-between gap-4">
             <span class="text-ink-600">calidda_password</span>
             <span class="font-bold text-ink-900">nueva contraseña</span>
+          </li>
+        {/if}
+        {#if openaiKey}
+          <li class="flex justify-between gap-4">
+            <span class="text-ink-600">openai_api_key</span>
+            <span class="font-bold text-ink-900">nueva clave</span>
           </li>
         {/if}
       </ul>

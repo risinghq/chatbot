@@ -27,6 +27,8 @@ type Tenant = {
   slug: string;
   name: string;
   role: string | null;
+  /** Whether the tenant's own OpenAI key is stored. */
+  ai_configured?: boolean;
 };
 
 type AuthState = {

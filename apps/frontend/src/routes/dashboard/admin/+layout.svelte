@@ -9,6 +9,7 @@ const tabs = [
   { href: "/dashboard/admin/users", label: "Usuarios" },
   { href: "/dashboard/admin/periods", label: "Periodos" },
   { href: "/dashboard/admin/audit", label: "Auditoría" },
+  { href: "/dashboard/admin/channels", label: "Números" },
   { href: "/dashboard/admin/settings", label: "Configuración" },
 ];
 
