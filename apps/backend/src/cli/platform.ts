@@ -7,6 +7,7 @@ import {
   getPlatformProxy,
   type Unstable_RawConfig,
 } from "wrangler";
+import { remoteBindings } from "./remote.ts";
 
 type BunRuntime = {
   plugin(plugin: {
@@ -28,7 +29,9 @@ const CONFIG_PATH = path.resolve(
 /**
  * Runs a Bun script against the backend's bindings. Locally that is the D1,
  * KV and R2 state `wrangler dev` uses, under `.wrangler/state`. With `remote`
- * it is the deployed D1 database and R2 bucket, which needs `wrangler login`.
+ * the D1 database and R2 bucket go over the Cloudflare HTTP API
+ * (`cli/remote.ts`), which needs the shell's CLOUDFLARE_ACCOUNT_ID and
+ * CLOUDFLARE_API_TOKEN, never `wrangler login`.
  *
  * The application reads its bindings from `cloudflare:workers`, which only the
  * Workers runtime provides, so a Bun plugin serves that module from the proxy
@@ -44,14 +47,15 @@ export async function withPlatform<T>(
   options: { remote: boolean },
   load: () => Promise<T>,
 ): Promise<T> {
-  const config = await scriptConfig(options.remote);
-  const proxy = await getPlatformProxy<Env>({
-    configPath: config,
-    remoteBindings: options.remote,
-  });
-  const env: Env = options.remote
-    ? { ...proxy.env, SECRETS_KEY: process.env.SECRETS_KEY ?? "" }
-    : proxy.env;
+  const { configPath, rawConfig } = await scriptConfig(options.remote);
+  const remote = options.remote
+    ? {
+        ...remoteBindings(rawConfig),
+        SECRETS_KEY: process.env.SECRETS_KEY ?? "",
+      }
+    : null;
+  const proxy = await getPlatformProxy<Env>({ configPath });
+  const env: Env = remote ? { ...proxy.env, ...remote } : proxy.env;
 
   const pending: Promise<unknown>[] = [];
   (globalThis as unknown as { Bun: BunRuntime }).Bun.plugin({
@@ -74,27 +78,28 @@ export async function withPlatform<T>(
     return result;
   } finally {
     await proxy.dispose();
-    await rm(config, { force: true });
+    await rm(configPath, { force: true });
   }
 }
 
 /**
- * A copy of wrangler.jsonc without the Durable Objects. With `remote` its D1
- * database and R2 bucket are marked remote, so the proxy reaches the deployed
- * ones.
- *
- * The copy sits next to wrangler.jsonc, because wrangler finds .dev.vars and
- * the local state directory relative to the config it reads.
+ * A copy of wrangler.jsonc without the Durable Objects, next to it so the
+ * proxy finds .dev.vars and the local state directory where wrangler does.
+ * The raw config comes back too: a remote run takes the deployed database's
+ * id and the bucket's name from it.
  */
-async function scriptConfig(remote: boolean): Promise<string> {
+async function scriptConfig(
+  remote: boolean,
+): Promise<{ configPath: string; rawConfig: Unstable_RawConfig }> {
   const rawConfig: Unstable_RawConfig = experimental_readRawConfig({
     config: CONFIG_PATH,
   }).rawConfig;
 
-  const databases = rawConfig.d1_databases ?? [];
   if (
     remote &&
-    databases.some((db) => /^0+(-0+)*$/.test(db.database_id ?? ""))
+    (rawConfig.d1_databases ?? []).some((db) =>
+      /^0+(-0+)*$/.test(db.database_id ?? ""),
+    )
   ) {
     throw new Error(
       "wrangler.jsonc still holds the placeholder D1 id. Set the real id first (docs/deploy.md).",
@@ -104,14 +109,8 @@ async function scriptConfig(remote: boolean): Promise<string> {
   const raw = {
     ...rawConfig,
     $schema: undefined,
-
     durable_objects: undefined,
     migrations: undefined,
-    d1_databases: databases.map((db) => ({ ...db, remote })),
-    r2_buckets: (rawConfig.r2_buckets ?? []).map((bucket) => ({
-      ...bucket,
-      remote,
-    })),
   };
 
   const configPath = path.join(
@@ -119,5 +118,5 @@ async function scriptConfig(remote: boolean): Promise<string> {
     `wrangler.script.${process.pid}.json`,
   );
   await writeFile(configPath, JSON.stringify(raw));
-  return configPath;
+  return { configPath, rawConfig };
 }

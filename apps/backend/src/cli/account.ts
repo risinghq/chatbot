@@ -13,7 +13,9 @@ const USAGE = `Usage:
       [--waba-id <id>] [--display-phone-number <number>] [--label <label>]
 
 <tenant> is a tenant's id or slug. Every command writes to the local D1
-database that \`bun run dev\` uses. Add --remote to write to the deployed one.
+database that \`bun run dev\` uses. Add --remote to write to the deployed one,
+which reads CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN from the
+environment.
 
 A password or an access token is read from a hidden prompt, or from stdin when
 stdin is not a terminal. It is never taken from arguments or the environment.
