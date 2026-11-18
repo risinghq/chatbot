@@ -5,7 +5,7 @@ import {
   isAvailable,
   markBlocked,
 } from "../../../adapters/providers/health.ts";
-import { isProviderForcedDown } from "../../settings/system.ts";
+import { isProviderForcedDown, powerbiReport } from "../../settings/system.ts";
 import { getSimulationPersona } from "../shared.ts";
 import { PersonasService } from "../../personas/index.ts";
 import type { EligibilityProvider } from "./provider.ts";
@@ -59,10 +59,26 @@ export class PowerBIProvider implements EligibilityProvider {
       );
     }
 
+    // The one public Cálidda report is a platform setting. Unset is a provider
+    // that is not there, the same as an outage.
+    const report = await powerbiReport();
+    if (!report) {
+      logger.debug({ dni }, "Power BI report not configured");
+      return Err(
+        new ProviderError(
+          "PowerBI",
+          "unavailable",
+          "Power BI report not configured",
+        ),
+      );
+    }
+
     // Perform check
     try {
-      const { estado, nombre, saldoStr, nseStr } =
-        await PowerBIClient.queryAll(dni);
+      const { estado, nombre, saldoStr, nseStr } = await PowerBIClient.queryAll(
+        dni,
+        report,
+      );
 
       // All fields empty => provider unavailable
       if (!estado && !nombre && !saldoStr && !nseStr) {

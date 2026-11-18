@@ -3,6 +3,8 @@ import { onMount } from "svelte";
 import { fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import Button from "#lib/components/ui/button.svelte";
+import FormField from "#lib/components/ui/form-field.svelte";
+import Input from "#lib/components/ui/input.svelte";
 import Modal from "#lib/components/ui/modal.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 
@@ -12,8 +14,14 @@ let loading = $state(true);
 let saving = $state(false);
 let showConfirmModal = $state(false);
 
+// The Cálidda password is write-only: the API reports `_has_calidda_password`,
+// never the value. The field stays out of `settings` so a save posts it only
+// when the admin typed a new one.
+let caliddaPassword = $state("");
+
 let hasChanges = $derived(
-  JSON.stringify(settings) !== JSON.stringify(initialSettings),
+  JSON.stringify(settings) !== JSON.stringify(initialSettings) ||
+    caliddaPassword !== "",
 );
 
 // The Calidda integrations are shared platform infrastructure, not per
@@ -60,6 +68,7 @@ async function confirmSave() {
     const payload = Object.fromEntries(
       Object.entries(settings).filter(([key]) => !key.startsWith("_")),
     );
+    if (caliddaPassword) payload.calidda_password = caliddaPassword;
 
     await fetchApi("/api/admin/settings", {
       method: "POST",
@@ -67,7 +76,9 @@ async function confirmSave() {
       body: JSON.stringify(payload),
     });
 
-    initialSettings = { ...settings };
+    initialSettings = { ...settings, _has_calidda_password: "true" };
+    settings._has_calidda_password = "true";
+    caliddaPassword = "";
     toast.success("Configuración actualizada");
   } catch (e) {
     toast.error("Error al guardar configuración");
@@ -245,6 +256,65 @@ onMount(() => {
     {/if}
   </SectionShell>
 
+  {#if !loading && canEditPlatformSettings}
+    <SectionShell
+      title="Reporte Power BI (GASO)"
+      description="El reporte público de Cálidda que la verificación GASO consulta. Es uno solo para todos los negocios."
+    >
+      <div class="p-6">
+        <FormField label="Resource key" for="powerbi-resource-key">
+          <Input
+            id="powerbi-resource-key"
+            bind:value={settings.powerbi_resource_key}
+            placeholder="Clave del recurso del reporte"
+          />
+        </FormField>
+        <FormField label="Report ID" for="powerbi-report-id">
+          <Input
+            id="powerbi-report-id"
+            bind:value={settings.powerbi_report_id}
+          />
+        </FormField>
+        <FormField label="Dataset ID" for="powerbi-dataset-id">
+          <Input
+            id="powerbi-dataset-id"
+            bind:value={settings.powerbi_dataset_id}
+          />
+        </FormField>
+        <FormField label="Model ID" for="powerbi-model-id">
+          <Input id="powerbi-model-id" bind:value={settings.powerbi_model_id} />
+        </FormField>
+      </div>
+    </SectionShell>
+  {/if}
+
+  {#if !loading && !canEditPlatformSettings}
+    <SectionShell
+      title="Cálidda (FNB)"
+      description="La cuenta de Cálidda de este negocio, con la que se verifica la elegibilidad de crédito."
+    >
+      <div class="p-6">
+        <FormField label="Usuario" for="calidda-username">
+          <Input id="calidda-username" bind:value={settings.calidda_username} />
+        </FormField>
+        <FormField label="Contraseña" for="calidda-password">
+          <Input
+            id="calidda-password"
+            type="password"
+            bind:value={caliddaPassword}
+            placeholder={settings._has_calidda_password === "true"
+              ? "Configurada — escribe para reemplazarla"
+              : "Sin configurar"}
+          />
+          <p class="text-xs text-ink-500 mt-1">
+            Se guarda cifrada y no se vuelve a mostrar. Deja el campo vacío para
+            conservar la actual.
+          </p>
+        </FormField>
+      </div>
+    </SectionShell>
+  {/if}
+
   {#if hasChanges}
     <div
       class="sticky bottom-6 flex justify-end gap-3 bg-white/80 backdrop-blur-sm p-4 border border-ink-100 rounded shadow-lg animate-in slide-in-from-bottom-2"
@@ -295,6 +365,12 @@ onMount(() => {
             </li>
           {/if}
         {/each}
+        {#if caliddaPassword}
+          <li class="flex justify-between gap-4">
+            <span class="text-ink-600">calidda_password</span>
+            <span class="font-bold text-ink-900">nueva contraseña</span>
+          </li>
+        {/if}
       </ul>
     </div>
   </div>

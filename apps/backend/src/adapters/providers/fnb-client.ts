@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { decodeBase64urlIgnorePadding } from "@oslojs/encoding";
-import { config } from "../../config.ts";
+import type { CaliddaLogin } from "../../domains/settings/calidda.ts";
+import { clearBlock } from "./health.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { createAbortTimeout, TIMEOUTS } from "../../config/timeouts.ts";
 
@@ -32,11 +33,24 @@ type JwtPayload = {
 };
 
 /**
- * One FNB session serves every isolate: it is kept in KV for a little under
- * the hour the token lives, so a login is not repeated per request.
+ * A tenant's FNB session serves every isolate: it is kept in KV for a little
+ * under the hour the token lives, so a login is not repeated per request. The
+ * token is the tenant's own Cálidda account's, so the key is per tenant.
  */
-const SESSION_KEY = "fnb:session";
 const SESSION_TTL_S = 3500;
+const sessionKey = (tenantId: string) => `fnb:session:${tenantId}`;
+
+/**
+ * Drops the tenant's cached session and its circuit-breaker block. Called when
+ * the tenant's login changes, so the next check authenticates with the new
+ * credentials instead of the old account's hour-long token or a stale block.
+ */
+export async function clearFnbState(tenantId: string): Promise<void> {
+  await Promise.all([
+    env.KV.delete(sessionKey(tenantId)),
+    clearBlock("fnb", tenantId),
+  ]);
+}
 
 /** The token's payload names the ally. Its signature is the issuer's to check. */
 function jwtPayload(token: string): JwtPayload | null {
@@ -51,11 +65,16 @@ function jwtPayload(token: string): JwtPayload | null {
   }
 }
 
-async function authenticate(): Promise<FNBSession> {
-  const cached = await env.KV.get<FNBSession>(SESSION_KEY, "json");
+async function authenticate(login: CaliddaLogin): Promise<FNBSession> {
+  const cached = await env.KV.get<FNBSession>(
+    sessionKey(login.tenantId),
+    "json",
+  );
   if (cached) return cached;
 
-  const authUrl = `${config.calidda.baseUrl}/FNB_Services/api/Seguridad/autenticar`;
+  const baseUrl = login.baseUrl.replace(/\/+$/, "");
+  const origin = new URL(baseUrl).origin;
+  const authUrl = `${baseUrl}/FNB_Services/api/Seguridad/autenticar`;
 
   const { signal, cleanup } = createAbortTimeout(TIMEOUTS.FNB_AUTH);
 
@@ -64,14 +83,14 @@ async function authenticate(): Promise<FNBSession> {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        origin: "https://appweb.calidda.com.pe",
-        referer: "https://appweb.calidda.com.pe/WebFNB/login",
+        origin,
+        referer: `${baseUrl}/WebFNB/login`,
         "user-agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       },
       body: JSON.stringify({
-        usuario: config.calidda.credentials.username,
-        password: config.calidda.credentials.password,
+        usuario: login.username,
+        password: login.password,
         captcha: "exitoso",
         Latitud: "",
         Longitud: "",
@@ -100,7 +119,7 @@ async function authenticate(): Promise<FNBSession> {
       token: data.data.authToken,
       allyId: decoded.commercialAllyId,
     };
-    await env.KV.put(SESSION_KEY, JSON.stringify(session), {
+    await env.KV.put(sessionKey(login.tenantId), JSON.stringify(session), {
       expirationTtl: SESSION_TTL_S,
     });
 
@@ -124,8 +143,11 @@ async function authenticate(): Promise<FNBSession> {
   }
 }
 
-async function queryCreditLine(dni: string): Promise<FNBCreditResponse> {
-  const session = await authenticate();
+async function queryCreditLine(
+  dni: string,
+  login: CaliddaLogin,
+): Promise<FNBCreditResponse> {
+  const session = await authenticate(login);
 
   const params = new URLSearchParams({
     numeroDocumento: dni,
@@ -134,7 +156,8 @@ async function queryCreditLine(dni: string): Promise<FNBCreditResponse> {
     canal: "FNB",
   });
 
-  const url = `${config.calidda.baseUrl}/FNB_Services/api/financiamiento/lineaCredito?${params}`;
+  const baseUrl = login.baseUrl.replace(/\/+$/, "");
+  const url = `${baseUrl}/FNB_Services/api/financiamiento/lineaCredito?${params}`;
 
   const { signal, cleanup } = createAbortTimeout(TIMEOUTS.FNB_QUERY);
 
@@ -143,7 +166,7 @@ async function queryCreditLine(dni: string): Promise<FNBCreditResponse> {
       headers: {
         Authorization: `Bearer ${session.token}`,
         "Content-Type": "application/json",
-        referer: "https://appweb.calidda.com.pe/WebFNB/consulta-credito",
+        referer: `${baseUrl}/WebFNB/consulta-credito`,
       },
       signal,
     });

@@ -26,8 +26,9 @@ health.get("/", async (c) => {
     databaseUp(),
     getAllStatus(),
   ]);
+  // FNB blocks are per tenant, so its health is not part of the platform's.
   const healthy =
-    database && providers.fnb.available && providers.gaso.available;
+    database && providers.fnb.available !== false && providers.gaso.available;
 
   return c.json(
     {

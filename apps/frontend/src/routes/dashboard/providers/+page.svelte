@@ -6,13 +6,29 @@ import type {
   ProviderLookup,
 } from "#lib/utils/provider-lookup.js";
 import Input from "#lib/components/ui/input.svelte";
+import Select from "#lib/components/ui/select.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import LookupResultCard from "#lib/components/providers/lookup-result.svelte";
+import { onMount } from "svelte";
 
 let dni = $state("");
+let tenantSlug = $state("");
+let tenants = $state<{ slug: string; name: string }[]>([]);
 let loading = $state(false);
+
+onMount(async () => {
+  try {
+    const data = await fetchApi<{
+      tenants: { slug: string; name: string }[];
+    }>("/api/tenants");
+    tenants = data.tenants;
+    if (tenants.length === 1) tenantSlug = tenants[0]!.slug;
+  } catch {
+    // Without a tenant the lookup still runs and reports FNB needs one.
+  }
+});
 let result = $state<LookupResult | null>(null);
 // Providers whose circuit breaker was closed for the last lookup. The lookup
 // response is the only health the dashboard can reach, so the dots wait for one.
@@ -31,7 +47,10 @@ async function handleQuery() {
   result = null;
 
   try {
-    const data = await fetchApi<ProviderLookup>(`/api/providers/${dni}`);
+    const query = tenantSlug ? `?tenant=${tenantSlug}` : "";
+    const data = await fetchApi<ProviderLookup>(
+      `/api/providers/${dni}${query}`,
+    );
     result = data.result;
     providersChecked = data.providersChecked;
   } catch (err) {
@@ -67,6 +86,17 @@ async function handleQuery() {
 	</PageHeader>
 
 	<div class="bg-white p-8 border border-cream-200 shadow-sm mb-8">
+		<label for="tenant" class="block text-sm font-bold uppercase tracking-wider mb-4">
+			Negocio (cuenta de Cálidda)
+		</label>
+		<div class="mb-6">
+			<Select
+				id="tenant"
+				bind:value={tenantSlug}
+				placeholder="Sin negocio — FNB no consulta"
+				items={tenants.map((t) => ({ value: t.slug, label: t.name }))}
+			/>
+		</div>
 		<label for="dni" class="block text-sm font-bold uppercase tracking-wider mb-4">
 			Identificación del cliente
 		</label>

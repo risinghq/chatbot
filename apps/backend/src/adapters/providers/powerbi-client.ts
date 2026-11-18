@@ -1,4 +1,4 @@
-import { config } from "../../config.ts";
+import type { PowerBIReport } from "../../domains/settings/system.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { createAbortTimeout, TIMEOUTS } from "../../config/timeouts.ts";
 
@@ -33,6 +33,7 @@ async function queryField(
   dni: string,
   propertyName: string,
   visualId: string,
+  report: PowerBIReport,
 ): Promise<string | undefined> {
   const payload = {
     version: "1.0.0",
@@ -85,10 +86,10 @@ async function queryField(
         },
         QueryId: "",
         ApplicationContext: {
-          DatasetId: config.powerbi.datasetId,
+          DatasetId: report.datasetId,
           Sources: [
             {
-              ReportId: config.powerbi.reportId,
+              ReportId: report.reportId,
               VisualId: visualId,
             },
           ],
@@ -96,7 +97,7 @@ async function queryField(
       },
     ],
     cancelQueries: [],
-    modelId: parseInt(config.powerbi.modelId || "0", 10),
+    modelId: parseInt(report.modelId || "0", 10),
   };
 
   const { signal, cleanup } = createAbortTimeout(TIMEOUTS.POWERBI_QUERY);
@@ -108,7 +109,7 @@ async function queryField(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-PowerBI-ResourceKey": config.powerbi.resourceKey,
+          "X-PowerBI-ResourceKey": report.resourceKey,
         },
         body: JSON.stringify(payload),
         signal,
@@ -154,17 +155,17 @@ async function queryField(
   }
 }
 
-async function queryAll(dni: string) {
+async function queryAll(dni: string, report: PowerBIReport) {
   logger.debug({ dni }, "Starting PowerBI queryAll");
 
   const startTime = Date.now();
 
   try {
     const [estado, nombre, saldoStr, nseStr] = await Promise.all([
-      queryField(dni, "Estado", VISUAL_IDS.estado),
-      queryField(dni, "Cliente", VISUAL_IDS.nombre),
-      queryField(dni, "Saldo", VISUAL_IDS.saldo),
-      queryField(dni, "NSE", VISUAL_IDS.nse),
+      queryField(dni, "Estado", VISUAL_IDS.estado, report),
+      queryField(dni, "Cliente", VISUAL_IDS.nombre, report),
+      queryField(dni, "Saldo", VISUAL_IDS.saldo, report),
+      queryField(dni, "NSE", VISUAL_IDS.nse, report),
     ]);
 
     const duration = Date.now() - startTime;

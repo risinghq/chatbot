@@ -6,6 +6,7 @@ import {
   markBlocked,
 } from "../../../adapters/providers/health.ts";
 import { isProviderForcedDown } from "../../settings/system.ts";
+import { caliddaLogin } from "../../settings/calidda.ts";
 import { getSimulationPersona } from "../shared.ts";
 import { PersonasService } from "../../personas/index.ts";
 import type { EligibilityProvider } from "./provider.ts";
@@ -39,8 +40,26 @@ export class FNBProvider implements EligibilityProvider {
       );
     }
 
-    // Check circuit breaker
-    if (!(await isAvailable("fnb"))) {
+    // The check runs on the tenant's own Cálidda login. A tenant without one
+    // is a provider that is not there, the same as an outage. The lookup
+    // behind GET /api/providers/:dni names the tenant whose login to use; with
+    // none, FNB cannot run for anyone.
+    if (!ref) {
+      return Err(
+        new ProviderError("FNB", "unavailable", "FNB requires a tenant"),
+      );
+    }
+    const login = await caliddaLogin(ref.tenantId);
+    if (!login) {
+      logger.debug({ dni, tenantId: ref.tenantId }, "No Cálidda login");
+      return Err(
+        new ProviderError("FNB", "unavailable", "No Cálidda login configured"),
+      );
+    }
+
+    // Check circuit breaker. FNB blocks are per tenant: a bad login is one
+    // business's problem.
+    if (!(await isAvailable("fnb", login.tenantId))) {
       logger.debug({ dni }, "Provider unavailable (circuit breaker)");
       return Err(
         new ProviderError("FNB", "unavailable", "Circuit breaker open"),
@@ -49,7 +68,7 @@ export class FNBProvider implements EligibilityProvider {
 
     // Perform check
     try {
-      const data = await FNBClient.queryCreditLine(dni);
+      const data = await FNBClient.queryCreditLine(dni, login);
 
       if (!(data.valid && data.data)) {
         return Ok({ eligible: false, credit: 0, name: undefined });
@@ -71,7 +90,7 @@ export class FNBProvider implements EligibilityProvider {
           msg.includes("403") ||
           msg.includes("bloqueado")
         ) {
-          await markBlocked("fnb", error.message);
+          await markBlocked("fnb", error.message, login.tenantId);
         }
       }
 

@@ -3,12 +3,15 @@ import { pathParam } from "../lib/http.ts";
 import { requirePlatformOperator } from "../middleware/auth.ts";
 import { getAllStatus } from "../adapters/providers/health.ts";
 import { eligibilityHandler } from "../bootstrap/index.ts";
+import { TenantService } from "../domains/tenants/index.ts";
 import { isOk } from "../shared/result/index.ts";
+import type { ConversationRef } from "@vendeya/types";
 
 const app = new Hono();
 
-// The lookup belongs to no tenant and returns one person's credit standing,
-// so only VendeYa's own staff may run it.
+// The lookup returns one person's credit standing, so only VendeYa's own
+// staff may run it. FNB answers through a tenant's own Cálidda login, so the
+// caller names the tenant; without one the FNB leg reports it needs a tenant.
 app.get("/:dni", requirePlatformOperator, async (c) => {
   const dni = pathParam(c, "dni");
 
@@ -16,9 +19,19 @@ app.get("/:dni", requirePlatformOperator, async (c) => {
     return c.json({ error: "DNI debe tener 8 dígitos" }, 400);
   }
 
+  const tenantSlug = c.req.query("tenant");
+  let ref: ConversationRef | undefined;
+  if (tenantSlug) {
+    const tenant = await TenantService.getBySlug(tenantSlug);
+    if (!tenant) {
+      return c.json({ error: "Negocio no encontrado" }, 404);
+    }
+    ref = { tenantId: tenant.id, channelAccountId: "", phoneNumber: "" };
+  }
+
   try {
-    const result = await eligibilityHandler.execute(dni);
-    const healthStatus = await getAllStatus();
+    const result = await eligibilityHandler.execute(dni, ref);
+    const healthStatus = await getAllStatus(ref?.tenantId);
 
     let displayResult: any = result;
     if (isOk(result)) {
@@ -33,6 +46,11 @@ app.get("/:dni", requirePlatformOperator, async (c) => {
     return c.json({
       dni,
       result: displayResult,
+      // The mapper folds a missing login into system_outage, so say plainly
+      // why the FNB leg could not answer.
+      fnb: ref
+        ? undefined
+        : { status: "unavailable", reason: "FNB requires a tenant" },
       providersChecked: [
         ...(healthStatus.fnb.available ? ["fnb"] : []),
         ...(healthStatus.gaso.available ? ["gaso"] : []),

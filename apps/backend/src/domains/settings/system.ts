@@ -13,6 +13,10 @@ export const PLATFORM_SETTING_KEYS = [
   "force_fnb_down",
   "force_gaso_down",
   "platform_ops_channel_account_id",
+  "powerbi_resource_key",
+  "powerbi_report_id",
+  "powerbi_dataset_id",
+  "powerbi_model_id",
 ] as const;
 
 export function isPlatformSettingKey(key: string): boolean {
@@ -41,6 +45,17 @@ export const INTERNAL_TENANT_SETTING_KEYS = ["last_agent_index"] as const;
 
 export function isInternalTenantSettingKey(key: string): boolean {
   return (INTERNAL_TENANT_SETTING_KEYS as readonly string[]).includes(key);
+}
+
+/**
+ * Tenant keys whose value is a secret. They are not stored in `tenant_settings`
+ * — the settings route encrypts them into `tenant_secrets` — and the settings
+ * read never reports one, only whether it is set.
+ */
+export const TENANT_SECRET_SETTING_KEYS = ["calidda_password"] as const;
+
+export function isTenantSecretSettingKey(key: string): boolean {
+  return (TENANT_SECRET_SETTING_KEYS as readonly string[]).includes(key);
 }
 
 export const SystemSettings = {
@@ -93,6 +108,29 @@ export const TenantSettings = {
     );
   },
 };
+
+export type PowerBIReport = {
+  resourceKey: string;
+  reportId: string;
+  datasetId: string;
+  modelId: string;
+};
+
+/**
+ * The one public Cálidda Power BI report every tenant's GASO check reads, or
+ * null while any of its four ids is unset.
+ */
+export async function powerbiReport(): Promise<PowerBIReport | null> {
+  const all = await SystemSettings.getAll();
+  const report = {
+    resourceKey: all.powerbi_resource_key,
+    reportId: all.powerbi_report_id,
+    datasetId: all.powerbi_dataset_id,
+    modelId: all.powerbi_model_id,
+  };
+  if (Object.values(report).some((value) => !value)) return null;
+  return report as PowerBIReport;
+}
 
 /**
  * Calidda's FNB and GASO endpoints are shared platform integrations, not
