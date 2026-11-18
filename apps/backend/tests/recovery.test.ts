@@ -7,7 +7,12 @@ import { initializeEnrichmentRegistry } from "../src/conversation/enrichment/ind
 import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
 import { run } from "../src/db/index.ts";
 import { fakeJwt } from "./helpers/jwt.ts";
-import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
+import {
+  createTenantFixture,
+  setCaliddaLogin,
+  setPowerBIReport,
+  type TenantFixture,
+} from "./helpers/tenancy.ts";
 
 const FAKE_TOKEN = fakeJwt({ commercialAllyId: "123" });
 
@@ -20,6 +25,8 @@ describe("Provider outage recovery", () => {
 
   beforeEach(async () => {
     tenant = await createTenantFixture("recovery");
+    await setCaliddaLogin(tenant.tenantId);
+    await setPowerBIReport();
 
     // Initialize enrichment registry
     const fnbProvider = new FNBProvider();

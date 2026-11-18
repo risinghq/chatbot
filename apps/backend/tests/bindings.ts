@@ -14,10 +14,4 @@ export const TEST_BINDINGS = {
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: "test-verify-token",
   OPENAI_API_KEY: "",
   CALIDDA_BASE_URL: "https://calidda.test",
-  CALIDDA_USERNAME: "test-user",
-  CALIDDA_PASSWORD: "test-password",
-  POWERBI_RESOURCE_KEY: "test-resource-key",
-  POWERBI_REPORT_ID: "test-report",
-  POWERBI_DATASET_ID: "test-dataset",
-  POWERBI_MODEL_ID: "1",
 } as const;

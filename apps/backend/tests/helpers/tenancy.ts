@@ -1,5 +1,10 @@
 import type { ConversationRef } from "@vendeya/types";
 import { run } from "../../src/db/index.ts";
+import { TenantSecrets } from "../../src/domains/settings/tenant-secrets.ts";
+import {
+  SystemSettings,
+  TenantSettings,
+} from "../../src/domains/settings/system.ts";
 
 export type TenantFixture = {
   tenantId: string;
@@ -132,6 +137,47 @@ export async function createMember(
       isPlatformOperator: false,
     } as const,
   };
+}
+
+/**
+ * A Cálidda login for the tenant, stored the way the settings route stores it:
+ * the username in `tenant_settings`, the password in `tenant_secrets`.
+ */
+export async function setCaliddaLogin(
+  tenantId: string,
+  login: { username?: string; password?: string } = {},
+): Promise<void> {
+  await TenantSettings.set(
+    tenantId,
+    "calidda_username",
+    login.username ?? "test-user",
+  );
+  await TenantSecrets.set(
+    tenantId,
+    "calidda_password",
+    login.password ?? "test-password",
+  );
+}
+
+/** The four ids of the platform's Power BI report, as an operator saves them. */
+export async function setPowerBIReport(
+  ids: {
+    resourceKey?: string;
+    reportId?: string;
+    datasetId?: string;
+    modelId?: string;
+  } = {},
+): Promise<void> {
+  await SystemSettings.set(
+    "powerbi_resource_key",
+    ids.resourceKey ?? "test-resource-key",
+  );
+  await SystemSettings.set("powerbi_report_id", ids.reportId ?? "test-report");
+  await SystemSettings.set(
+    "powerbi_dataset_id",
+    ids.datasetId ?? "test-dataset",
+  );
+  await SystemSettings.set("powerbi_model_id", ids.modelId ?? "1");
 }
 
 /** Parks a number in a status, the way an operator's PATCH would. */
