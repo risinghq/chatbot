@@ -12,7 +12,17 @@ import { decryptSecret, encryptSecret } from "../../platform/crypto/secrets.ts";
 
 const logger = createLogger("channel-accounts");
 
-type SecretPurpose = "access_token" | "verify_token";
+type SecretPurpose = "access_token" | "verify_token" | "app_secret";
+
+/** 32 random bytes as base64url, the token Meta's handshake must echo back. */
+function generateVerifyToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
 
 type SecretRow = {
   id: string;
@@ -69,6 +79,7 @@ async function readSecret(secretId: string | null): Promise<string | null> {
 const SECRET_COLUMN = {
   access_token: "access_token_secret_id",
   verify_token: "verify_token_secret_id",
+  app_secret: "app_secret_secret_id",
 } as const;
 
 /** The statements that store a credential, replacing the one the account has. */
@@ -77,8 +88,8 @@ async function secretStatements(
   purpose: SecretPurpose,
   token: string,
 ): Promise<D1PreparedStatement[]> {
-  const encrypted = await encryptSecret(token);
   const existing = account[SECRET_COLUMN[purpose]];
+  const encrypted = await encryptSecret(token);
   if (existing) {
     return [
       stmt(
@@ -197,6 +208,7 @@ export const ChannelAccountService = {
     displayPhoneNumber?: string | null;
     label?: string | null;
     accessToken?: string | null;
+    appSecret?: string | null;
     verifyToken?: string | null;
     status?: ChannelAccount["status"];
     channelType?: ChannelType;
@@ -218,15 +230,27 @@ export const ChannelAccountService = {
       );
     }
 
-    let verifyTokenSecretId: string | null = null;
-    if (data.verifyToken) {
-      verifyTokenSecretId = crypto.randomUUID();
+    // The verify token identifies the number to Meta's handshake. The system
+    // generates it: there is nothing for the operator to choose.
+    const verifyTokenSecretId = crypto.randomUUID();
+    statements.push(
+      await insertSecret(
+        verifyTokenSecretId,
+        data.tenantId,
+        "verify_token",
+        data.verifyToken ?? generateVerifyToken(),
+      ),
+    );
+
+    let appSecretSecretId: string | null = null;
+    if (data.appSecret) {
+      appSecretSecretId = crypto.randomUUID();
       statements.push(
         await insertSecret(
-          verifyTokenSecretId,
+          appSecretSecretId,
           data.tenantId,
-          "verify_token",
-          data.verifyToken,
+          "app_secret",
+          data.appSecret,
         ),
       );
     }
@@ -235,8 +259,8 @@ export const ChannelAccountService = {
       stmt(
         `INSERT INTO channel_accounts (
            id, tenant_id, channel_type, waba_id, phone_number_id, display_phone_number,
-           label, access_token_secret_id, verify_token_secret_id, status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           label, access_token_secret_id, verify_token_secret_id, app_secret_secret_id, status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           data.tenantId,
@@ -247,6 +271,7 @@ export const ChannelAccountService = {
           data.label ?? null,
           accessTokenSecretId,
           verifyTokenSecretId,
+          appSecretSecretId,
           data.status ?? (data.accessToken ? "active" : "pending"),
         ],
       ),
@@ -267,6 +292,7 @@ export const ChannelAccountService = {
     change: {
       accessToken?: string;
       verifyToken?: string;
+      appSecret?: string;
       status?: ChannelAccount["status"];
     },
   ): Promise<void> => {
@@ -278,6 +304,11 @@ export const ChannelAccountService = {
           "access_token",
           change.accessToken,
         )),
+      );
+    }
+    if (change.appSecret) {
+      statements.push(
+        ...(await secretStatements(account, "app_secret", change.appSecret)),
       );
     }
     if (change.verifyToken) {
@@ -313,6 +344,10 @@ export const ChannelAccountService = {
 
   getVerifyToken: (account: ChannelAccount): Promise<string | null> =>
     readSecret(account.verify_token_secret_id),
+
+  /** The Meta app secret that signs this number's webhook deliveries. */
+  getAppSecret: (account: ChannelAccount): Promise<string | null> =>
+    readSecret(account.app_secret_secret_id),
 
   /**
    * Meta's GET verification handshake carries no phone-number id. The caller

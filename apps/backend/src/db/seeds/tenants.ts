@@ -17,10 +17,7 @@ const logger = createLogger("seed-tenants");
  * seed, the number and its token live on the channel account.
  */
 function seedVar(
-  name:
-    | "WHATSAPP_PHONE_ID"
-    | "WHATSAPP_TOKEN"
-    | "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+  name: "WHATSAPP_PHONE_ID" | "WHATSAPP_TOKEN" | "WHATSAPP_APP_SECRET",
 ): string | null {
   const value = (env as unknown as Record<string, unknown>)[name];
   return typeof value === "string" && value !== "" ? value : null;
@@ -43,7 +40,7 @@ export async function ensureDefaultTenant(): Promise<Tenant> {
  */
 export async function ensureChannelAccountFromEnv(
   tenantId: string,
-): Promise<ChannelAccount> {
+): Promise<ChannelAccount | null> {
   const configured = seedVar("WHATSAPP_PHONE_ID");
   const phoneNumberId = await seededPhoneNumberId(configured, tenantId);
 
@@ -51,8 +48,8 @@ export async function ensureChannelAccountFromEnv(
   // only imported onto that number and never onto a placeholder.
   const usesConfiguredNumber = phoneNumberId === configured;
   const accessToken = usesConfiguredNumber ? seedVar("WHATSAPP_TOKEN") : null;
-  const verifyToken = usesConfiguredNumber
-    ? seedVar("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
+  const appSecret = usesConfiguredNumber
+    ? seedVar("WHATSAPP_APP_SECRET")
     : null;
   const canEncrypt = isEncryptionAvailable();
 
@@ -72,27 +69,29 @@ export async function ensureChannelAccountFromEnv(
     // pending account into one that can send.
     const needsAccessToken =
       accessToken !== null && existing.access_token_secret_id === null;
-    const needsVerifyToken =
-      verifyToken !== null && existing.verify_token_secret_id === null;
+    const needsAppSecret =
+      appSecret !== null && existing.app_secret_secret_id === null;
 
     // The environment variables are the initial import, not the source of
-    // truth. A token rotated through PATCH /api/admin/channels/:id must
+    // truth. A credential rotated through PATCH /api/admin/channels/:id must
     // survive the next seed.
-    if (!needsAccessToken && !needsVerifyToken) return existing;
+    if (!needsAccessToken && !needsAppSecret) return existing;
 
     if (!canEncrypt) {
-      warnAboutMissingKey();
+      warnAboutMissingKey(
+        "the channel account's missing credentials were not imported",
+      );
       return existing;
     }
 
     const change = {
       ...(accessToken && needsAccessToken && { accessToken }),
-      ...(verifyToken && needsVerifyToken && { verifyToken }),
+      ...(appSecret && needsAppSecret && { appSecret }),
     };
     await ChannelAccountService.update(existing, change);
     const imported = [
       ...("accessToken" in change ? ["access_token"] : []),
-      ...("verifyToken" in change ? ["verify_token"] : []),
+      ...("appSecret" in change ? ["app_secret"] : []),
     ];
 
     const updated =
@@ -112,22 +111,20 @@ export async function ensureChannelAccountFromEnv(
     return updated;
   }
 
-  if ((accessToken || verifyToken) && !canEncrypt) {
-    warnAboutMissingKey();
+  // Every credential, including the generated verify token, is stored
+  // encrypted, so without SECRETS_KEY no account is created at all.
+  if (!canEncrypt) {
+    warnAboutMissingKey("the channel account was not created");
+    return null;
   }
-
-  // Tokens are stored encrypted. Without a key the account is created without
-  // them and left 'pending', which is the right state for a number that cannot
-  // send yet.
-  const storeCredentials = canEncrypt;
 
   const account = await ChannelAccountService.create({
     tenantId,
     phoneNumberId,
     label: DEFAULT_TENANT_NAME,
-    accessToken: storeCredentials ? accessToken : null,
-    verifyToken: storeCredentials ? verifyToken : null,
-    status: storeCredentials && accessToken ? "active" : "pending",
+    accessToken,
+    appSecret,
+    status: accessToken ? "active" : "pending",
   });
 
   logger.info(
@@ -166,18 +163,17 @@ async function seededPhoneNumberId(
   return unconfiguredPhoneNumberId(tenantId);
 }
 
-function warnAboutMissingKey(): void {
+function warnAboutMissingKey(what: string): void {
   logger.warn(
-    "SECRETS_KEY is not set: seeding the channel account without credentials. " +
-      "Set SECRETS_KEY in .dev.vars and re-run the seed, or add the token " +
-      "on the dashboard, before sending on this number.",
+    `SECRETS_KEY is not set: ${what}. ` +
+      "Set SECRETS_KEY in .dev.vars and re-run the seed.",
   );
 }
 
-/** The default tenant and its one channel account, created if absent. */
+/** The default tenant and its channel account, created if absent. */
 export async function seedTenants(): Promise<{
   tenant: Tenant;
-  channelAccount: ChannelAccount;
+  channelAccount: ChannelAccount | null;
 }> {
   const tenant = await ensureDefaultTenant();
   const channelAccount = await ensureChannelAccountFromEnv(tenant.id);

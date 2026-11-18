@@ -196,6 +196,14 @@ async function createChannel(options: Options, operator: CliOperator) {
   );
   const { cliAuditStatement } = await import("../platform/audit/logger.ts");
 
+  // The verify token is generated and stored encrypted on create, so a
+  // channel account can never be created without the key.
+  if (!isEncryptionAvailable()) {
+    return refuse(
+      "SECRETS_KEY is not set, so the channel account cannot be created.",
+    );
+  }
+
   const tenant = await findTenant(options.tenant!);
   if (!tenant) return refuse(`No tenant has the id or slug ${options.tenant}.`);
 
@@ -205,11 +213,7 @@ async function createChannel(options: Options, operator: CliOperator) {
   }
 
   const accessToken = await readSecret("Access token");
-  if (accessToken && !isEncryptionAvailable()) {
-    return refuse(
-      "SECRETS_KEY is not set, so the access token cannot be stored encrypted.",
-    );
-  }
+  const appSecret = await readSecret("App secret");
 
   const account = await ChannelAccountService.create({
     tenantId: tenant.id,
@@ -218,6 +222,7 @@ async function createChannel(options: Options, operator: CliOperator) {
     displayPhoneNumber: options["display-phone-number"] ?? null,
     label: options.label ?? null,
     accessToken: accessToken || null,
+    appSecret: appSecret || null,
   });
   await cliAuditStatement(
     operator,

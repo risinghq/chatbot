@@ -8,6 +8,7 @@ import {
   requireActiveTenant,
   requirePlatformOperator,
 } from "../../middleware/auth.ts";
+import { publicOrigin } from "../../config.ts";
 import type { ChannelAccount } from "@vendeya/types";
 
 const channels = new Hono();
@@ -15,10 +16,11 @@ const channels = new Hono();
 channels.use("/*", requireActiveTenant);
 
 /**
- * Credentials never leave the server. The API reports whether a token is set,
- * not what it is.
+ * Access token and app secret never leave the server. The verify token does:
+ * whoever connects the number pastes it into Meta's console, so the API reads
+ * it back. `webhookUrl` is where Meta posts for this deployment.
  */
-function present(account: ChannelAccount) {
+async function present(account: ChannelAccount) {
   return {
     id: account.id,
     tenant_id: account.tenant_id,
@@ -29,7 +31,9 @@ function present(account: ChannelAccount) {
     label: account.label,
     status: account.status,
     has_access_token: account.access_token_secret_id !== null,
-    has_verify_token: account.verify_token_secret_id !== null,
+    has_app_secret: account.app_secret_secret_id !== null,
+    verify_token: await ChannelAccountService.getVerifyToken(account),
+    webhook_url: `${publicOrigin()}/api/webhook`,
     created_at: account.created_at,
     updated_at: account.updated_at,
   };
@@ -54,10 +58,9 @@ function malformedField(
 
 channels.get("/", async (c) => {
   const tenantId = activeTenantId(c);
+  const accounts = await ChannelAccountService.listForTenant(tenantId);
   return c.json({
-    accounts: (await ChannelAccountService.listForTenant(tenantId)).map(
-      present,
-    ),
+    accounts: await Promise.all(accounts.map(present)),
   });
 });
 
@@ -74,18 +77,20 @@ channels.post("/", requirePlatformOperator, async (c) => {
 
   const { phoneNumberId, wabaId, displayPhoneNumber, label } = body;
   const accessToken: string | undefined = body.accessToken;
-  const verifyToken: string | undefined = body.verifyToken;
+  const appSecret: string | undefined = body.appSecret;
 
   if (!phoneNumberId) {
     return c.json({ error: "phoneNumberId is required" }, 400);
   }
 
-  const malformed = malformedField(body, ["accessToken", "verifyToken"]);
+  const malformed = malformedField(body, ["accessToken", "appSecret"]);
   if (malformed) {
     return c.json({ error: `${malformed} must be a string` }, 400);
   }
 
-  if ((accessToken || verifyToken) && !isEncryptionAvailable()) {
+  // Create always stores the generated verify token encrypted, so a channel
+  // account can never be created without the key.
+  if (!isEncryptionAvailable()) {
     return c.json(
       {
         error:
@@ -108,7 +113,7 @@ channels.post("/", requirePlatformOperator, async (c) => {
     displayPhoneNumber: displayPhoneNumber ?? null,
     label: label ?? null,
     accessToken: accessToken ?? null,
-    verifyToken: verifyToken ?? null,
+    appSecret: appSecret ?? null,
   });
 
   await logAction(
@@ -119,7 +124,7 @@ channels.post("/", requirePlatformOperator, async (c) => {
     { phoneNumberId, wabaId: wabaId ?? null },
   );
 
-  return c.json(present(account), 201);
+  return c.json(await present(account), 201);
 });
 
 channels.patch("/:id", async (c) => {
@@ -141,13 +146,14 @@ channels.patch("/:id", async (c) => {
   const malformed = malformedField(body, [
     "accessToken",
     "verifyToken",
+    "appSecret",
     "status",
   ]);
   if (malformed) {
     return c.json({ error: `${malformed} must be a string` }, 400);
   }
 
-  if (body.accessToken || body.verifyToken) {
+  if (body.accessToken || body.verifyToken || body.appSecret) {
     if (!isEncryptionAvailable()) {
       return c.json(
         {
@@ -188,10 +194,12 @@ channels.patch("/:id", async (c) => {
   await ChannelAccountService.update(account, {
     accessToken: body.accessToken || undefined,
     verifyToken: body.verifyToken || undefined,
+    appSecret: body.appSecret || undefined,
     status: body.status || undefined,
   });
   if (body.accessToken) changed.push("access_token");
   if (body.verifyToken) changed.push("verify_token");
+  if (body.appSecret) changed.push("app_secret");
   if (body.status) changed.push("status");
 
   // Handing a pending account its first token activates it, so the status can
@@ -210,7 +218,7 @@ channels.patch("/:id", async (c) => {
     { changed, status: updated.status },
   );
 
-  return c.json(present(updated));
+  return c.json(await present(updated));
 });
 
 export default channels;

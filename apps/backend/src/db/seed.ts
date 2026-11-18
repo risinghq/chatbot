@@ -22,7 +22,9 @@ await withPlatform({ remote }, async () => {
   await seedProducts(tenant.id);
   await seedBundles(tenant.id);
   await seedCatalogImages(tenant.id);
-  if (!remote) await seedTestData(tenant.id, channelAccount.id);
+  if (!remote && channelAccount) {
+    await seedTestData(tenant.id, channelAccount.id);
+  }
 
   console.log(`Seeded tenant ${tenant.slug} (${tenant.id}).`);
 });

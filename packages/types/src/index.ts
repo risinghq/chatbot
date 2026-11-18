@@ -44,6 +44,7 @@ export type ChannelAccount = {
   label: string | null;
   access_token_secret_id: string | null;
   verify_token_secret_id: string | null;
+  app_secret_secret_id: string | null;
   status: ChannelAccountStatus;
   created_at: number;
   updated_at: number;

@@ -4,6 +4,8 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { env } from "cloudflare:workers";
+import { ensureChannelAccountFromEnv } from "../src/db/seeds/tenants.ts";
 import { getAll, getOne, run } from "../src/db/index.ts";
 import { seedPeriods } from "../src/db/seeds/periods.ts";
 import { seedProducts } from "../src/db/seeds/products.ts";
@@ -138,6 +140,33 @@ describe("seeding a catalog", () => {
 
       expect(products.count).toBe(BASE_PRODUCTS.length);
       expect(await bundleCount(tenantId)).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("seeding the channel account", () => {
+  // Credentials are stored encrypted, so without SECRETS_KEY the seed creates
+  // no account rather than a pending one that can never gain a token.
+  it("creates no channel account without SECRETS_KEY", async () => {
+    const { id: tenantId } = await TenantService.create({
+      slug: "no-key",
+      name: "no-key",
+    });
+    const previous = env.SECRETS_KEY;
+    try {
+      (env as unknown as Record<string, string>).SECRETS_KEY = "";
+
+      const account = await ensureChannelAccountFromEnv(tenantId);
+
+      expect(account).toBeNull();
+      expect(
+        await getOne(
+          "SELECT COUNT(*) as count FROM channel_accounts WHERE tenant_id = ?",
+          [tenantId],
+        ),
+      ).toEqual({ count: 0 });
+    } finally {
+      (env as unknown as Record<string, string>).SECRETS_KEY = previous;
     }
   });
 });
