@@ -1,14 +1,14 @@
 import type { AnswerContext } from "../../types";
 import { MODEL_CONFIG } from "../../config";
-import { getTextClient } from "../client";
+import type OpenAI from "openai";
 import { parseLLMResponse } from "../shared";
 import { buildAnswerQuestionPrompt } from "@vendeya/core";
 
 export async function answerQuestion(
+  client: OpenAI,
   message: string,
   context: AnswerContext,
 ): Promise<string> {
-  const client = getTextClient();
   const baseConfig = MODEL_CONFIG.generation;
   const opConfig = baseConfig.answerQuestion;
 

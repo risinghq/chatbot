@@ -1,7 +1,6 @@
 export type { AnswerContext, RecoveryContext } from "./types";
 export type { IntelligenceProvider } from "./provider";
-export { getProvider, resetProvider } from "./openai/index";
-export { configureOpenAI } from "./openai/client";
+export { createProvider } from "./openai/index";
 
 export { createMockProvider } from "./mock/index";
 export { MODEL_CONFIG } from "./config";

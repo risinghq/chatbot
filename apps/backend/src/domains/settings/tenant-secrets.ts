@@ -10,6 +10,8 @@ import { decryptSecret, encryptSecret } from "../../platform/crypto/secrets.ts";
 
 const logger = createLogger("tenant-secrets");
 
+/**
+ */
 type SecretRow = {
   id: string;
   ciphertext: string;

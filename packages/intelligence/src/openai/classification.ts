@@ -2,12 +2,14 @@ import {
   buildIsQuestionPrompt,
   buildShouldEscalatePrompt,
 } from "@vendeya/core";
+import type OpenAI from "openai";
 import { MODEL_CONFIG } from "../config";
-import { getTextClient } from "./client";
 import { parseLLMResponse } from "./shared";
 
-export async function isQuestion(message: string): Promise<boolean> {
-  const client = getTextClient();
+export async function isQuestion(
+  client: OpenAI,
+  message: string,
+): Promise<boolean> {
   const baseConfig = MODEL_CONFIG.classification;
   const opConfig = baseConfig.isQuestion;
 
@@ -28,8 +30,10 @@ export async function isQuestion(message: string): Promise<boolean> {
   return res.isQuestion === true;
 }
 
-export async function shouldEscalate(message: string): Promise<boolean> {
-  const client = getTextClient();
+export async function shouldEscalate(
+  client: OpenAI,
+  message: string,
+): Promise<boolean> {
   const baseConfig = MODEL_CONFIG.classification;
   const opConfig = baseConfig.shouldEscalate;
 

@@ -1,1 +1,1 @@
-export { getProvider, createMockProvider } from "@vendeya/intelligence";
+export { createProvider, createMockProvider } from "@vendeya/intelligence";

@@ -52,7 +52,10 @@ export function isInternalTenantSettingKey(key: string): boolean {
  * — the settings route encrypts them into `tenant_secrets` — and the settings
  * read never reports one, only whether it is set.
  */
-export const TENANT_SECRET_SETTING_KEYS = ["calidda_password"] as const;
+export const TENANT_SECRET_SETTING_KEYS = [
+  "calidda_password",
+  "openai_api_key",
+] as const;
 
 export function isTenantSecretSettingKey(key: string): boolean {
   return (TENANT_SECRET_SETTING_KEYS as readonly string[]).includes(key);

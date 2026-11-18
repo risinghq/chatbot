@@ -1,20 +1,10 @@
 import OpenAI from "openai";
 
-let apiKey: string | undefined;
-let textClient: OpenAI | null = null;
-
 /**
- * The host passes the key once at startup, because a Worker reads secrets
- * from its bindings, not from `process.env`.
+ * One client per tenant API key. Callers hold the client they resolved for
+ * the turn; a missing key throws here, which the caller's AI-unavailable
+ * path already covers.
  */
-export function configureOpenAI(key: string | undefined): void {
-  apiKey = key || undefined;
-  textClient = null;
-}
-
-export function getTextClient(): OpenAI {
-  if (!textClient) {
-    textClient = new OpenAI({ apiKey });
-  }
-  return textClient;
+export function createTextClient(apiKey: string | undefined): OpenAI {
+  return new OpenAI({ apiKey });
 }

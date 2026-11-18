@@ -1,5 +1,3 @@
-import { env } from "cloudflare:workers";
-import { configureOpenAI } from "@vendeya/intelligence";
 import { setupEventSubscribers } from "./event-bus-setup.ts";
 import { CheckEligibilityHandler } from "../domains/eligibility/handlers/check-eligibility-handler.ts";
 import { FNBProvider } from "../domains/eligibility/providers/fnb-provider.ts";
@@ -25,8 +23,6 @@ let initialized = false;
 export function initializeApplication(): void {
   if (initialized) return;
   initialized = true;
-
-  configureOpenAI(env.OPENAI_API_KEY);
 
   setupEventSubscribers();
   initializeEnrichmentRegistry(eligibilityHandler);

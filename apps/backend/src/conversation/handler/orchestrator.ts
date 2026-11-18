@@ -1,4 +1,4 @@
-import { getProvider } from "@vendeya/intelligence";
+import { createProvider } from "@vendeya/intelligence";
 import type { ConversationRef, QuotedMessageContext } from "@vendeya/types";
 import {
   ChannelUnavailableError,
@@ -6,6 +6,7 @@ import {
 } from "../../adapters/whatsapp/index.ts";
 import { ProductService } from "../../domains/catalog/products.ts";
 import { assignNextAgentHeld } from "../../domains/conversations/assignment.ts";
+import { openAiApiKey } from "../../domains/settings/openai.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { createEvent, eventBus } from "../../shared/events/index.ts";
 import { claimMessageAlert, raiseUnreadAlert } from "../unread-alerts.ts";
@@ -82,7 +83,7 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
   let recorded = false;
 
   try {
-    const provider = getProvider();
+    const provider = createProvider(await openAiApiKey(tenantId));
 
     const catalogContext = {
       activeBrands: await ProductService.getActiveBrands(tenantId),

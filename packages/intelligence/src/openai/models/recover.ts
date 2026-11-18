@@ -1,14 +1,14 @@
 import type { RecoveryContext } from "../../types";
 import { MODEL_CONFIG } from "../../config";
-import { getTextClient } from "../client";
+import type OpenAI from "openai";
 import { parseLLMResponse } from "../shared";
 import { buildRecoverUnclearPrompt } from "@vendeya/core";
 
 export async function recoverUnclearResponse(
+  client: OpenAI,
   message: string,
   context: RecoveryContext,
 ): Promise<string> {
-  const client = getTextClient();
   const baseConfig = MODEL_CONFIG.generation;
   const opConfig = baseConfig.recoverUnclear;
 

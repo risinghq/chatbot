@@ -8,6 +8,7 @@ import {
 import { setSessionTenant } from "../platform/auth/session.ts";
 import { auditStatement, logAction } from "../platform/audit/logger.ts";
 import { requirePlatformOperator } from "../middleware/auth.ts";
+import { hasOpenAiApiKey } from "../domains/settings/openai.ts";
 import { batch, getOne } from "../db/index.ts";
 
 const tenants = new Hono();
@@ -16,21 +17,31 @@ const tenants = new Hono();
 tenants.get("/", async (c) => {
   const scope = c.get("scope");
 
-  // A platform operator sees every tenant, suspended ones included, because
-  // supporting them is the job.
+  // `ai_configured` reports whether the tenant's own OpenAI key is stored,
+  // so the dashboard can say the bot cannot think when it is missing.
   if (scope.isPlatformOperator) {
+    const all = await TenantService.getAll();
     return c.json({
-      tenants: (await TenantService.getAll()).map((t) => ({
-        ...t,
-        role: null,
-      })),
+      tenants: await Promise.all(
+        all.map(async (t) => ({
+          ...t,
+          role: null,
+          ai_configured: await hasOpenAiApiKey(t.id),
+        })),
+      ),
       isPlatformOperator: true,
       activeTenantId: scope.tenantId,
     });
   }
 
+  const memberships = await MembershipService.listForUser(scope.userId);
   return c.json({
-    tenants: await MembershipService.listForUser(scope.userId),
+    tenants: await Promise.all(
+      memberships.map(async (t) => ({
+        ...t,
+        ai_configured: await hasOpenAiApiKey(t.id),
+      })),
+    ),
     isPlatformOperator: false,
     activeTenantId: scope.tenantId,
   });

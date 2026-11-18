@@ -1,4 +1,5 @@
-import { getProvider, MODEL_CONFIG } from "@vendeya/intelligence";
+import { createProvider, MODEL_CONFIG } from "@vendeya/intelligence";
+import { openAiApiKey } from "../domains/settings/openai.ts";
 import { trackLLMCall } from "./tracker";
 import { classifyLLMError } from "./llm-errors";
 import type { AnswerContext, RecoveryContext } from "@vendeya/intelligence";
@@ -43,13 +44,17 @@ function withObservability<T>(
     });
 }
 
+async function providerFor(ref: ConversationRef) {
+  return createProvider(await openAiApiKey(ref.tenantId));
+}
+
 export const LLM = {
   isQuestion: (message: string, ref: ConversationRef) =>
     withObservability(
       ref,
       "isQuestion",
       MODEL_CONFIG.classification.model,
-      () => getProvider().isQuestion(message),
+      async () => (await providerFor(ref)).isQuestion(message),
       false,
     ),
 
@@ -58,7 +63,7 @@ export const LLM = {
       ref,
       "shouldEscalate",
       MODEL_CONFIG.classification.model,
-      () => getProvider().shouldEscalate(message),
+      async () => (await providerFor(ref)).shouldEscalate(message),
       false,
     ),
 
@@ -71,7 +76,7 @@ export const LLM = {
       ref,
       "answerQuestion",
       MODEL_CONFIG.generation.model,
-      () => getProvider().answerQuestion(message, context),
+      async () => (await providerFor(ref)).answerQuestion(message, context),
       "Déjame revisar eso y te respondo.",
     ),
 
@@ -84,7 +89,8 @@ export const LLM = {
       ref,
       "recoverUnclearResponse",
       MODEL_CONFIG.generation.model,
-      () => getProvider().recoverUnclearResponse(message, context),
+      async () =>
+        (await providerFor(ref)).recoverUnclearResponse(message, context),
       "Disculpa, no entendí bien. ¿Podrías decirme de nuevo?",
     ),
 };
