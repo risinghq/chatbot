@@ -79,8 +79,8 @@ describe("the provider lookup page", () => {
 
     const page = await lookupPage();
 
-    expect(page).toContain("APROBADO");
-    expect(page).not.toContain("RECHAZADO");
+    expect(page).toContain(">Aprobado<");
+    expect(page).not.toContain(">Rechazado<");
     expect(page).toContain("Ana Pérez");
     expect(page).toContain("S/ 1,500.00");
     expect(page).toContain("FNB");
@@ -101,7 +101,7 @@ describe("the provider lookup page", () => {
 
     const page = await lookupPage();
 
-    expect(page).toContain("APROBADO");
+    expect(page).toContain(">Aprobado<");
     expect(page).toContain("Gaso");
     expect(page).toContain("Nivel NSE");
   });
@@ -115,8 +115,8 @@ describe("the provider lookup page", () => {
 
     const page = await lookupPage();
 
-    expect(page).toContain("RECHAZADO");
-    expect(page).not.toContain("APROBADO");
+    expect(page).toContain(">Rechazado<");
+    expect(page).not.toContain(">Aprobado<");
     expect(page).not.toContain("Línea aprobada");
     expect(page).not.toContain("NaN");
     expect(page).not.toContain("undefined");
@@ -136,8 +136,8 @@ describe("the provider lookup page", () => {
 
     const page = await lookupPage();
 
-    expect(page).toContain("SIN RESPUESTA");
-    expect(page).not.toContain("RECHAZADO");
+    expect(page).toContain(">Sin respuesta<");
+    expect(page).not.toContain(">Rechazado<");
   });
 
   it("shows the error when the check could not run", async () => {
@@ -145,8 +145,8 @@ describe("the provider lookup page", () => {
 
     const page = await lookupPage();
 
-    expect(page).toContain("ERROR");
+    expect(page).toContain(">Error<");
     expect(page).toContain("Cálidda no responde");
-    expect(page).not.toContain("RECHAZADO");
+    expect(page).not.toContain(">Rechazado<");
   });
 });

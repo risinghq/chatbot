@@ -6,7 +6,9 @@ import ImageUploadSimple from "#lib/components/catalog/image-upload-simple.svelt
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import Select from "#lib/components/ui/select.svelte";
+import PageHeader from "#lib/components/shared/page-header.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
+import Icon from "#lib/components/ui/icon.svelte";
 import { toast } from "#lib/state/toast.svelte.js";
 import { fetchApi, createFormData } from "#lib/utils/api.js";
 import {
@@ -231,25 +233,16 @@ async function handleSave() {
 
 <PageTitle title={bundle ? "Editar bundle" : "Nuevo bundle"} />
 
-<div class="max-w-4xl mx-auto p-8 md:p-12">
-    <div class="mb-8 flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-serif text-ink-900">
-                {bundle
-                    ? `Editar ${segment === "fnb" ? "Oferta FnB" : "Paquete"}`
-                    : `Nuevo ${segment === "fnb" ? "Oferta FnB" : "Paquete"}`}
-            </h1>
-            <p class="text-ink-500 mt-2">
-                Configura la composición, precios y cuotas del paquete.
-            </p>
-        </div>
-        <Button variant="ghost" onclick={goBack}>Cancelar</Button>
-    </div>
+<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+    <PageHeader
+        title={segment === "fnb"
+            ? bundle ? "Editar oferta FNB" : "Nueva oferta FNB"
+            : bundle ? "Editar paquete" : "Nuevo paquete"}
+        subtitle="Composición, precio y cuotas."
+    />
 
-    <div
-        class="bg-white rounded-lg shadow-sm border border-ink-900/10 p-8 space-y-8"
-    >
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+    <div class="divide-y divide-border-subtle rounded-md border border-border bg-surface">
+        <div class="grid grid-cols-1 gap-x-6 p-4 md:grid-cols-3">
             <div class="md:col-span-1">
                 <ImageUploadSimple
                     hasExistingImage={!!bundle}
@@ -259,9 +252,9 @@ async function handleSave() {
                 />
             </div>
 
-            <div class="md:col-span-2 space-y-6">
+            <div class="md:col-span-2">
                 <FormField
-                    label="Nombre Comercial*"
+                    label="Nombre comercial*"
                     for="name"
                     error={errors.name}
                 >
@@ -272,9 +265,9 @@ async function handleSave() {
                     />
                 </FormField>
 
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
                     <FormField
-                        label="Precio Contado (S/)*"
+                        label="Precio al contado (S/)*"
                         for="price"
                         error={errors.price}
                     >
@@ -286,7 +279,7 @@ async function handleSave() {
                     </FormField>
 
                     <FormField
-                        label="Categoría Principal*"
+                        label="Categoría principal*"
                         for="category"
                         error={errors.primaryCategory}
                     >
@@ -300,27 +293,20 @@ async function handleSave() {
             </div>
         </div>
 
-        <!-- Composition Section -->
-        <div class="border-t border-ink-100 pt-6">
-            <h4 class="text-lg font-bold text-ink-900 mb-4">
-                Composición del Paquete
-            </h4>
-            <p class="text-sm text-ink-500 mb-4">
-                Selecciona los productos base que componen este paquete. Se
-                pueden agregar productos fijos.
+        <section class="p-4">
+            <h2 class="text-md font-medium text-fg">Composición</h2>
+            <p class="mt-1 mb-3 text-base text-fg-muted">
+                Los productos base que incluye el paquete.
             </p>
 
             {#if errors.items}
-                <p class="text-xs text-red-600 mb-2">{errors.items}</p>
+                <p role="alert" class="mb-2 text-sm text-danger-text">{errors.items}</p>
             {/if}
 
-            <div class="space-y-3 bg-gray-50 p-4 rounded-md">
+            <div class="flex flex-col gap-2">
                 {#each items as itemId, i}
-                    <div class="flex gap-2 items-center">
-                        <span
-                            class="text-sm font-medium w-8 text-center text-ink-400"
-                            >{i + 1}.</span
-                        >
+                    <div class="flex items-center gap-2">
+                        <span class="w-6 text-right text-sm text-fg-muted tabular-nums">{i + 1}.</span>
                         <div class="flex-1">
                             <Select
                                 value={itemId}
@@ -335,29 +321,27 @@ async function handleSave() {
                         </div>
                         <Button
                             variant="ghost"
+                            size="sm"
                             onclick={() => removeItem(i)}
-                            class="px-2 text-red-600 hover:bg-red-50">×</Button
+                            aria-label="Quitar producto {i + 1}"
+                            class="text-fg-muted hover:text-danger-text"
                         >
+                            <Icon name="close" />
+                        </Button>
                     </div>
                 {/each}
-                <Button
-                    variant="outline"
-                    onclick={addItem}
-                    class="w-full text-sm mt-2 border-dashed"
-                    >+ Agregar producto al paquete</Button
-                >
+                <div class="pl-8">
+                    <Button variant="secondary" size="sm" onclick={addItem}>Agregar producto</Button>
+                </div>
             </div>
-        </div>
+        </section>
 
-        <!-- Installments Section -->
-        <div class="border-t border-ink-100 pt-6">
-            <h4 class="text-lg font-bold text-ink-900 mb-4">
-                Cuotas mensuales
-            </h4>
-            <p class="text-sm text-ink-500 mb-4">
-                Define el valor de la cuota mensual para cada plazo disponible.
+        <section class="p-4">
+            <h2 class="text-md font-medium text-fg">Cuotas mensuales</h2>
+            <p class="mt-1 mb-3 text-base text-fg-muted">
+                La cuota de cada plazo. Deja vacío el plazo que no se ofrece.
             </p>
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="grid grid-cols-2 gap-x-3 md:grid-cols-5">
                 {#each MONTH_OPTIONS as months}
                     <FormField label={`${months} meses`}>
                         <Input
@@ -369,15 +353,11 @@ async function handleSave() {
                     </FormField>
                 {/each}
             </div>
-        </div>
+        </section>
 
-        <div class="pt-6 border-t border-ink-900/10 flex justify-end gap-3">
-            <Button variant="secondary" onclick={goBack} disabled={isSaving}
-                >Cancelar</Button
-            >
-            <Button onclick={handleSave} disabled={isSaving}
-                >{isSaving ? "Guardando..." : "Guardar Paquete"}</Button
-            >
+        <div class="flex justify-end gap-2 px-4 py-3">
+            <Button variant="secondary" onclick={goBack} disabled={isSaving}>Cancelar</Button>
+            <Button onclick={handleSave} disabled={isSaving}>{isSaving ? "Guardando…" : "Guardar"}</Button>
         </div>
     </div>
 </div>

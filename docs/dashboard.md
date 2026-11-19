@@ -87,8 +87,8 @@ routes/
   +page.server.ts                   sends to /dashboard or /login
   login/                            sign-in form, prerendered
   dashboard/
-    +page.svelte                    home: a grid of tiles
-    +layout.svelte                  nav bar and breadcrumbs, except on home
+    +page.svelte                    home: setup checklist and warnings
+    +layout.svelte                  sidebar, a drawer below md
     conversations/  [phone]/        inbox and one conversation
     catalog/  bundles/[id]/  inventory/[id]/
     orders/  [orderId]/
@@ -105,20 +105,19 @@ routes/
 
 ## Adding a page
 
-A page under `dashboard/` needs four things:
+A page under `dashboard/` needs three things:
 
 1. **A route.** `routes/dashboard/<area>/+page.svelte`, and a `+page.server.ts`
    if it loads data on the server. If only some roles may see it, check
    `locals.user.role` there and `redirect(303, "/dashboard")`.
-2. **A tile.** A `DashboardGridItem` in
-   [`dashboard/+page.svelte`](../apps/frontend/src/routes/dashboard/+page.svelte),
-   wrapped in `{#if auth.<getter>}` for a restricted page. Without it nothing
-   links to the page.
-3. **A nav label.** An entry in `breadcrumbLabels` in
-   [`dashboard-nav.svelte`](../apps/frontend/src/lib/components/shared/dashboard-nav.svelte).
-   Without it the page gets no breadcrumb.
-4. **A title.** `<PageTitle title="..." />` from
-   [`page-title.svelte`](../apps/frontend/src/lib/components/shared/page-title.svelte).
+2. **A sidebar entry.** A `NavItem` in
+   [`app-sidebar.svelte`](../apps/frontend/src/lib/components/shared/app-sidebar.svelte),
+   pushed under the `auth` getter for a restricted page. Without it nothing
+   links to the page. A page under `admin/` gets a tab in the admin layout
+   instead.
+3. **A title.** `<PageTitle title="..." />` sets the tab title, and
+   `<PageHeader>` draws the visible heading inside the page container that
+   [docs/design.md](./design.md) describes.
 
 The backend route it calls needs its own `requireRole`. The page guard only
 hides the page.
@@ -134,8 +133,9 @@ Conventions the pages follow:
   [`lib/utils/formatters.ts`](../apps/frontend/src/lib/utils/formatters.ts),
   which formats for `es-PE` in `America/Lima`. Prices are written
   `S/ {formatPrice(x)}`.
-- Styling is Tailwind v4 utility classes, with colour tokens in
+- Styling is Tailwind v4 utility classes on the tokens in
   [`lib/styles/tokens.css`](../apps/frontend/src/lib/styles/tokens.css).
+  [docs/design.md](./design.md) owns the visual rules.
 - Shared UI pieces are in
   [`lib/components/ui/`](../apps/frontend/src/lib/components/ui/).
 

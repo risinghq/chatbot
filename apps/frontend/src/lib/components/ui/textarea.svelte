@@ -1,4 +1,6 @@
 <script lang="ts">
+import { fieldStyles } from "./field-styles";
+
 type Props = {
   id?: string;
   value?: string;
@@ -25,11 +27,6 @@ let {
   class: className = "",
   oninput,
 }: Props = $props();
-
-const baseStyles =
-  "block w-full bg-transparent border-b px-3 py-2 min-h-[44px] text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-1 placeholder-ink-400/50 transition-colors duration-200 text-[16px] md:text-lg font-serif resize-none touch-action-manipulation";
-const normalBorder = "border-ink-900/30 focus-visible:border-ink-900";
-const errorBorder = "border-red-600 focus-visible:border-red-600";
 </script>
 
 <textarea
@@ -41,5 +38,5 @@ const errorBorder = "border-red-600 focus-visible:border-red-600";
 	autocomplete={autocomplete as any}
 	bind:value
 	{oninput}
-	class="{baseStyles} {error ? errorBorder : normalBorder} {className}"
+	class="{fieldStyles(error)} resize-y py-1.5 {className}"
 ></textarea>

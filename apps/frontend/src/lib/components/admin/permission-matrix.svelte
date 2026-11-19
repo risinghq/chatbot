@@ -42,20 +42,16 @@ const currentPermissions = $derived(permissions[role] || []);
 </script>
 
 <div class="mt-4">
-  <p class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-3 flex items-center gap-2">
-    Capacidades del rol <span class="text-ink-600 border-b border-ink-200">{role}</span>
-  </p>
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-4">
-    {#each currentPermissions as perm}
-      <div class="flex items-center gap-2 text-sm">
-        {#if perm.included}
-          <span class="text-green-600 font-bold">✓</span>
-          <span class="text-ink-900">{perm.label}</span>
-        {:else}
-          <span class="text-gray-300">×</span>
-          <span class="text-gray-400 line-through decoration-gray-300">{perm.label}</span>
-        {/if}
-      </div>
-    {/each}
-  </div>
+	<p class="mb-2 text-sm text-fg-muted">
+		Capacidades del rol <span class="font-mono text-fg">{role}</span>
+	</p>
+	<ul class="grid grid-cols-1 gap-x-4 gap-y-1.5 md:grid-cols-2">
+		{#each currentPermissions as perm}
+			<li class="flex items-center gap-2 text-base {perm.included ? 'text-fg' : 'text-fg-muted line-through'}">
+				<span aria-hidden="true" class="w-3 text-center {perm.included ? 'text-success-text' : 'text-fg-subtle'}">{perm.included ? "✓" : "×"}</span>
+				<span class="sr-only">{perm.included ? "Incluye:" : "No incluye:"}</span>
+				{perm.label}
+			</li>
+		{/each}
+	</ul>
 </div>

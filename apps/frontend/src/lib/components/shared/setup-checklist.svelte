@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from "svelte";
+import Icon from "#lib/components/ui/icon.svelte";
 import { fetchApi } from "#lib/utils/api.js";
 
 type SetupStatus = {
@@ -44,6 +45,8 @@ const steps = $derived(
     : [],
 );
 
+const doneCount = $derived(steps.filter((s) => s.done).length);
+
 async function load() {
   loading = true;
   try {
@@ -59,38 +62,33 @@ onMount(load);
 </script>
 
 {#if !loading && status && !status.complete}
-  <div class="border-t border-ink-900/10 pt-6 mb-6">
-    <p
-      class="text-xs uppercase tracking-widest text-ink-400 mb-4 font-bold"
-    >
-      Configuración pendiente
-    </p>
-    <ul class="space-y-3">
-      {#each steps as step}
-        <li>
-          <a href={step.href} class="flex items-start gap-2 group">
-            <span
-              class="mt-1 w-2 h-2 rounded-full shrink-0 {step.done
-                ? 'bg-green-500'
-                : 'bg-orange-400'}"
-            ></span>
-            <span>
-              <span
-                class="block text-sm text-ink-900 group-hover:underline {step.done
-                  ? 'line-through text-ink-400'
-                  : ''}"
-              >
-                {step.label}
-              </span>
-              {#if !step.done}
-                <span class="block text-xs text-ink-400 mt-0.5">
-                  {step.hint}
-                </span>
-              {/if}
-            </span>
-          </a>
-        </li>
-      {/each}
-    </ul>
-  </div>
+	<section class="rounded-md border border-border bg-surface">
+		<header class="flex items-center justify-between border-b border-border-subtle px-4 py-3">
+			<h2 class="text-md text-fg">Configura el negocio</h2>
+			<span class="text-sm text-fg-muted tabular-nums">{doneCount} de {steps.length}</span>
+		</header>
+		<ul class="divide-y divide-border-subtle">
+			{#each steps as step (step.label)}
+				<li>
+					<a href={step.href} class="flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-hover">
+						<span
+							class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full {step.done
+								? 'bg-success text-on-solid'
+								: 'border border-border-strong'}"
+						>
+							{#if step.done}<Icon name="check" class="size-3" />{/if}
+						</span>
+						<span class="min-w-0">
+							<span class="block text-base {step.done ? 'text-fg-muted line-through' : 'text-fg'}">
+								{step.label}
+							</span>
+							{#if !step.done}
+								<span class="block text-sm text-fg-muted">{step.hint}</span>
+							{/if}
+						</span>
+					</a>
+				</li>
+			{/each}
+		</ul>
+	</section>
 {/if}

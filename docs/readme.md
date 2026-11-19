@@ -9,7 +9,7 @@ repeating it.
 2. [How a conversation runs](./conversation.md): follow a message from webhook
    intake through a reply, retry, or handoff.
 3. [The dashboard](./dashboard.md): understand the frontend routes and add a
-   dashboard page.
+   dashboard page. [Dashboard design](./design.md) holds its visual rules.
 4. [Tenancy](./tenancy.md): manage tenant scope, roles, channel accounts, and
    encrypted credentials.
 5. [Eligibility](./eligibility.md): understand the Cálidda providers, result

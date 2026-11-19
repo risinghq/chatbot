@@ -3,7 +3,7 @@ import { toast } from "#lib/state/toast.svelte.js";
 import Toast from "./toast.svelte";
 </script>
 
-<div class="fixed bottom-8 right-8 z-9999 flex flex-col gap-3 items-end pointer-events-none">
+<div class="pointer-events-none fixed right-4 bottom-4 left-4 z-100 flex flex-col items-center gap-2 md:left-auto md:items-end">
 	{#each toast.items as item (item.id)}
 		<div class="pointer-events-auto">
 			<Toast

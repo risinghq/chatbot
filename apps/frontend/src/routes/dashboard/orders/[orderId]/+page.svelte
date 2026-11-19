@@ -1,16 +1,25 @@
 <script lang="ts">
-import { goto, invalidateAll } from "$app/navigation";
+import { invalidateAll } from "$app/navigation";
 import type { OrderStatus } from "@vendeya/types";
 import { fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import { auth } from "#lib/state/auth.svelte.js";
 import PageTitle from "#lib/components/shared/page-title.svelte";
+import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
+import FormField from "#lib/components/ui/form-field.svelte";
+import Icon from "#lib/components/ui/icon.svelte";
+import Textarea from "#lib/components/ui/textarea.svelte";
 import {
   formatPhone,
   formatPrice,
   formatDateTime,
 } from "#lib/utils/formatters.js";
+import {
+  orderStatusLabel,
+  orderStatusVariant,
+} from "#lib/utils/order-status.js";
 import type { PageData } from "./$types";
 
 let { data }: { data: PageData } = $props();
@@ -18,31 +27,12 @@ let { data }: { data: PageData } = $props();
 let approvalNotes = $state("");
 let processing = $state(false);
 
-const statusLabels: Record<OrderStatus, string> = {
-  pending: "Pendiente",
-  supervisor_approved: "Aprobado por supervisor",
-  supervisor_rejected: "Rechazado por supervisor",
-  calidda_approved: "Aprobado por Calidda",
-  calidda_rejected: "Rechazado por Calidda",
-  delivered: "Entregado",
-};
-
-const statusColors: Record<OrderStatus, string> = {
-  pending: "bg-yellow-100 text-yellow-800 border-yellow-300",
-  supervisor_approved: "bg-blue-100 text-blue-800 border-blue-300",
-  supervisor_rejected: "bg-red-100 text-red-800 border-red-300",
-  calidda_approved: "bg-green-100 text-green-800 border-green-300",
-  calidda_rejected: "bg-red-100 text-red-800 border-red-300",
-  delivered: "bg-gray-100 text-gray-800 border-gray-300",
-};
-
 async function updateStatus(
   newStatus: OrderStatus,
   noteType?: "supervisor" | "calidda",
 ) {
   if (!data.order) return;
 
-  // Require notes for rejection
   if (newStatus.includes("rejected") && !approvalNotes.trim()) {
     toast.error("Debe ingresar una razón para el rechazo");
     return;
@@ -71,10 +61,6 @@ async function updateStatus(
   }
 }
 
-function goBack() {
-  goto("/dashboard/orders");
-}
-
 function parseProducts(productsJson: string) {
   try {
     const parsed = JSON.parse(productsJson);
@@ -87,262 +73,168 @@ function parseProducts(productsJson: string) {
 
 <PageTitle title={data.order?.order_number || "Orden"} />
 
-{#if !data.order}
-  <div class="max-w-4xl mx-auto p-8 md:p-12 min-h-screen">
-    <div class="text-center py-20">
-      <p class="font-serif text-xl text-ink-400 italic">Orden no encontrada</p>
-      <button onclick={goBack} class="mt-4 text-sm text-ink-600 hover:underline">
-        Volver a órdenes
-      </button>
-    </div>
-  </div>
-{:else}
-  {@const order = data.order}
-  {@const products = parseProducts(order.products)}
+{#snippet card(title: string)}
+	<h2 class="mb-3 text-md font-medium text-fg">{title}</h2>
+{/snippet}
 
-  <div class="min-h-screen bg-cream-100">
-    <!-- Header -->
-    <div class="bg-white border-b border-ink-900/10 sticky z-10">
-      <div class="max-w-7xl mx-auto px-8 py-6">
-        <button onclick={goBack} class="text-xs text-ink-400 hover:text-ink-600 mb-2 flex items-center gap-1">
-          <span>&larr;</span> Volver a órdenes
-        </button>
-        <div class="flex justify-between items-start">
-          <div>
-            <h1 class="font-serif text-3xl text-ink-900 mb-1">
-              {order.order_number}
-            </h1>
-            <p class="text-ink-400 text-sm">Cliente: {order.client_name}</p>
-          </div>
-          <div class="px-4 py-2 border {statusColors[order.status as OrderStatus]}">
-            <p class="text-xs font-bold uppercase tracking-widest">
-              {statusLabels[order.status as OrderStatus]}
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
+{#snippet field(label: string, value: string, mono = false)}
+	<div>
+		<dt class="text-sm text-fg-muted">{label}</dt>
+		<dd class="mt-0.5 text-fg tabular-nums {mono ? 'font-mono' : ''}">{value}</dd>
+	</div>
+{/snippet}
 
-    <!-- Content -->
-    <div class="max-w-7xl mx-auto px-8 py-8">
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <!-- Main Column -->
-        <div class="lg:col-span-2 space-y-6">
-          <!-- Client Info -->
-          <div class="bg-white border border-cream-200 p-6">
-            <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-              Información del cliente
-            </h2>
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <p class="text-xs text-ink-400 mb-1">Nombre</p>
-                <p class="text-sm font-medium">{order.client_name}</p>
-              </div>
-              <div>
-                <p class="text-xs text-ink-400 mb-1">DNI</p>
-                <p class="text-sm font-mono">{order.client_dni}</p>
-              </div>
-              <div>
-                <p class="text-xs text-ink-400 mb-1">Teléfono</p>
-                <p class="text-sm font-mono">{formatPhone(order.conversation_phone)}</p>
-              </div>
-              <div>
-                <p class="text-xs text-ink-400 mb-1">Conversación</p>
-                <a
-                  href="/dashboard/conversations/{order.conversation_phone}?channel={order.channel_account_id}"
-                  class="text-sm text-ink-900 hover:underline font-medium"
-                >
-                  Ver conversación →
-                </a>
-              </div>
-            </div>
-          </div>
+<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+	<a href="/dashboard/orders" class="mb-3 inline-flex items-center gap-1.5 text-sm text-fg-muted hover:text-fg">
+		<Icon name="arrow" class="size-3.5 rotate-180" />
+		Órdenes
+	</a>
 
-          <!-- Products -->
-          <div class="bg-white border border-cream-200 p-6">
-            <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-              Productos
-            </h2>
-            {#if products.length > 0}
-              <div class="space-y-3">
-                {#each products as product}
-                  <div class="border-b border-cream-200 pb-3 last:border-b-0">
-                    <p class="text-sm font-medium">{product.name || "Producto"}</p>
-                    {#if product.price}
-                      <p class="text-xs text-ink-500 font-mono mt-1">S/ {formatPrice(product.price)}</p>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {:else}
-              <p class="text-sm text-ink-400 italic">No hay productos especificados</p>
-            {/if}
-            <div class="mt-4 pt-4 border-t border-cream-200">
-              <div class="flex justify-between items-center">
-                <span class="text-xs font-bold uppercase tracking-widest text-ink-400">Total</span>
-                <span class="text-lg font-bold font-mono">S/ {formatPrice(order.total_amount)}</span>
-              </div>
-            </div>
-          </div>
+	{#if !data.order}
+		<div class="rounded-md border border-border bg-surface">
+			<EmptyState title="Orden no encontrada" description="Puede que la hayan eliminado o que el enlace esté mal.">
+				{#snippet action()}
+					<Button href="/dashboard/orders" variant="secondary">Volver a órdenes</Button>
+				{/snippet}
+			</EmptyState>
+		</div>
+	{:else}
+		{@const order = data.order}
+		{@const products = parseProducts(order.products)}
+		{@const canApproveSuper = auth.canApproveOrders}
+		{@const canApproveCalidda = auth.canApproveCaliida}
+		{@const open = order.status !== "delivered" && !order.status.includes("rejected")}
+		{@const canAct =
+			(order.status === "pending" && canApproveSuper) ||
+			(order.status === "supervisor_approved" && canApproveCalidda) ||
+			(order.status === "calidda_approved" && canApproveSuper)}
 
-          <!-- Delivery Info -->
-          <div class="bg-white border border-cream-200 p-6">
-            <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-              Información de entrega
-            </h2>
-            <div class="space-y-3">
-              <div>
-                <p class="text-xs text-ink-400 mb-1">Dirección</p>
-                <p class="text-sm">{order.delivery_address || "—"}</p>
-              </div>
-              {#if order.delivery_reference}
-                <div>
-                  <p class="text-xs text-ink-400 mb-1">Referencia</p>
-                  <p class="text-sm">{order.delivery_reference}</p>
-                </div>
-              {/if}
-            </div>
-          </div>
-        </div>
+		<header class="mb-6 flex flex-wrap items-start justify-between gap-3">
+			<div class="min-w-0">
+				<h1 class="font-mono text-xl text-fg">{order.order_number}</h1>
+				<p class="mt-1 text-base text-fg-muted">{order.client_name}</p>
+			</div>
+			<Badge variant={orderStatusVariant(order.status)}>{orderStatusLabel(order.status)}</Badge>
+		</header>
 
-        <!-- Sidebar -->
-        <div class="space-y-6">
-          <!-- Approval management -->
-          {#if order.status !== "delivered" && !order.status.includes("rejected")}
-            {@const canApproveSuper = auth.canApproveOrders}
-            {@const canApproveCalidda = auth.canApproveCaliida}
-            {@const showApprovalSection = (order.status === "pending" && canApproveSuper) || 
-                                          (order.status === "supervisor_approved" && canApproveCalidda) ||
-                                          (order.status === "calidda_approved" && canApproveSuper)}
-            
-            {#if showApprovalSection}
-              <div class="bg-white border border-cream-200 p-6">
-                <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                  Gestión de Aprobación
-                </h2>
-                
-                <div class="space-y-4">
-                  {#if order.status === "pending" || order.status === "supervisor_approved"}
-                    <div>
-                      <label for="approval-notes" class="block text-xs text-ink-400 mb-1">
-                        Notas de aprobación/rechazo
-                      </label>
-                      <textarea
-                        id="approval-notes"
-                        bind:value={approvalNotes}
-                        rows="3"
-                        class="w-full px-3 py-2 border border-ink-200 text-sm focus:outline-none focus:border-ink-900 resize-none"
-                        placeholder="Ingrese observaciones..."
-                      ></textarea>
-                    </div>
-                  {/if}
+		<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+			<div class="divide-y divide-border-subtle rounded-md border border-border bg-surface lg:col-span-2">
+				<section class="p-4">
+					{@render card("Cliente")}
+					<dl class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+						{@render field("Nombre", order.client_name)}
+						{@render field("DNI", order.client_dni, true)}
+						{@render field("Teléfono", formatPhone(order.conversation_phone), true)}
+						<div>
+							<dt class="text-sm text-fg-muted">Conversación</dt>
+							<dd class="mt-0.5">
+								<a
+									href="/dashboard/conversations/{order.conversation_phone}?channel={order.channel_account_id}"
+									class="text-accent-text hover:underline"
+								>
+									Abrir conversación
+								</a>
+							</dd>
+						</div>
+					</dl>
+				</section>
 
-                  <div class="grid grid-cols-2 gap-3">
-                    {#if order.status === "pending" && canApproveSuper}
-                      <Button 
-                        onclick={() => updateStatus("supervisor_approved", "supervisor")}
-                        disabled={processing}
-                        variant="primary"
-                        class="w-full"
-                      >
-                        Aprobar (Sup)
-                      </Button>
-                      <Button 
-                        onclick={() => updateStatus("supervisor_rejected", "supervisor")}
-                        disabled={processing}
-                        variant="secondary"
-                        class="w-full bg-red-50! text-red-700! hover:bg-red-100! border-red-200"
-                      >
-                        Rechazar
-                      </Button>
-                    {:else if order.status === "supervisor_approved" && canApproveCalidda}
-                      <Button 
-                        onclick={() => updateStatus("calidda_approved", "calidda")}
-                        disabled={processing}
-                        variant="primary"
-                        class="w-full"
-                      >
-                        Aprobar (Calidda)
-                      </Button>
-                      <Button 
-                        onclick={() => updateStatus("calidda_rejected", "calidda")}
-                        disabled={processing}
-                        variant="secondary"
-                        class="w-full bg-red-50! text-red-700! hover:bg-red-100! border-red-200"
-                      >
-                        Rechazar
-                      </Button>
-                    {:else if order.status === "calidda_approved" && canApproveSuper}
-                      <div class="col-span-2">
-                        <Button 
-                          onclick={() => updateStatus("delivered")}
-                          disabled={processing}
-                          variant="primary"
-                          class="w-full"
-                        >
-                          Marcar como Entregado
-                        </Button>
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-              </div>
-            {:else}
-              <div class="bg-cream-50 border border-cream-200 p-6">
-                <p class="text-xs text-ink-400 text-center">
-                  No tienes permisos para aprobar esta orden en su estado actual.
-                </p>
-              </div>
-            {/if}
-          {/if}
+				<section class="p-4">
+					{@render card("Productos")}
+					{#if products.length > 0}
+						<ul class="divide-y divide-border-subtle">
+							{#each products as product}
+								<li class="flex items-baseline justify-between gap-4 py-2 first:pt-0">
+									<span class="text-fg">{product.name || "Producto"}</span>
+									{#if product.price}
+										<span class="text-fg-muted tabular-nums">S/ {formatPrice(product.price)}</span>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{:else}
+						<p class="text-fg-muted">La orden no lista productos.</p>
+					{/if}
+					<div class="mt-3 flex items-baseline justify-between border-t border-border-subtle pt-3">
+						<span class="text-fg-muted">Total</span>
+						<span class="text-md font-medium text-fg tabular-nums">S/ {formatPrice(order.total_amount)}</span>
+					</div>
+				</section>
 
-          <!-- Timeline -->
-          <div class="bg-white border border-cream-200 p-6">
-            <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-              Timeline
-            </h2>
-            <div class="space-y-3 text-sm">
-              <div>
-                <p class="text-xs text-ink-400">Creada</p>
-                <p class="font-mono text-xs mt-1">{formatDateTime(order.created_at)}</p>
-              </div>
-              <div>
-                <p class="text-xs text-ink-400">Última actualización</p>
-                <p class="font-mono text-xs mt-1">{formatDateTime(order.updated_at)}</p>
-              </div>
-            </div>
-          </div>
+				<section class="p-4">
+					{@render card("Entrega")}
+					<dl class="grid grid-cols-1 gap-3">
+						{@render field("Dirección", order.delivery_address || "—")}
+						{#if order.delivery_reference}
+							{@render field("Referencia", order.delivery_reference)}
+						{/if}
+					</dl>
+				</section>
+			</div>
 
-          <!-- Notes -->
-          {#if order.supervisor_notes}
-            <div class="bg-white border border-cream-200 p-6">
-              <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                Notas del supervisor
-              </h2>
-              <p class="text-sm text-ink-600">{order.supervisor_notes}</p>
-            </div>
-          {/if}
+			<div class="flex flex-col gap-4">
+				{#if open}
+					<section class="rounded-md border border-border bg-surface p-4">
+						{@render card("Aprobación")}
+						{#if canAct}
+							{#if order.status === "pending" || order.status === "supervisor_approved"}
+								<FormField label="Notas (obligatorias para rechazar)" for="approval-notes">
+									<Textarea id="approval-notes" bind:value={approvalNotes} rows={3} placeholder="Observaciones…" />
+								</FormField>
+							{/if}
 
-          {#if order.calidda_notes}
-            <div class="bg-white border border-cream-200 p-6">
-              <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                Notas de Calidda
-              </h2>
-              <p class="text-sm text-ink-600">{order.calidda_notes}</p>
-            </div>
-          {/if}
+							<div class="flex gap-2">
+								{#if order.status === "pending"}
+									<Button class="flex-1" onclick={() => updateStatus("supervisor_approved", "supervisor")} disabled={processing}>
+										Aprobar
+									</Button>
+									<Button class="flex-1" variant="danger" onclick={() => updateStatus("supervisor_rejected", "supervisor")} disabled={processing}>
+										Rechazar
+									</Button>
+								{:else if order.status === "supervisor_approved"}
+									<Button class="flex-1" onclick={() => updateStatus("calidda_approved", "calidda")} disabled={processing}>
+										Aprobar (Calidda)
+									</Button>
+									<Button class="flex-1" variant="danger" onclick={() => updateStatus("calidda_rejected", "calidda")} disabled={processing}>
+										Rechazar
+									</Button>
+								{:else}
+									<Button class="flex-1" onclick={() => updateStatus("delivered")} disabled={processing}>
+										Marcar como entregada
+									</Button>
+								{/if}
+							</div>
+						{:else}
+							<p class="text-fg-muted">Tu rol no puede aprobar la orden en este estado.</p>
+						{/if}
+					</section>
+				{/if}
 
-          <!-- Assigned Agent -->
-          {#if order.assigned_agent}
-            <div class="bg-white border border-cream-200 p-6">
-              <h2 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                Agente asignado
-              </h2>
-              <p class="text-sm font-mono">{order.assigned_agent}</p>
-            </div>
-          {/if}
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+				<section class="rounded-md border border-border bg-surface p-4">
+					{@render card("Historial")}
+					<dl class="grid grid-cols-1 gap-3">
+						{@render field("Creada", formatDateTime(order.created_at))}
+						{@render field("Última actualización", formatDateTime(order.updated_at))}
+						{#if order.assigned_agent}
+							{@render field("Agente asignado", order.assigned_agent_name ?? "Usuario eliminado")}
+						{/if}
+					</dl>
+				</section>
+
+				{#if order.supervisor_notes || order.calidda_notes}
+					<section class="rounded-md border border-border bg-surface p-4">
+						{@render card("Notas")}
+						<dl class="grid grid-cols-1 gap-3">
+							{#if order.supervisor_notes}
+								{@render field("Supervisor", order.supervisor_notes)}
+							{/if}
+							{#if order.calidda_notes}
+								{@render field("Calidda", order.calidda_notes)}
+							{/if}
+						</dl>
+					</section>
+				{/if}
+			</div>
+		</div>
+	{/if}
+</div>

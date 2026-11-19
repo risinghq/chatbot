@@ -34,13 +34,11 @@ onMount(() => {
 
 <PageTitle title="Conversaciones" />
 
-<div class="flex h-[calc(100vh-65px)] overflow-hidden bg-white">
+<!-- 3rem is the mobile top bar in the dashboard layout. -->
+<div class="flex h-[calc(100dvh-3rem)] overflow-hidden md:h-dvh">
 	<ConversationList {conversations} />
 
-	<div class="hidden md:flex flex-col flex-1 bg-cream-100 relative min-w-0">
-		<div class="flex-1 flex flex-col items-center justify-center text-ink-300 opacity-50">
-			<span class="text-9xl mb-4 font-serif italic">&larr;</span>
-			<p class="font-serif text-lg">Seleccione una conversación.</p>
-		</div>
+	<div class="hidden min-w-0 flex-1 items-center justify-center md:flex">
+		<p class="text-base text-fg-muted">Elige una conversación de la lista.</p>
 	</div>
 </div>

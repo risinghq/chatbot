@@ -10,15 +10,9 @@ type Props = {
 let { messages, currentUserSide = "outbound" }: Props = $props();
 </script>
 
-<div class="flex-1 overflow-y-auto p-8 space-y-4">
+<div class="flex flex-1 flex-col gap-2 overflow-y-auto p-4 md:p-6">
   {#if messages.length === 0}
-    <div class="flex justify-center py-12">
-      <span
-        class="text-xs text-ink-300 uppercase tracking-widest border-b border-ink-200 pb-1"
-      >
-        Inicio de conversación
-      </span>
-    </div>
+    <p class="py-10 text-center text-sm text-fg-muted">Todavía no hay mensajes.</p>
   {/if}
 
   {#each messages as msg (msg.id)}

@@ -19,10 +19,10 @@ let {
 }: Props = $props();
 </script>
 
-<div class="mb-6 {className}">
+<div class="mb-4 {className}">
 	<Label for={htmlFor}>{label}</Label>
 	{@render children()}
 	{#if error}
-		<span role="alert" aria-live="polite" class="block mt-1 text-xs text-red-600 font-medium">{error}</span>
+		<span role="alert" aria-live="polite" class="mt-1.5 block text-sm text-danger-text">{error}</span>
 	{/if}
 </div>

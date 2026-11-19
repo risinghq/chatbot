@@ -12,7 +12,7 @@ const tabs = getContext<{ getValue: () => string }>("tabs");
 </script>
 
 {#if tabs.getValue() === value}
-  <div class="mt-2 animate-in fade-in-50">
+  <div class="mt-2">
     {@render children()}
   </div>
 {/if}

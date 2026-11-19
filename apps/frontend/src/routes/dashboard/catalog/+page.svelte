@@ -10,7 +10,9 @@ import type {
 import { auth } from "#lib/state/auth.svelte.js";
 import { fetchApi } from "#lib/utils/api.js";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Banner from "#lib/components/ui/banner.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
 import InventoryGrid from "#lib/components/catalog/inventory-grid.svelte";
 import BundleGrid from "#lib/components/catalog/bundle-grid.svelte";
 import PeriodSelector from "#lib/components/catalog/period-selector.svelte";
@@ -131,9 +133,9 @@ onMount(() => {
 
 <PageTitle title="Catálogo" />
 
-<div class="max-w-7xl mx-auto p-8 md:p-12 min-h-screen">
+<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
   <PageHeader
-    title="Gestión de catálogo"
+    title="Catálogo"
     subtitle={currentPeriod
       ? `Período: ${currentPeriod.name}`
       : "Selecciona un período"}
@@ -154,13 +156,13 @@ onMount(() => {
         </Button>
       {/if}
       {#if canEdit || (activeTab === "inventory" && auth.isAdmin)}
-        <Button onclick={openCreatePage}>
+        <Button size="sm" onclick={openCreatePage}>
           {#if activeTab === "inventory"}
-            Nuevo Producto Base
+            Nuevo producto base
           {:else if activeTab === "gaso"}
-            Nuevo Paquete GASO
+            Nuevo paquete GASO
           {:else}
-            Nueva Oferta FNB
+            Nueva oferta FNB
           {/if}
         </Button>
       {/if}
@@ -168,13 +170,10 @@ onMount(() => {
   </PageHeader>
 
   {#if currentPeriod?.status !== "draft" && auth.canEditCatalog && activeTab !== "inventory"}
-    <div
-      class="mb-6 p-4 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-md"
-    >
-      Este período comercial está {currentPeriod?.status === "active"
-        ? "activo"
-        : "archivado"}. No se pueden modificar las ofertas comerciales.
-    </div>
+    <Banner tone="warning" class="mb-4">
+      Este período está {currentPeriod?.status === "active" ? "activo" : "archivado"}. Sus ofertas
+      no se pueden modificar.
+    </Banner>
   {/if}
 
   <Tabs bind:value={activeTab}>
@@ -194,13 +193,9 @@ onMount(() => {
 
     <TabsContent value="gaso">
       {#if !currentPeriod}
-        <div class="text-center py-12 text-ink-400">
-          Selecciona un período para ver los paquetes.
-        </div>
+        <EmptyState title="Ningún período seleccionado" description="Selecciona un período para ver los paquetes." />
       {:else if bundles.length === 0}
-        <div class="text-center py-12 text-ink-400 italic">
-          No hay paquetes configurados para este período.
-        </div>
+        <EmptyState title="Sin paquetes" description="Este período no tiene paquetes configurados." />
       {:else}
         <BundleGrid
           {bundles}
@@ -213,13 +208,9 @@ onMount(() => {
 
     <TabsContent value="fnb">
       {#if !currentPeriod}
-        <div class="text-center py-12 text-ink-400">
-          Selecciona un período para ver las ofertas.
-        </div>
+        <EmptyState title="Ningún período seleccionado" description="Selecciona un período para ver las ofertas." />
       {:else if fnbBundles.length === 0}
-        <div class="text-center py-12 text-ink-400 italic">
-          No hay ofertas FNB configuradas para este período.
-        </div>
+        <EmptyState title="Sin ofertas FNB" description="Este período no tiene ofertas FNB configuradas." />
       {:else}
         <BundleGrid
           bundles={fnbBundles}

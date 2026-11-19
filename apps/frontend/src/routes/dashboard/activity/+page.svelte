@@ -1,16 +1,32 @@
 <script lang="ts">
 import { invalidateAll } from "$app/navigation";
+import type { SystemLogEntry } from "@vendeya/types";
 import { formatDateTime } from "#lib/utils/formatters.js";
-import SectionShell from "#lib/components/ui/section-shell.svelte";
-import DataTable from "#lib/components/ui/data-table.svelte";
+import Badge from "#lib/components/ui/badge.svelte";
+import Banner from "#lib/components/ui/banner.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import DataTable from "#lib/components/ui/data-table.svelte";
 import Sheet from "#lib/components/ui/sheet.svelte";
+import PageHeader from "#lib/components/shared/page-header.svelte";
+import PageTitle from "#lib/components/shared/page-title.svelte";
 
-export let data;
+let { data } = $props();
 
-let loading = false;
-let selectedLog: any = null;
-let showSheet = false;
+let loading = $state(false);
+let selected = $state<SystemLogEntry | null>(null);
+let sheetOpen = $state(false);
+
+const sourceLabels: Record<string, string> = { llm: "IA", audit: "Auditoría" };
+const statusLabels: Record<string, string> = {
+  success: "Correcto",
+  error: "Error",
+  info: "Info",
+};
+const statusDots: Record<string, string> = {
+  success: "bg-success",
+  error: "bg-danger",
+  info: "bg-info",
+};
 
 async function refresh() {
   loading = true;
@@ -18,194 +34,122 @@ async function refresh() {
   loading = false;
 }
 
-function openDetails(log: any) {
-  selectedLog = log;
-  showSheet = true;
-}
-
-function closeDetails() {
-  showSheet = false;
-  setTimeout(() => {
-    selectedLog = null;
-  }, 300); // Wait for animation
+function openDetails(log: SystemLogEntry) {
+  selected = log;
+  sheetOpen = true;
 }
 
 const columns = [
-  {
-    header: "Estado",
-    class: "w-16 text-center",
-    cell: statusCell,
-  },
-  {
-    header: "Hora",
-    cell: timeCell,
-  },
-  {
-    header: "Fuente",
-    cell: sourceCell,
-  },
-  {
-    header: "Evento",
-    key: "event" as const,
-    class: "font-mono text-xs text-ink-700",
-  },
-  {
-    header: "Resumen",
-    cell: summaryCell,
-  },
-  {
-    header: "Actor",
-    key: "actor" as const,
-    class: "text-ink-500",
-  },
+  { header: "Estado", class: "w-16", cell: statusCell },
+  { header: "Hora", cell: timeCell },
+  { header: "Fuente", cell: sourceCell },
+  { header: "Evento", cell: eventCell },
+  { header: "Resumen", cell: summaryCell },
+  { header: "Actor", cell: actorCell },
 ];
 </script>
 
-<SectionShell
-    title="Actividad del sistema"
-    description="Línea de tiempo unificada de operaciones de IA, eventos del sistema y auditoría."
-    action={refreshAction}
->
-    <DataTable
-        data={data.logs}
-        {columns}
-        {loading}
-        onRowClick={openDetails}
-        emptyMessage="No se encontraron registros."
-    />
-</SectionShell>
+<PageTitle title="Actividad" />
+
+<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+	<PageHeader
+		title="Actividad"
+		subtitle="Llamadas a la IA y acciones del equipo, en orden de llegada. Elige una fila para ver el detalle."
+	>
+		{#snippet actions()}
+			<Button variant="secondary" onclick={refresh} disabled={loading}>
+				{loading ? "Actualizando…" : "Actualizar"}
+			</Button>
+		{/snippet}
+	</PageHeader>
+
+	{#if data.error}
+		<Banner tone="danger" title="No se pudo cargar la actividad" class="mb-4">
+			Vuelve a intentarlo con Actualizar.
+		</Banner>
+	{/if}
+
+	<div class="overflow-hidden rounded-md border border-border bg-surface">
+		<DataTable
+			data={data.logs}
+			{columns}
+			{loading}
+			onRowClick={openDetails}
+			emptyMessage="Todavía no hay actividad."
+		/>
+	</div>
+</div>
 
 <Sheet
-    open={showSheet}
-    onclose={closeDetails}
-    title={selectedLog?.event || "Detalles del registro"}
-    description={selectedLog?.timestamp
-        ? formatDateTime(selectedLog.timestamp)
-        : ""}
+	open={sheetOpen}
+	onclose={() => (sheetOpen = false)}
+	title={selected?.event ?? "Detalle"}
+	description={selected ? formatDateTime(selected.timestamp) : ""}
 >
-    {#if selectedLog}
-        <div class="space-y-6">
-            <div class="grid grid-cols-2 gap-4 text-sm bg-cream-50 p-4 rounded border border-ink-100">
-                <div>
-                    <span class="block text-xs uppercase text-ink-400 mb-1">
-                        Fuente
-                    </span>
-                    <span class="font-medium text-ink-900">
-                        {selectedLog.source.toUpperCase()}
-                    </span>
-                </div>
-                <div>
-                    <span class="block text-xs uppercase text-ink-400 mb-1">
-                        Status
-                    </span>
-                    <span
-                        class="font-medium {selectedLog.status === 'error'
-                            ? 'text-red-600'
-                            : 'text-emerald-600'}"
-                    >
-                        {selectedLog.status.toUpperCase()}
-                    </span>
-                </div>
-                <div>
-                    <span class="block text-xs uppercase text-ink-400 mb-1">
-                        Actor
-                    </span>
-                    <span class="font-medium text-ink-900">
-                        {selectedLog.actor}
-                    </span>
-                </div>
-                <div>
-                    <span class="block text-xs uppercase text-ink-400 mb-1">
-                        ID
-                    </span>
-                    <span class="font-mono text-xs text-ink-500 truncate block">
-                        {selectedLog.id}
-                    </span>
-                </div>
-            </div>
+	{#if selected}
+		<div class="flex flex-col gap-5">
+			<dl class="grid grid-cols-2 gap-4 rounded-md border border-border-subtle bg-sunken p-3">
+				{@render field("Fuente", sourceLabels[selected.source] ?? selected.source)}
+				{@render field("Estado", statusLabels[selected.status] ?? selected.status)}
+				{@render field("Actor", selected.actor)}
+				<div class="min-w-0">
+					<dt class="text-sm text-fg-muted">Id</dt>
+					<dd class="truncate font-mono text-xs text-fg" title={selected.id}>{selected.id}</dd>
+				</div>
+			</dl>
 
-            {#if selectedLog.source === "llm"}
-                {#if selectedLog.original_data.error_message}
-                    <div class="border-l-4 border-red-500 pl-4 py-2 bg-red-50">
-                        <h4 class="text-red-800 font-bold text-sm">Error</h4>
-                        <p class="text-red-700 text-sm mt-1">
-                            {selectedLog.original_data.error_message}
-                        </p>
-                    </div>
-                {/if}
+			{#if selected.source === "llm"}
+				{#if selected.original_data?.error_message}
+					<Banner tone="danger" title="Error">{selected.original_data.error_message}</Banner>
+				{/if}
+				{@render block("Prompt", selected.original_data?.prompt ?? "")}
+				{@render block("Respuesta", selected.original_data?.response || "Sin respuesta")}
+			{/if}
 
-                <div>
-                    <h4 class="font-sans text-xs uppercase tracking-widest text-ink-400 mb-2">
-                        Prompt
-                    </h4>
-                    <div class="bg-white border border-ink-200 p-3 rounded overflow-x-auto">
-                        <pre class="font-mono text-xs text-ink-600 whitespace-pre-wrap">
-                            {selectedLog.original_data.prompt}
-                        </pre>
-                    </div>
-                </div>
-
-                <div>
-                    <h4 class="font-sans text-xs uppercase tracking-widest text-ink-400 mb-2">
-                        Respuesta
-                    </h4>
-                    <div class="bg-white border border-ink-200 p-3 rounded overflow-x-auto">
-                        <pre class="font-mono text-xs text-ink-600 whitespace-pre-wrap">
-                          {selectedLog.original_data.response || "Sin respuesta"}
-                        </pre>
-                    </div>
-                </div>
-            {/if}
-
-            {#if Object.keys(selectedLog.metadata).length > 0}
-                <div>
-                    <h4 class="font-sans text-xs uppercase tracking-widest text-ink-400 mb-2">
-                        Metadata
-                    </h4>
-                    <div class="bg-white border border-ink-200 p-3 rounded overflow-x-auto">
-                        <pre class="font-mono text-xs text-ink-500 whitespace-pre-wrap">
-                          {JSON.stringify(selectedLog.metadata, null, 2)}
-                        </pre>
-                    </div>
-                </div>
-            {/if}
-        </div>
-    {/if}
+			{#if selected.metadata && Object.keys(selected.metadata).length > 0}
+				{@render block("Metadata", JSON.stringify(selected.metadata, null, 2))}
+			{/if}
+		</div>
+	{/if}
 </Sheet>
 
-{#snippet refreshAction()}
-    <Button variant="secondary" onclick={refresh} disabled={loading}>
-        {#if loading}
-            Actualizando...
-        {:else}
-            Actualizar
-        {/if}
-    </Button>
+{#snippet field(label: string, value: string)}
+	<div class="min-w-0">
+		<dt class="text-sm text-fg-muted">{label}</dt>
+		<dd class="truncate text-base text-fg">{value}</dd>
+	</div>
 {/snippet}
 
-{#snippet statusCell(item: any)}
-    <div
-        class="w-2.5 h-2.5 rounded-full {item.status === 'success'
-            ? 'bg-emerald-500'
-            : item.status === 'error'
-              ? 'bg-red-500'
-              : 'bg-blue-400'} {item.status === 'error' ? 'animate-pulse' : ''} mx-auto"
-        title={item.status}
-    ></div>
+{#snippet block(label: string, value: string)}
+	<section>
+		<h3 class="mb-1.5 text-sm text-fg-muted">{label}</h3>
+		<pre class="overflow-x-auto rounded-sm border border-border-subtle bg-sunken p-3 font-mono text-xs whitespace-pre-wrap text-fg">{value}</pre>
+	</section>
 {/snippet}
 
-{#snippet timeCell(item: any)}
-    <span class="text-ink-500 whitespace-nowrap">{formatDateTime(item.timestamp)}</span>
+{#snippet statusCell(item: SystemLogEntry)}
+	<span class="flex items-center">
+		<span class="size-2 rounded-full {statusDots[item.status] ?? 'bg-fg-subtle'}" aria-hidden="true"></span>
+		<span class="sr-only">{statusLabels[item.status] ?? item.status}</span>
+	</span>
 {/snippet}
 
-{#snippet sourceCell(item: any)}
-    <span
-        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {item.source === 'llm'
-            ? 'bg-purple-100 text-purple-800'
-            : 'bg-gray-100 text-gray-800'}"
-    >{item.source.toUpperCase()}</span>
+{#snippet timeCell(item: SystemLogEntry)}
+	<span class="text-sm whitespace-nowrap text-fg-muted tabular-nums">{formatDateTime(item.timestamp)}</span>
 {/snippet}
 
-{#snippet summaryCell(item: any)}
-    <span class="text-ink-600 truncate max-w-md block" title={item.summary}>{item.summary}</span>
+{#snippet sourceCell(item: SystemLogEntry)}
+	<Badge variant={item.source === "llm" ? "accent" : "default"}>{sourceLabels[item.source] ?? item.source}</Badge>
+{/snippet}
+
+{#snippet eventCell(item: SystemLogEntry)}
+	<span class="font-mono text-sm text-fg">{item.event}</span>
+{/snippet}
+
+{#snippet summaryCell(item: SystemLogEntry)}
+	<span class="block max-w-md truncate text-fg-muted" title={item.summary}>{item.summary}</span>
+{/snippet}
+
+{#snippet actorCell(item: SystemLogEntry)}
+	<span class="text-sm text-fg-muted">{item.actor}</span>
 {/snippet}

@@ -1,5 +1,6 @@
 <script lang="ts">
 import Button from "#lib/components/ui/button.svelte";
+import { fieldStyles } from "#lib/components/ui/field-styles.js";
 
 type Props = {
   value: string;
@@ -17,20 +18,17 @@ function handleKeydown(e: KeyboardEvent) {
 }
 </script>
 
-<div class="p-6 border-t border-ink-900/10 bg-white">
-	<div class="flex gap-4">
+<div class="border-t border-border-subtle bg-surface p-3">
+	<div class="flex items-center gap-2">
 		<input
 			bind:value
 			{disabled}
 			onkeydown={handleKeydown}
-			class="flex-1 bg-transparent p-4 text-lg font-serif outline-none border-b border-ink-900/30 focus:border-ink-900 placeholder-ink-300 transition-colors"
-			placeholder="Escriba su mensaje..."
+			aria-label="Mensaje"
+			class="{fieldStyles(false)} h-9 pointer-coarse:h-11"
+			placeholder="Escribe un mensaje…"
 		/>
-		<Button onclick={onSend} disabled={disabled || !value.trim()}>
-			Enviar
-		</Button>
+		<Button onclick={onSend} disabled={disabled || !value.trim()}>Enviar</Button>
 	</div>
-	<p class="text-xs text-ink-400 mt-2 font-mono">
-		Enter para enviar • Shift+Enter para añadir una nueva línea
-	</p>
+	<p class="mt-1.5 hidden text-xs text-fg-muted md:block">Enter envía.</p>
 </div>

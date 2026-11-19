@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Conversation } from "@vendeya/types";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
 import ConversationItem from "./conversation-item.svelte";
 
 type Props = {
@@ -19,15 +20,13 @@ function conversationKey(conv: Conversation): string {
 }
 </script>
 
-<div class="w-full md:w-96 xl:w-96 border-r border-ink-900/10 bg-white flex flex-col shrink-0">
-	<div class="p-6 border-b border-ink-900/10">
-		<span class="text-xs font-bold tracking-widest uppercase text-ink-400 mb-1 block">
-			Conversaciones activas
-		</span>
-    <h2 class="text-2xl font-serif">Bandeja de entrada</h2>
+<div class="flex w-full shrink-0 flex-col border-r border-border-subtle bg-surface md:w-80">
+	<div class="flex h-12 shrink-0 items-center border-b border-border-subtle px-4">
+		<h1 class="text-md font-medium text-fg">Conversaciones</h1>
+		<span class="ml-2 text-sm text-fg-muted tabular-nums">{conversations.length}</span>
 	</div>
 
-	<div class="overflow-y-auto flex-1">
+	<div class="flex-1 overflow-y-auto">
 		{#each conversations as conv (conversationKey(conv))}
 			<ConversationItem
 				conversation={conv}
@@ -36,9 +35,10 @@ function conversationKey(conv: Conversation): string {
 		{/each}
 
 		{#if conversations.length === 0}
-			<div class="p-12 text-center text-ink-300">
-				<p class="font-serif italic">No hay conversaciones activas.</p>
-			</div>
+			<EmptyState
+				title="Sin conversaciones activas"
+				description="Cuando un cliente escriba a uno de tus números, aparecerá aquí."
+			/>
 		{/if}
 	</div>
 </div>

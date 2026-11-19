@@ -1,7 +1,9 @@
 <script lang="ts">
+import { fieldStyles } from "./field-styles";
+
 type Props = {
   id?: string;
-  type?: "text" | "number" | "email" | "password";
+  type?: "text" | "number" | "email" | "password" | "date" | "month";
   value?: string | number;
   placeholder?: string;
   disabled?: boolean;
@@ -28,11 +30,6 @@ let {
   oninput,
   onchange,
 }: Props = $props();
-
-const baseStyles =
-  "block w-full bg-transparent border-b px-3 py-2 min-h-[44px] text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-1 placeholder-ink-400/50 transition-colors duration-200 text-[16px] md:text-lg font-serif touch-action-manipulation";
-const normalBorder = "border-ink-900/30 focus-visible:border-ink-900";
-const errorBorder = "border-red-600 focus-visible:border-red-600";
 </script>
 
 <input
@@ -46,5 +43,5 @@ const errorBorder = "border-red-600 focus-visible:border-red-600";
 	bind:value
 	{oninput}
 	{onchange}
-	class="{baseStyles} {error ? errorBorder : normalBorder} {className}"
+	class="{fieldStyles(error)} h-8 pointer-coarse:h-11 {className}"
 />

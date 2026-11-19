@@ -6,6 +6,7 @@ import type { AuditLog } from "@vendeya/types";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import DataTable from "#lib/components/ui/data-table.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import Badge from "#lib/components/ui/badge.svelte";
 
 type AuditLogWithName = AuditLog & {
   user_name?: string;
@@ -63,54 +64,44 @@ const columns = [
 ];
 </script>
 
-<SectionShell 
-    title="Registro de auditoría" 
-    description="Últimos 100 eventos del sistema."
-    action={refreshAction}
->
-    <DataTable 
-        data={logs} 
-        {columns} 
-        {loading} 
-        emptyMessage="No hay registros de auditoría recientes."
-    />
+<SectionShell title="Registro de auditoría" description="Últimos 100 eventos del negocio." action={refreshAction}>
+	<DataTable data={logs} {columns} {loading} emptyMessage="No hay registros de auditoría recientes." />
 </SectionShell>
 
 {#snippet refreshAction()}
-    <Button variant="secondary" onclick={loadLogs} disabled={loading}>
-        {#if loading}
-            Cargando...
-        {:else}
-            Actualizar
-        {/if}
-    </Button>
+	<Button size="sm" variant="secondary" onclick={loadLogs} disabled={loading}>
+		{loading ? "Cargando…" : "Actualizar"}
+	</Button>
 {/snippet}
 
 {#snippet dateCell(item: AuditLogWithName)}
-    <span class="font-mono text-xs text-ink-500">{formatDateTime(item.created_at)}</span>
+	<span class="text-sm whitespace-nowrap text-fg-muted tabular-nums">{formatDateTime(item.created_at)}</span>
 {/snippet}
 
 {#snippet userCell(item: AuditLogWithName)}
-    <div class="leading-tight">
-        {item.user_name || item.actor}{#if item.user_username}<br><span class="text-xs text-ink-400 font-mono">@{item.user_username}</span>{/if}
-    </div>
+	<div class="text-fg">{item.user_name || item.actor}</div>
+	{#if item.user_username}
+		<div class="font-mono text-sm text-fg-muted">@{item.user_username}</div>
+	{/if}
 {/snippet}
 
 {#snippet actionCell(item: AuditLogWithName)}
-    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200 shadow-sm">{actionLabels[item.action] || item.action}</span>
+	<Badge>{actionLabels[item.action] || item.action}</Badge>
 {/snippet}
 
 {#snippet resourceCell(item: AuditLogWithName)}
-    <div class="text-xs text-ink-500">{item.resource_type}<br>{item.resource_id || "-"}</div>
+	<div class="text-sm text-fg">{item.resource_type}</div>
+	<div class="font-mono text-sm text-fg-muted">{item.resource_id || "—"}</div>
 {/snippet}
 
 {#snippet detailsCell(item: AuditLogWithName)}
-    {#if !item.metadata || item.metadata === "{}"}
-        <span class="text-ink-300">-</span>
-    {:else}
-        {#if isUnconfirmed(item)}
-            <span class="inline-flex items-center px-2 py-0.5 mb-1 rounded text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200" title="WhatsApp no confirmó el mensaje; puede que el cliente no lo recibiera">Entrega sin confirmar</span>
-        {/if}
-        <code class="text-[10px] bg-cream-50 p-1 rounded border border-cream-100 block max-w-xs truncate" title={item.metadata}>{item.metadata}</code>
-    {/if}
+	{#if !item.metadata || item.metadata === "{}"}
+		<span class="text-fg-subtle">—</span>
+	{:else}
+		{#if isUnconfirmed(item)}
+			<Badge variant="warning" class="mb-1">Entrega sin confirmar</Badge>
+			<span class="sr-only">: WhatsApp no confirmó el mensaje; puede que el cliente no lo recibiera.</span>
+		{/if}
+		<code class="block max-w-xs truncate rounded-sm bg-sunken px-1.5 py-0.5 font-mono text-xs text-fg-muted" title={item.metadata}>{item.metadata}</code>
+	{/if}
 {/snippet}

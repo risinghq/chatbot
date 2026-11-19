@@ -1,6 +1,11 @@
 import { tenantPredicate } from "../../db/query.ts";
 import type { Binding } from "../../db/index.ts";
-import type { ConversationRef, Order, OrderMetrics } from "@vendeya/types";
+import type {
+  ConversationRef,
+  Order,
+  OrderDetail,
+  OrderMetrics,
+} from "@vendeya/types";
 import type { OrderFilters } from "./types.ts";
 import { getAll, getOne } from "../../db/index.ts";
 
@@ -73,8 +78,10 @@ export async function getOrderById(
   tenantId: string | null,
   id: string,
   conversationAgent: string | null = null,
-): Promise<Order | null> {
-  let query = `SELECT * FROM orders WHERE id = ? AND ${tenantPredicate(tenantId)}`;
+): Promise<OrderDetail | null> {
+  let query = `SELECT *,
+    (SELECT name FROM users WHERE users.id = orders.assigned_agent) AS assigned_agent_name
+    FROM orders WHERE id = ? AND ${tenantPredicate(tenantId)}`;
   const params: Binding[] = tenantId ? [id, tenantId] : [id];
 
   if (conversationAgent) {
@@ -82,7 +89,7 @@ export async function getOrderById(
     params.push(conversationAgent, conversationAgent);
   }
 
-  return (await getOne<Order>(query, params)) ?? null;
+  return (await getOne<OrderDetail>(query, params)) ?? null;
 }
 
 /** `conversationAgent` narrows to that sales agent's orders. */

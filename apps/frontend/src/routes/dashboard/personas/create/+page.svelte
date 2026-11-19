@@ -2,7 +2,19 @@
 import { goto } from "$app/navigation";
 import { fetchApi } from "#lib/utils/api.js";
 import Button from "#lib/components/ui/button.svelte";
+import FormField from "#lib/components/ui/form-field.svelte";
+import Input from "#lib/components/ui/input.svelte";
+import Select from "#lib/components/ui/select.svelte";
+import Textarea from "#lib/components/ui/textarea.svelte";
+import { fieldStyles } from "#lib/components/ui/field-styles.js";
+import PageHeader from "#lib/components/shared/page-header.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
+
+const segments = [
+  { value: "fnb", label: "FNB" },
+  { value: "gaso", label: "GASO" },
+  { value: "not_eligible", label: "No elegible" },
+];
 
 let loading = $state(false);
 let newPersona = $state({
@@ -15,6 +27,14 @@ let newPersona = $state({
   creditLine: 0,
   nse: undefined as number | undefined,
 });
+
+const incomplete = $derived(
+  !newPersona.id ||
+    !newPersona.name ||
+    !newPersona.description ||
+    !newPersona.clientName ||
+    !newPersona.dni,
+);
 
 async function createPersona() {
   loading = true;
@@ -36,138 +56,80 @@ async function createPersona() {
 
 <PageTitle title="Crear persona" />
 
-<div class="p-8 max-w-6xl mx-auto">
-	<div class="mb-8">
-		<h1 class="text-3xl font-serif text-ink-900">Crear persona de prueba</h1>
-		<p class="text-ink-500 mt-2">Define un nuevo perfil de cliente para utilizar en las simulaciones.</p>
-	</div>
+<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+	<PageHeader title="Nueva persona de prueba" subtitle="Un perfil de cliente para usar en el simulador." />
 
-	<div class="bg-white rounded-lg shadow-sm border border-ink-900/10 p-8 max-w-3xl">
-		<div class="space-y-6">
-			<div>
-				<label for="persona-id" class="block text-sm font-medium text-ink-700 mb-1">
-					ID <span class="text-red-500">*</span>
-				</label>
-				<input
-					id="persona-id"
-					type="text"
-					bind:value={newPersona.id}
-					placeholder="fnb_test_1"
-					class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
-				/>
-				<p class="text-xs text-ink-500 mt-1">Identificador único (sin espacios, usar guiones bajos)</p>
-			</div>
-
-			<div>
-				<label for="persona-name" class="block text-sm font-medium text-ink-700 mb-1">
-					Nombre <span class="text-red-500">*</span>
-				</label>
-				<input
-					id="persona-name"
-					type="text"
-					bind:value={newPersona.name}
-					placeholder="FNB - Crédito Test"
-					class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
-				/>
-			</div>
-
-			<div>
-				<label for="persona-description" class="block text-sm font-medium text-ink-700 mb-1">
-					Descripción <span class="text-red-500">*</span>
-				</label>
-				<textarea
-					id="persona-description"
-					bind:value={newPersona.description}
-					placeholder="Cliente de prueba con características específicas..."
-					rows="3"
-					class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
-				></textarea>
-			</div>
-
-			<div>
-				<label for="persona-segment" class="block text-sm font-medium text-ink-700 mb-1">
-					Segmento <span class="text-red-500">*</span>
-				</label>
-				<select
-					id="persona-segment"
-					bind:value={newPersona.segment}
-					class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
-				>
-					<option value="fnb">FNB</option>
-					<option value="gaso">GASO</option>
-					<option value="not_eligible">No Elegible</option>
-				</select>
-			</div>
-
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-				<div>
-					<label for="persona-client-name" class="block text-sm font-medium text-ink-700 mb-1">
-						Nombre cliente <span class="text-red-500">*</span>
-					</label>
-					<input
-						id="persona-client-name"
-						type="text"
-						bind:value={newPersona.clientName}
-						placeholder="JUAN PEREZ LOPEZ"
-						class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
+	<div class="rounded-md border border-border bg-surface">
+		<div class="divide-y divide-border-subtle">
+			<section class="p-4">
+				<h2 class="mb-3 text-md font-medium text-fg">Perfil</h2>
+				<FormField label="ID*" for="persona-id">
+					<Input id="persona-id" bind:value={newPersona.id} placeholder="fnb_test_1" class="font-mono" />
+					<p class="mt-1.5 text-sm text-fg-muted">Único, sin espacios. Usa guiones bajos.</p>
+				</FormField>
+				<FormField label="Nombre*" for="persona-name">
+					<Input id="persona-name" bind:value={newPersona.name} placeholder="FNB - Crédito Test" />
+				</FormField>
+				<FormField label="Descripción*" for="persona-description">
+					<Textarea
+						id="persona-description"
+						bind:value={newPersona.description}
+						placeholder="Cliente de prueba con características específicas…"
+						rows={3}
 					/>
-				</div>
+				</FormField>
+				<FormField label="Segmento*" for="persona-segment" class="mb-0!">
+					<Select id="persona-segment" bind:value={newPersona.segment} items={segments} />
+				</FormField>
+			</section>
 
-				<div>
-					<label for="persona-dni" class="block text-sm font-medium text-ink-700 mb-1">
-						DNI <span class="text-red-500">*</span>
-					</label>
-					<input
-						id="persona-dni"
-						type="text"
-						bind:value={newPersona.dni}
-						placeholder="12345678"
-						maxlength="8"
-						class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
-					/>
+			<section class="p-4">
+				<h2 class="mb-3 text-md font-medium text-fg">Cliente</h2>
+				<div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+					<FormField label="Nombre del cliente*" for="persona-client-name">
+						<Input id="persona-client-name" bind:value={newPersona.clientName} placeholder="JUAN PEREZ LOPEZ" />
+					</FormField>
+					<FormField label="DNI*" for="persona-dni">
+						<input
+							id="persona-dni"
+							bind:value={newPersona.dni}
+							placeholder="12345678"
+							maxlength="8"
+							inputmode="numeric"
+							class="{fieldStyles(false)} h-8 font-mono pointer-coarse:h-11"
+						/>
+					</FormField>
+					<FormField label="Línea de crédito (S/)*" for="persona-credit" class="mb-0!">
+						<input
+							id="persona-credit"
+							type="number"
+							bind:value={newPersona.creditLine}
+							placeholder="3000"
+							min="0"
+							step="100"
+							class="{fieldStyles(false)} h-8 font-mono tabular-nums pointer-coarse:h-11"
+						/>
+					</FormField>
+					<FormField label="NSE (opcional)" for="persona-nse" class="mt-4 mb-0! sm:mt-0">
+						<input
+							id="persona-nse"
+							type="number"
+							bind:value={newPersona.nse}
+							placeholder="1, 2 o 3"
+							min="1"
+							max="3"
+							class="{fieldStyles(false)} h-8 font-mono tabular-nums pointer-coarse:h-11"
+						/>
+					</FormField>
 				</div>
-			</div>
+			</section>
+		</div>
 
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-				<div>
-					<label for="persona-credit" class="block text-sm font-medium text-ink-700 mb-1">
-						Línea de crédito <span class="text-red-500">*</span>
-					</label>
-					<input
-						id="persona-credit"
-						type="number"
-						bind:value={newPersona.creditLine}
-						placeholder="3000"
-						min="0"
-						step="100"
-						class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
-					/>
-				</div>
-
-				<div>
-					<label for="persona-nse" class="block text-sm font-medium text-ink-700 mb-1">
-						NSE (opcional)
-					</label>
-					<input
-						id="persona-nse"
-						type="number"
-						bind:value={newPersona.nse}
-						placeholder="1, 2, o 3"
-						min="1"
-						max="3"
-						class="w-full px-3 py-2 border border-ink-900/20 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
-					/>
-				</div>
-			</div>
-
-			<div class="pt-6 border-t border-ink-900/10 flex justify-end gap-3">
-				<Button variant="secondary" href="/dashboard/personas">
-					Cancelar
-				</Button>
-				<Button onclick={createPersona} disabled={loading || !newPersona.id || !newPersona.name || !newPersona.description || !newPersona.clientName || !newPersona.dni}>
-					{loading ? 'Creando...' : 'Crear persona'}
-				</Button>
-			</div>
+		<div class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3">
+			<Button variant="secondary" href="/dashboard/personas">Cancelar</Button>
+			<Button onclick={createPersona} disabled={loading || incomplete}>
+				{loading ? "Creando…" : "Crear persona"}
+			</Button>
 		</div>
 	</div>
 </div>

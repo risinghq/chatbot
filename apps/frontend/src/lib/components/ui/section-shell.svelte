@@ -11,26 +11,17 @@ type Props = {
 let { title, description, action, children }: Props = $props();
 </script>
 
-<div class="bg-white border border-ink-100 shadow-sm relative overflow-hidden group transition-shadow hover:shadow-md">
-    <!-- Header -->
-    <div class="px-6 py-5 border-b border-ink-50 bg-white flex justify-between items-start gap-4">
-        <div>
-            <h3 class="font-serif text-lg text-ink-900 leading-none">{title}</h3>
-            {#if description}
-                <p class="text-sm text-ink-500 mt-2 max-w-xl text-pretty leading-relaxed">
-                    {description}
-                </p>
-            {/if}
-        </div>
-        {#if action}
-            <div class="shrink-0">
-                {@render action()}
-            </div>
-        {/if}
-    </div>
-
-    <!-- Content -->
-    <div class="p-0">
-        {@render children()}
-    </div>
-</div>
+<section class="overflow-hidden rounded-md border border-border bg-surface">
+	<header class="flex items-start justify-between gap-4 border-b border-border-subtle px-4 py-3">
+		<div>
+			<h3 class="text-md text-fg">{title}</h3>
+			{#if description}
+				<p class="mt-1 max-w-prose text-sm text-pretty text-fg-muted">{description}</p>
+			{/if}
+		</div>
+		{#if action}
+			<div class="shrink-0">{@render action()}</div>
+		{/if}
+	</header>
+	{@render children()}
+</section>

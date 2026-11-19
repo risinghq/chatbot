@@ -9,6 +9,7 @@ import {
   type ValidationErrors,
 } from "#lib/utils/validation.js";
 import Button from "#lib/components/ui/button.svelte";
+import PageHeader from "#lib/components/shared/page-header.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
@@ -111,22 +112,19 @@ async function handleSave() {
 
 <PageTitle title={product ? "Editar producto base" : "Nuevo producto base"} />
 
-<div class="max-w-4xl mx-auto p-8 md:p-12">
-    <div class="mb-8 flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-serif text-ink-900">{product ? product.name : "Nuevo producto base"}</h1>
-            <p class="text-ink-500 mt-2">Gestiona la información del producto base (plantilla).</p>
-        </div>
-        <Button variant="ghost" onclick={goBack}>Cancelar</Button>
-    </div>
+<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+    <PageHeader
+        title={product ? product.name : "Nuevo producto base"}
+        subtitle="La plantilla que los paquetes del catálogo reutilizan."
+    />
 
-    <div class="bg-white rounded-lg shadow-sm border border-ink-900/10 p-8">
-        <div class="space-y-6">
+    <div class="rounded-md border border-border bg-surface">
+        <div class="p-4">
             <FormField label="Nombre del producto base*" for="name" error={errors.name}>
                 <Input id="name" bind:value={formData.name} placeholder="Ej. Cocina Mabe 4 Hornillas" />
             </FormField>
 
-            <div class="grid grid-cols-2 gap-8">
+            <div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
                 <FormField label="Categoría*" for="category" error={errors.category}>
                     <Input id="category" bind:value={formData.category} placeholder="Ej. Cocinas" />
                 </FormField>
@@ -145,17 +143,15 @@ async function handleSave() {
                     id="specs"
                     bind:value={formData.specs}
                     placeholder='&#123;"color": "blanco", "quemadores": 4&#125;'
-                    class="font-mono text-xs"
+                    class="font-mono text-sm"
                 />
-                <p class="text-xs text-ink-400 mt-1">
-                    Formato JSON válido requerido.
-                </p>
+                <p class="mt-1.5 text-sm text-fg-muted">Debe ser JSON válido.</p>
             </FormField>
         </div>
 
-        <div class="pt-6 border-t border-ink-900/10 flex justify-end gap-3 mt-6">
+        <div class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3">
              <Button variant="secondary" onclick={goBack} disabled={isSaving}>Cancelar</Button>
-             <Button onclick={handleSave} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar"}</Button>
+             <Button onclick={handleSave} disabled={isSaving}>{isSaving ? "Guardando…" : "Guardar"}</Button>
         </div>
     </div>
 </div>

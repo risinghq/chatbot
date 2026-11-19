@@ -1,10 +1,17 @@
 <script lang="ts">
 import { onMount } from "svelte";
 import { fetchApi } from "#lib/utils/api.js";
+import { phaseLabel } from "#lib/utils/conversation-phase.js";
 import { formatPhone, formatPrice } from "#lib/utils/formatters.js";
 import Button from "#lib/components/ui/button.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
+import Banner from "#lib/components/ui/banner.svelte";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
+import Icon from "#lib/components/ui/icon.svelte";
+import Modal from "#lib/components/ui/modal.svelte";
+import Textarea from "#lib/components/ui/textarea.svelte";
 import MessageBubble from "#lib/components/conversations/message-bubble.svelte";
+import MessageInput from "#lib/components/conversations/message-input.svelte";
 import ConversationItem from "#lib/components/conversations/conversation-item.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import type { ReplayData, Conversation, TestPersona } from "@vendeya/types";
@@ -280,13 +287,6 @@ async function applyEdit(index: number) {
   }
 }
 
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-}
-
 function exitReplayMode() {
   replayMode = false;
   replayMetadata = null;
@@ -325,476 +325,188 @@ onMount(() => {
 
 <PageTitle title="Simulador" />
 
-<div class="flex h-[calc(100vh-65px)] overflow-hidden bg-white">
-  <div
-    class="w-full md:w-80 xl:w-96 border-r border-ink-900/10 bg-white flex flex-col shrink-0"
-  >
-    <div
-      class="p-6 border-b border-ink-900/10 flex items-center justify-between"
-    >
-      <div>
-        <span
-          class="text-xs font-bold tracking-widest uppercase text-ink-400 mb-1 block"
-        >
-          Conversaciones de prueba
-        </span>
-        <h2 class="text-2xl font-serif">Simulador</h2>
-      </div>
-      <div class="flex gap-2">
-        {#if data.user.role === "admin" || data.user.role === "developer"}
-          <a
-            href="/dashboard/personas"
-            class="w-8 h-8 flex items-center justify-center text-ink-900 hover:bg-ink-50 rounded-full transition-colors"
-            title="Gestionar personas"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-          </a>
-        {/if}
-        <button
-          onclick={openPersonaDialog}
-          disabled={loading}
-          class="w-8 h-8 flex items-center justify-center text-ink-900 hover:bg-ink-50 rounded-full transition-colors disabled:opacity-50"
-          title="Nueva simulación"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
-      </div>
-    </div>
+{#snippet personaOption(name: string, description: string, segment: string | null, personaId: string | null)}
+	<button
+		type="button"
+		disabled={loading}
+		onclick={() => {
+			selectedPersonaId = personaId;
+			createNewConversation();
+		}}
+		class="block w-full rounded-md border border-border px-3 py-2.5 text-left transition-colors hover:border-border-strong hover:bg-hover disabled:opacity-60"
+	>
+		<span class="flex items-center gap-2">
+			<span class="text-base font-medium text-fg">{name}</span>
+			{#if segment}<Badge>{segment}</Badge>{/if}
+		</span>
+		<span class="mt-0.5 block text-sm text-fg-muted">{description}</span>
+	</button>
+{/snippet}
 
-    <div class="overflow-y-auto flex-1">
-      {#each testConversations as conv (conv.phone_number)}
-        <ConversationItem
-          conversation={conv}
-          isSelected={selectedPhone === conv.phone_number}
-          onclick={() => (selectedPhone = conv.phone_number)}
-        />
-      {/each}
+<!-- 3rem is the mobile top bar in the dashboard layout. -->
+<div class="flex h-[calc(100dvh-3rem)] overflow-hidden md:h-dvh">
+	<div
+		class="w-full shrink-0 flex-col border-r border-border-subtle bg-surface md:flex md:w-80 {selectedPhone
+			? 'hidden'
+			: 'flex'}"
+	>
+		<div class="flex h-12 shrink-0 items-center gap-1 border-b border-border-subtle pr-2 pl-4">
+			<h1 class="flex-1 text-md font-medium text-fg">Simulador</h1>
+			{#if data.user.role === "admin" || data.user.role === "developer"}
+				<Button variant="ghost" size="sm" href="/dashboard/personas" aria-label="Gestionar personas">
+					<Icon name="users" />
+				</Button>
+			{/if}
+			<Button variant="ghost" size="sm" onclick={openPersonaDialog} disabled={loading} aria-label="Nueva simulación">
+				<Icon name="plus" />
+			</Button>
+		</div>
 
-      {#if testConversations.length === 0}
-        <div class="p-12 text-center text-ink-300">
-          <p class="font-serif italic">
-            No hay conversaciones de prueba.
-          </p>
-        </div>
-      {/if}
-    </div>
-  </div>
+		<div class="flex-1 overflow-y-auto">
+			{#each testConversations as conv (conv.phone_number)}
+				<ConversationItem
+					conversation={conv}
+					isSelected={selectedPhone === conv.phone_number}
+					onclick={() => (selectedPhone = conv.phone_number)}
+				/>
+			{/each}
 
-  <div class="hidden md:flex flex-col flex-1 bg-cream-100 relative min-w-0">
-    {#if selectedPhone && conversation}
-      <div
-        class="px-8 py-6 border-b border-ink-900/10 bg-white/95 backdrop-blur sticky top-0 z-10"
-      >
-        <div class="flex justify-between items-center">
-          <div class="space-y-px">
-            <div class="flex items-center gap-3">
-              <h2 class="font-serif text-3xl text-ink-900">
-                {#if conversation.client_name}
-                  <span class="text-ink-900">
-                    {conversation.client_name}
-                  </span>
-                  <span class="text-ink-400 text-xl ml-3">
-                    {formatPhone(selectedPhone)}
-                  </span>
-                {:else}
-                  {formatPhone(selectedPhone)}
-                {/if}
-              </h2>
-              {#if replayMode && replayMetadata}
-                <Badge variant="warning" class="text-xs">
-                  DEPURACIÓN: {replayMetadata.conversationId} • {replayMetadata.finalState}
-                </Badge>
-              {/if}
-            </div>
+			{#if testConversations.length === 0}
+				<EmptyState
+					title="Sin simulaciones"
+					description="Crea una para probar al bot sin escribir desde WhatsApp."
+				>
+					{#snippet action()}
+						<Button size="sm" onclick={openPersonaDialog}>Nueva simulación</Button>
+					{/snippet}
+				</EmptyState>
+			{/if}
+		</div>
+	</div>
 
-            <div
-              class="flex items-center gap-4 text-[10px] font-mono uppercase tracking-wider text-ink-500"
-            >
-              {#if conversation.persona_id}
-                {@const persona = personas.find(
-                  (p) => p.id === conversation.persona_id,
-                )}
-                {#if persona}
-                  <div class="flex gap-2">
-                    <span class="text-ink-300">Persona:</span>
-                    <span class="text-ink-900 font-bold">
-                      {persona.segment.toUpperCase()}
-                    </span>
-                  </div>
-                  <div class="w-px h-3 bg-ink-200"></div>
-                {/if}
-              {/if}
-              <div class="flex gap-2">
-                <span class="text-ink-300">Segmento:</span>
-                <span class="text-ink-900 font-bold">
-                  {conversation.segment || "—"}
-                </span>
-              </div>
-              <div class="w-px h-3 bg-ink-200"></div>
-              <div class="flex gap-2">
-                <span class="text-ink-300">Crédito:</span>
-                <span class="text-ink-900 font-bold">
-                  {conversation.credit_line
-                    ? `S/ ${formatPrice(conversation.credit_line)}`
-                    : "—"}
-                </span>
-              </div>
-              <div class="w-px h-3 bg-ink-200"></div>
-              <div class="flex gap-2">
-                <span class="text-ink-300">Estado:</span>
-                <span class="text-ink-900 font-bold">
-                  {conversation.current_state}
-                </span>
-              </div>
-              <div class="w-px h-3 bg-ink-200"></div>
-              <div class="flex gap-2 items-center">
-                <span class="text-ink-300">Intervención:</span>
-                {#if conversation.status === "human_takeover"}
-                  <div class="flex items-center gap-1.5">
-                    <span
-                      class="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"
-                      title={conversation.handover_reason || "Intervención manual activa"}
-                    ></span>
-                    <span class="text-red-600 font-bold">Activa</span>
-                  </div>
-                {:else}
-                  <span class="text-ink-900 font-bold">—</span>
-                {/if}
-              </div>
-            </div>
-          </div>
+	<div class="min-w-0 flex-1 flex-col bg-canvas md:flex {selectedPhone ? 'flex' : 'hidden'}">
+		{#if selectedPhone && conversation}
+			{@const persona = personas.find((p) => p.id === conversation.persona_id)}
+			<header class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle bg-surface px-4 py-2 md:min-h-12">
+				<Button
+					variant="ghost"
+					size="sm"
+					class="-ml-1 md:hidden"
+					onclick={() => (selectedPhone = null)}
+					aria-label="Volver a simulaciones"
+				>
+					<Icon name="arrow" class="size-4 rotate-180" />
+				</Button>
+				<div class="min-w-0 flex-1">
+					<h2 class="truncate text-md font-medium text-fg">
+						{conversation.client_name || formatPhone(selectedPhone)}
+					</h2>
+					{#if conversation.client_name}
+						<p class="font-mono text-sm text-fg-muted">{formatPhone(selectedPhone)}</p>
+					{/if}
+				</div>
+				{#if replayMode}
+					<Button variant="secondary" size="sm" onclick={exitReplayMode}>Salir de depuración</Button>
+				{:else}
+					<Button variant="secondary" size="sm" onclick={resetConversation}>Reiniciar</Button>
+					<Button variant="secondary" size="sm" onclick={() => deleteConversation(selectedPhone!)}>Eliminar</Button>
+				{/if}
+			</header>
 
-          <div class="flex items-center gap-3">
-            {#if replayMode}
-              <Button
-                variant="secondary"
-                onclick={exitReplayMode}
-                class="text-xs py-2"
-              >
-                Salir de depuración
-              </Button>
-            {:else}
-              <Button
-                variant="secondary"
-                onclick={resetConversation}
-                class="text-xs py-2"
-              >
-                Reiniciar
-              </Button>
-              <Button
-                variant="secondary"
-                onclick={() =>
-                  deleteConversation(selectedPhone!)}
-                class="text-xs py-2"
-              >
-                Eliminar
-              </Button>
-            {/if}
-          </div>
-        </div>
-      </div>
+			{#if replayMode && replayMetadata}
+				<div class="shrink-0 border-b border-border-subtle p-3">
+					<Banner tone="warning" title="Modo depuración">
+						Copia de <span class="font-mono">{replayMetadata.conversationId}</span>, terminó en
+						«{phaseLabel(replayMetadata.finalState)}». Edita un mensaje del cliente
+						para volver a ejecutar desde ahí.
+					</Banner>
+				</div>
+			{/if}
 
-      <div
-        bind:this={messagesContainer}
-        class="flex-1 overflow-y-auto p-8 space-y-4"
-      >
-        {#if messages.length === 0}
-          <div
-            class="h-full flex items-center justify-center text-ink-300"
-          >
-            <p class="font-serif italic">
-              Escribe un mensaje para iniciar la simulación...
-            </p>
-          </div>
-        {/if}
+			<dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 border-b border-border-subtle bg-surface px-4 py-2 text-sm">
+				{#each [
+					["Persona", persona ? persona.name : "—"],
+					["Segmento", conversation.segment || "—"],
+					["Crédito", conversation.credit_line ? `S/ ${formatPrice(conversation.credit_line)}` : "—"],
+					["Estado", conversation.current_state ? phaseLabel(conversation.current_state) : "—"],
+				] as [term, value] (term)}
+					<div class="flex gap-1.5">
+						<dt class="text-fg-muted">{term}</dt>
+						<dd class="text-fg">{value}</dd>
+					</div>
+				{/each}
+				{#if conversation.status === "human_takeover"}
+					<Badge variant="error">
+						<span title={conversation.handover_reason || undefined}>Intervención activa</span>
+					</Badge>
+				{/if}
+			</dl>
 
-        {#each messages as msg, i (msg.id)}
-          <div class="space-y-2">
-            {#if editingMessageIndex === i}
-              <div
-                class="bg-amber-50 border border-amber-200 rounded-lg p-4 shadow-sm ml-auto max-w-xl"
-              >
-                <div class="flex justify-between items-center mb-2">
-                  <span class="text-xs font-bold text-amber-800 uppercase tracking-wider">
-                    Editando mensaje
-                  </span>
-                  <button
-                    onclick={cancelEditing}
-                    class="text-amber-800 hover:text-amber-900"
-                    aria-label="Cancelar edición"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                  </button>
-                </div>
-                <textarea
-                  bind:value={editedContent}
-                  class="w-full p-3 border border-amber-300 rounded bg-white font-serif focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 mb-3 text-ink-900"
-                  rows="3"
-                  placeholder="Editar mensaje..."
-                ></textarea>
-                <div class="flex justify-end gap-2">
-                  <Button
-                    variant="secondary"
-                    onclick={cancelEditing}
-                    disabled={loading}
-                    class="text-xs"
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    onclick={() => applyEdit(i)}
-                    disabled={loading}
-                    class="text-xs"
-                  >
-                    {#if loading}
-                      <svg
-                        class="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle
-                          class="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          stroke-width="4"
-                        ></circle>
-                        <path
-                          class="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        ></path>
-                      </svg>
-                      Aplicando...
-                    {:else}
-                      Guardar y re-ejecutar
-                    {/if}
-                  </Button>
-                </div>
-              </div>
-            {:else}
-              <MessageBubble
-                direction={msg.direction}
-                type={msg.type}
-                content={msg.content}
-                createdAt={msg.created_at}
-                currentUserSide="inbound"
-              >
-                {#snippet actions()}
-                  {#if replayMode && msg.direction === "inbound"}
-                    <button
-                      onclick={() => startEditing(i)}
-                      class="bg-white text-ink-600 hover:text-blue-600 p-1.5 rounded-full shadow-sm border border-cream-200 hover:border-blue-200 transition-colors"
-                      title="Editar mensaje"
-                      disabled={loading}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"
-                        ></path>
-                      </svg>
-                    </button>
-                  {/if}
-                {/snippet}
-              </MessageBubble>
-            {/if}
-          </div>
-        {/each}
-      </div>
+			<div bind:this={messagesContainer} class="flex flex-1 flex-col gap-2 overflow-y-auto p-4 md:p-6">
+				{#if messages.length === 0}
+					<p class="py-10 text-center text-sm text-fg-muted">Escribe un mensaje para empezar la simulación.</p>
+				{/if}
 
-      <div class="border-t border-cream-200 p-4 bg-cream-50">
-        <div class="flex gap-4">
-          <input
-            type="text"
-            bind:value={currentInput}
-            onkeydown={handleKeydown}
-            disabled={loading}
-            placeholder="Escribe un mensaje..."
-            class="flex-1 bg-white p-3 border-b border-ink-900/30 font-serif focus:outline-none focus:border-ink-900"
-          />
-          <Button
-            onclick={() => sendMessage()}
-            disabled={loading || !currentInput.trim()}
-            class="px-4"
-          >
-            {#if loading}
-              <svg
-                class="animate-spin h-5 w-5 text-white"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            {:else}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            {/if}
-          </Button>
-        </div>
-        <p class="text-xs text-ink-400 mt-2 font-mono">
-          Enter para enviar • Shift+Enter para salto de línea
-        </p>
-      </div>
-    {:else}
-      <div class="flex-1 flex flex-col items-center justify-center text-ink-300 opacity-50">
-        <span class="text-9xl mb-4 font-serif italic">&larr;</span>
-        <p class="font-serif text-lg">
-          Seleccione una conversación de prueba.
-        </p>
-      </div>
-    {/if}
-  </div>
+				{#each messages as msg, i (msg.id)}
+					{#if editingMessageIndex === i}
+						<div class="ml-auto w-full max-w-xl rounded-lg border border-border bg-surface p-3 shadow-sm">
+							<label for="edit-message" class="mb-1.5 block text-sm text-fg-muted">Editar mensaje</label>
+							<Textarea id="edit-message" bind:value={editedContent} rows={3} />
+							<div class="mt-3 flex justify-end gap-2">
+								<Button variant="secondary" size="sm" onclick={cancelEditing} disabled={loading}>Cancelar</Button>
+								<Button size="sm" onclick={() => applyEdit(i)} disabled={loading}>
+									{loading ? "Aplicando…" : "Guardar y volver a ejecutar"}
+								</Button>
+							</div>
+						</div>
+					{:else}
+						<MessageBubble
+							direction={msg.direction}
+							type={msg.type}
+							content={msg.content}
+							createdAt={msg.created_at}
+							currentUserSide="inbound"
+						>
+							{#snippet actions()}
+								{#if replayMode && msg.direction === "inbound"}
+									<button
+										type="button"
+										onclick={() => startEditing(i)}
+										disabled={loading}
+										aria-label="Editar mensaje"
+										class="inline-flex size-7 items-center justify-center rounded-md border border-border bg-surface text-fg-muted shadow-sm hover:bg-hover hover:text-fg pointer-coarse:size-9"
+									>
+										<Icon name="pencil" class="size-3.5" />
+									</button>
+								{/if}
+							{/snippet}
+						</MessageBubble>
+					{/if}
+				{/each}
+			</div>
+
+			<MessageInput bind:value={currentInput} disabled={loading} onSend={() => sendMessage()} />
+		{:else}
+			<div class="flex flex-1 items-center justify-center">
+				<p class="text-base text-fg-muted">Elige una simulación de la lista.</p>
+			</div>
+		{/if}
+	</div>
 </div>
 
-{#if showPersonaDialog}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-    role="dialog"
-    aria-modal="true"
-    tabindex="-1"
-    onclick={closePersonaDialog}
-    onkeydown={(e) => e.key === "Escape" && closePersonaDialog()}
-  >
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4"
-      onclick={(e) => e.stopPropagation()}
-    >
-      <div class="p-6 border-b border-ink-900/10">
-        <h3 class="text-xl font-serif text-ink-900">
-          Nueva conversación
-        </h3>
-        <p class="text-sm text-ink-500 mt-1">
-          Escoge una persona de prueba
-        </p>
-      </div>
-
-      <div class="p-6 space-y-2 max-h-96 overflow-y-auto">
-        <button
-          onclick={() => {
-            selectedPersonaId = null;
-            createNewConversation();
-          }}
-          class="w-full text-left px-4 py-3 border border-ink-900/20 rounded-lg hover:border-ink-900/40 hover:bg-ink-50/50 transition-colors"
-        >
-          <div class="font-medium text-ink-900 mb-0.5">
-            Sin persona
-          </div>
-          <div class="text-xs text-ink-500">
-            Usar proveedores FNB/GASO reales
-          </div>
-        </button>
-
-        {#each personas as persona (persona.id)}
-          <button
-            onclick={() => {
-              selectedPersonaId = persona.id;
-              createNewConversation();
-            }}
-            class="w-full text-left px-4 py-3 border border-ink-900/20 rounded-lg hover:border-ink-900/40 hover:bg-ink-50/50 transition-colors"
-          >
-            <div class="flex items-center gap-2 mb-0.5">
-              <span class="font-medium text-ink-900">
-                {persona.name}
-              </span>
-              <span
-                class="text-[9px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-ink-100 text-ink-600"
-              >
-                {persona.segment}
-              </span>
-            </div>
-            <div class="text-xs text-ink-500">
-              {persona.description}
-            </div>
-          </button>
-        {/each}
-      </div>
-
-      <div class="p-6 border-t border-ink-900/10 flex justify-end">
-        <Button variant="secondary" onclick={closePersonaDialog}>
-          Cancelar
-        </Button>
-      </div>
-    </div>
-  </div>
-{/if}
+<Modal
+	open={showPersonaDialog}
+	title="Nueva simulación"
+	subtitle="Elige la persona de prueba que hará de cliente."
+	onClose={closePersonaDialog}
+>
+	<div class="flex max-h-96 flex-col gap-2 overflow-y-auto">
+		{@render personaOption("Sin persona", "Usa los proveedores FNB y GASO reales.", null, null)}
+		{#each personas as persona (persona.id)}
+			{@render personaOption(persona.name, persona.description, persona.segment, persona.id)}
+		{/each}
+	</div>
+	{#snippet footer()}
+		<Button variant="secondary" onclick={closePersonaDialog}>Cancelar</Button>
+	{/snippet}
+</Modal>

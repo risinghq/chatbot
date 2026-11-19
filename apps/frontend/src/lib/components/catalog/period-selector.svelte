@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { CatalogPeriod } from "@vendeya/types";
+import { fieldStyles } from "#lib/components/ui/field-styles.js";
 
 type Props = {
   periods: CatalogPeriod[];
@@ -9,33 +10,25 @@ type Props = {
 
 let { periods, selected, onSelect }: Props = $props();
 
-function getStatusLabel(status: string): string {
-  switch (status) {
-    case "draft":
-      return "Borrador";
-    case "active":
-      return "Activo";
-    case "archived":
-      return "Archivado";
-    default:
-      return status;
-  }
-}
+const statusLabels: Record<string, string> = {
+  draft: "Borrador",
+  active: "Activo",
+  archived: "Archivado",
+};
 </script>
 
-<div class="relative">
-  <select
-    class="appearance-none bg-white border border-ink-200 px-4 py-2 pr-10 text-sm focus:outline-none focus:border-ink-400 cursor-pointer"
-    value={selected?.id || ""}
-    onchange={(e) => {
-      const period = periods.find(p => p.id === e.currentTarget.value);
-      if (period) onSelect(period);
-    }}
-  >
-    {#each periods as period}
-      <option value={period.id}>
-        {period.name} ({getStatusLabel(period.status)})
-      </option>
-    {/each}
-  </select>
-</div>
+<select
+	aria-label="Periodo"
+	class="{fieldStyles(false)} h-8 w-auto py-0 pr-8 pointer-coarse:h-11"
+	value={selected?.id || ""}
+	onchange={(e) => {
+		const period = periods.find((p) => p.id === e.currentTarget.value);
+		if (period) onSelect(period);
+	}}
+>
+	{#each periods as period (period.id)}
+		<option value={period.id}>
+			{period.name} ({statusLabels[period.status] ?? period.status})
+		</option>
+	{/each}
+</select>
