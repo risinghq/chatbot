@@ -41,21 +41,22 @@ const CONFIG_PATH = path.resolve(
  *
  * Rows written remotely are read by the deployed Worker, so with `remote` the
  * encryption key is the shell's SECRETS_KEY, the deployed one, never the local
- * key in .dev.vars. Without it a command that encrypts refuses.
+ * key in .dev.vars. Without it a command that encrypts refuses. Locally a
+ * SECRETS_KEY set in the shell, even empty, overrides the one in .dev.vars.
  */
 export async function withPlatform<T>(
   options: { remote: boolean },
   load: () => Promise<T>,
 ): Promise<T> {
   const { configPath, rawConfig } = await scriptConfig(options.remote);
-  const remote = options.remote
-    ? {
-        ...remoteBindings(rawConfig),
-        SECRETS_KEY: process.env.SECRETS_KEY ?? "",
-      }
-    : null;
+  const shellKey = process.env.SECRETS_KEY;
+  const overrides = options.remote
+    ? { ...remoteBindings(rawConfig), SECRETS_KEY: shellKey ?? "" }
+    : shellKey === undefined
+      ? {}
+      : { SECRETS_KEY: shellKey };
   const proxy = await getPlatformProxy<Env>({ configPath });
-  const env: Env = remote ? { ...proxy.env, ...remote } : proxy.env;
+  const env: Env = { ...proxy.env, ...overrides };
 
   const pending: Promise<unknown>[] = [];
   (globalThis as unknown as { Bun: BunRuntime }).Bun.plugin({
