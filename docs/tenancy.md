@@ -26,10 +26,14 @@ curl -X POST -b "session=<token>" -H 'content-type: application/json' \
   -d '{"slug":"acme","name":"Acme"}' https://sales.rising.sh/api/tenants
 ```
 
-A new tenant has no catalog, no periods and no channel account. The dashboard
-has no page for creating tenants. Its first admin and its number come from
-`account create` and `account channel create`
-([Operations](./operations.md#accounts)).
+A new tenant has no catalog, no periods and no channel account. A platform
+operator creates one from `/dashboard/negocios` in the dashboard
+([Dashboard](./dashboard.md#onboarding-a-business)); the CLI path stays for
+support (`account create`, `account channel create`,
+[Operations](./operations.md#accounts)). `GET /api/admin/setup-status` reports
+what the new tenant still needs, and `POST /api/tenants/:id/members` accepts
+`{ username, role }` as well as `{ userId, role }` so the dashboard can add a
+member by login name.
 
 A tenant's files sit under its id in R2, and each conversation's Durable Object
 is named by its tenant, number and contact. A tenant shares the Workers, the

@@ -3,8 +3,11 @@ import { onMount } from "svelte";
 import Button from "#lib/components/ui/button.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import DataTable from "#lib/components/ui/data-table.svelte";
+import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import { fetchApi } from "#lib/utils/api.js";
 import { formatDate } from "#lib/utils/formatters.js";
+
+let { data } = $props();
 
 type User = {
   id: string;
@@ -62,6 +65,9 @@ const columns = [
 ];
 </script>
 
+{#if !data.user?.activeTenantId}
+<NeedsTenant />
+{:else}
 <div class="space-y-6">
     <SectionShell 
         title="Usuarios del sistema" 
@@ -76,6 +82,7 @@ const columns = [
         />
     </SectionShell>
 </div>
+{/if}
 
 {#snippet headerAction()}
     <Button href="/dashboard/admin/users/create">

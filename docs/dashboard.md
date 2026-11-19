@@ -70,6 +70,7 @@ These pages check the role on the server:
 - `reports/+page.server.ts` allows `admin`, `developer`, `supervisor`.
 - `simulator/+page.server.ts` and `personas/+page.server.ts` allow `admin`,
   `developer`.
+- `negocios/+page.server.ts` allows platform operators only.
 
 Other pages have no role guard. When the backend refuses their load with 403,
 the load returns empty data.
@@ -96,6 +97,7 @@ routes/
     simulator/                      admin, developer
     personas/  create/              admin, developer
     providers/                      DNI lookup, platform operators
+    negocios/                       business management, platform operators
     admin/                          admin only
       users/  [userId]/  create/
       periods/  audit/  settings/
@@ -170,8 +172,27 @@ sets one of the two. A value that fails answers 400 and changes nothing.
 
 ## What has no page
 
-The API has endpoints the dashboard does not reach: creating tenants, adding
-members to a tenant, registering channel accounts, retrying eligibility, the
-analytics endpoints. [Tenancy](./tenancy.md),
-[Connecting WhatsApp](./whatsapp.md) and [Eligibility](./eligibility.md) show
-the ones an operator needs as `curl` commands.
+The API has endpoints the dashboard does not reach: registering channel
+accounts, retrying eligibility, the analytics endpoints.
+[Tenancy](./tenancy.md), [Connecting WhatsApp](./whatsapp.md) and
+[Eligibility](./eligibility.md) show the ones an operator needs as `curl`
+commands.
+
+## Onboarding a business
+
+`/dashboard/negocios` is the platform operator's business page: the tenant list,
+a form that posts `POST /api/tenants`, an Entrar button per business that pins
+the session through `POST /api/tenants/active`, and a member form for the active
+business — `POST /api/admin/users` to create the account, or
+`POST /api/tenants/:id/members` with `{ username, role }` for a user that
+already exists.
+
+While a business is unfinished, the home page and the Negocios page show a setup
+checklist (`lib/components/shared/setup-checklist.svelte`) fed by
+`GET /api/admin/setup-status`: the OpenAI key, a WhatsApp number with its token
+and app secret, the Cálidda login, and at least one member. It hides once every
+step is done.
+
+Pages that work inside one business show a pick-a-business message
+(`lib/components/shared/needs-tenant.svelte`) when the session has no active
+tenant, instead of an empty table or an error.

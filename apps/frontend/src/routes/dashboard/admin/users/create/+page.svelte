@@ -8,8 +8,11 @@ import PageTitle from "#lib/components/shared/page-title.svelte";
 import PermissionMatrix from "#lib/components/admin/permission-matrix.svelte";
 import { toast } from "#lib/state/toast.svelte.js";
 import { fetchApi } from "#lib/utils/api.js";
+import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import { MIN_PASSWORD_LENGTH } from "@vendeya/types";
 import { PASSWORD_TOO_SHORT_MESSAGE } from "#lib/utils/password.js";
+
+let { data } = $props();
 
 let formData = $state({
   name: "",
@@ -55,6 +58,9 @@ async function handleSubmit() {
 
 <PageTitle title="Nuevo Usuario" />
 
+{#if !data.user?.activeTenantId}
+<NeedsTenant />
+{:else}
 <div class="max-w-3xl mx-auto p-8 md:p-12">
   <div class="mb-8">
     <h1 class="text-3xl font-serif text-ink-900">Registrar nuevo usuario</h1>
@@ -119,3 +125,4 @@ async function handleSubmit() {
     </form>
   </div>
 </div>
+{/if}

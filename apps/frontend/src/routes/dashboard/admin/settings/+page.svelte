@@ -19,6 +19,7 @@ let showConfirmModal = $state(false);
 // posts it only when the admin typed a new one.
 let caliddaPassword = $state("");
 let openaiKey = $state("");
+let waitingCount = $state<number | null>(null);
 
 let hasChanges = $derived(
   JSON.stringify(settings) !== JSON.stringify(initialSettings) ||
@@ -51,6 +52,17 @@ async function loadSettings() {
     console.error(e);
   } finally {
     loading = false;
+  }
+
+  // Loaded client-side like the rest: an `{#await}` on this fetch runs during
+  // SSR, where a relative URL cannot resolve and the rejection 500s the page.
+  try {
+    const outage = await fetchApi<{ waitingCount: number }>(
+      "/api/admin/outage-status",
+    );
+    waitingCount = outage.waitingCount;
+  } catch (e) {
+    console.error(e);
   }
 }
 
@@ -123,8 +135,8 @@ onMount(() => {
                 afectados.
               </p>
 
-              {#await fetchApi<{ waitingCount: number }>("/api/admin/outage-status") then data}
-                {#if data.waitingCount > 0}
+              {#if waitingCount !== null}
+                {#if waitingCount > 0}
                   <div
                     class="mt-2 flex items-center gap-2 text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded border border-orange-100"
                   >
@@ -145,7 +157,7 @@ onMount(() => {
                       <path d="M12 9v4" />
                       <path d="M12 17h.01" />
                     </svg>
-                    {data.waitingCount} usuarios esperando recuperación
+                    {waitingCount} usuarios esperando recuperación
                   </div>
                 {:else}
                   <div
@@ -168,7 +180,7 @@ onMount(() => {
                     No hay usuarios en espera
                   </div>
                 {/if}
-              {/await}
+              {/if}
 
               <div class="mt-3">
                 <Button
@@ -187,7 +199,10 @@ onMount(() => {
                       );
                       toast.success(res.message);
                       // Force reload of status
-                      await fetchApi("/api/admin/outage-status");
+                      const outage = await fetchApi<{
+                        waitingCount: number;
+                      }>("/api/admin/outage-status");
+                      waitingCount = outage.waitingCount;
                     } catch (e) {
                       toast.error("Error al ejecutar recuperación");
                     }

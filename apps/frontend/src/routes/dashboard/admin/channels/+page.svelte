@@ -7,6 +7,9 @@ import Button from "#lib/components/ui/button.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
+import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
+
+let { data } = $props();
 
 type ChannelAccount = {
   id: string;
@@ -81,6 +84,9 @@ const statusLabels: Record<string, string> = {
 onMount(load);
 </script>
 
+{#if !data.user?.activeTenantId}
+  <NeedsTenant />
+{:else}
 <SectionShell
   title="Números de WhatsApp"
   description="Cada número guarda su token de acceso y el app secret de Meta cifrados. El token de verificación lo genera el sistema: cópialo en la consola de Meta junto con la URL del webhook."
@@ -192,3 +198,4 @@ onMount(load);
     </div>
   {/if}
 </SectionShell>
+{/if}

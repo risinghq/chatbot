@@ -16,6 +16,7 @@ const breadcrumbLabels: Record<string, string> = {
   "/dashboard/admin/periods": "Periodos",
   "/dashboard/admin/audit": "Auditoría",
   "/dashboard/admin/settings": "Configuración",
+  "/dashboard/negocios": "Negocios",
   "/dashboard/personas": "Personas",
   "/dashboard/personas/create": "Crear",
 };
