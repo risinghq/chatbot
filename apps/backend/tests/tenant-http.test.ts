@@ -16,6 +16,7 @@ import {
   createTenantFixture,
   insertConversation,
   type TenantFixture,
+  setCaliddaLogin,
   setChannelStatus,
 } from "./helpers/tenancy.ts";
 
@@ -45,6 +46,7 @@ import {
   SystemSettings,
   TenantSettings,
 } from "../src/domains/settings/system.ts";
+import { TenantSecrets } from "../src/domains/settings/tenant-secrets.ts";
 import { MembershipService } from "../src/domains/tenants/index.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
@@ -2266,6 +2268,126 @@ describe("HTTP authorization", () => {
       });
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  /**
+   * The dashboard's setup checklist reads this one endpoint, and the brief
+   * hides the checklist once every step is done. Each flag must come from the
+   * same rows the feature checks, so the test walks a bare tenant from all
+   * pending to complete by writing the data each step reads.
+   */
+  describe("business setup status", () => {
+    async function bareTenant(slug: string): Promise<string> {
+      const tenantId = `tn-${crypto.randomUUID()}`;
+      await run(
+        "INSERT INTO tenants (id, slug, name, status) VALUES (?, ?, ?, 'active')",
+        [tenantId, `${slug}-${tenantId.slice(3, 11)}`, slug],
+      );
+      return tenantId;
+    }
+
+    it("refuses a caller with no business active", async () => {
+      const unpinnedOperator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
+      expect(
+        (await get("/api/admin/setup-status", unpinnedOperator)).status,
+      ).toBe(403);
+    });
+
+    it("reports every step pending, then done as its data lands", async () => {
+      const tenantId = await bareTenant("setup-status");
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        tenantId,
+      );
+      const status = () => getJson("/api/admin/setup-status", operator);
+
+      expect(await status()).toEqual({
+        openai_configured: false,
+        whatsapp_configured: false,
+        calidda_configured: false,
+        has_members: false,
+        complete: false,
+      });
+
+      await TenantSecrets.set(tenantId, "openai_api_key", "sk-test");
+      expect((await status()).openai_configured).toBe(true);
+
+      await setCaliddaLogin(tenantId);
+      expect((await status()).calidda_configured).toBe(true);
+
+      // A number must be able to receive (app secret) and answer (access
+      // token) to count, so a row missing either stays pending.
+      await ChannelAccountService.create({
+        id: `ch-${crypto.randomUUID()}`,
+        tenantId,
+        phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
+        status: "active",
+      });
+      expect((await status()).whatsapp_configured).toBe(false);
+      await ChannelAccountService.create({
+        id: `ch-${crypto.randomUUID()}`,
+        tenantId,
+        phoneNumberId: `pnid-${crypto.randomUUID().slice(0, 8)}`,
+        accessToken: "test-access-token",
+        appSecret: "test-app-secret",
+        status: "active",
+      });
+      expect((await status()).whatsapp_configured).toBe(true);
+
+      await run(
+        `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
+         VALUES (?, ?, ?, 'admin')`,
+        [crypto.randomUUID(), tenantId, await createUser({})],
+      );
+
+      const done = await status();
+      expect(done.has_members).toBe(true);
+      expect(done.complete).toBe(true);
+    });
+
+    it("grants a membership named by username or user id", async () => {
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
+      const memberId = await createUser({});
+      const username = (
+        (await getOne<{ username: string }>(
+          "SELECT username FROM users WHERE id = ?",
+          [memberId],
+        )) as { username: string }
+      ).username;
+
+      const byName = await post(
+        `/api/tenants/${alpha.tenantId}/members`,
+        operator,
+        { username, role: "supervisor" },
+      );
+      expect(byName.status).toBe(201);
+      expect(await MembershipService.get(alpha.tenantId, memberId)).toEqual(
+        expect.objectContaining({ role: "supervisor" }),
+      );
+
+      const unknown = await post(
+        `/api/tenants/${alpha.tenantId}/members`,
+        operator,
+        { username: `ghost-${crypto.randomUUID().slice(0, 8)}`, role: "admin" },
+      );
+      expect(unknown.status).toBe(404);
+
+      const byId = await post(
+        `/api/tenants/${beta.tenantId}/members`,
+        operator,
+        { userId: memberId, role: "sales_agent" },
+      );
+      expect(byId.status).toBe(201);
+      expect(await MembershipService.get(beta.tenantId, memberId)).toEqual(
+        expect.objectContaining({ role: "sales_agent" }),
+      );
     });
   });
 });

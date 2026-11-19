@@ -15,10 +15,15 @@ import {
   TENANT_VISIBLE_PLATFORM_KEYS,
 } from "../../domains/settings/system.ts";
 import { TenantSecrets } from "../../domains/settings/tenant-secrets.ts";
+import { tenantSetupStatus } from "../../domains/tenants/setup.ts";
 import { clearFnbState } from "../../adapters/providers/fnb-client.ts";
 import { getRecentLLMCalls } from "../../intelligence/tracker.ts";
 import { queryLimit } from "../../lib/http.ts";
-import { requireTenantScope } from "../../middleware/auth.ts";
+import {
+  activeTenantId,
+  requireActiveTenant,
+  requireTenantScope,
+} from "../../middleware/auth.ts";
 import { getAll } from "../../db/index.ts";
 
 const system = new Hono();
@@ -111,6 +116,15 @@ system.get("/audit", async (c) => {
   });
 
   return c.json({ logs: logsWithNames });
+});
+
+/**
+ * What the active business still needs before it can sell. The dashboard's
+ * setup checklist reads this; a caller with no tenant pinned has no business
+ * to report on, so `activeTenantId` refuses it.
+ */
+system.get("/setup-status", requireActiveTenant, async (c) => {
+  return c.json(await tenantSetupStatus(activeTenantId(c)));
 });
 
 system.get("/settings", async (c) => {

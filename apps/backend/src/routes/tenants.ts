@@ -123,27 +123,39 @@ tenants.post("/", requirePlatformOperator, async (c) => {
 tenants.post("/:id/members", requirePlatformOperator, async (c) => {
   const scope = c.get("scope");
   const tenantId = pathParam(c, "id");
-  const { userId, role } = await c.req.json();
+  const { userId, username, role } = await c.req.json();
 
-  if (!userId || !isTenantRole(role)) {
-    return c.json({ error: "userId and a valid role are required" }, 400);
+  if ((!userId && !username) || !isTenantRole(role)) {
+    return c.json(
+      { error: "userId or username, and a valid role, are required" },
+      400,
+    );
   }
 
   if (!(await TenantService.getById(tenantId))) {
     return c.json({ error: "Tenant not found" }, 404);
   }
 
-  if (
-    !(await getOne<{ id: string }>("SELECT id FROM users WHERE id = ?", [
-      userId,
-    ]))
-  ) {
+  // The dashboard names a person by the username they log in with; the API's
+  // original caller (account tooling) names the id. Either resolves to the
+  // same global user.
+  const user = userId
+    ? await getOne<{ id: string }>("SELECT id FROM users WHERE id = ?", [
+        userId,
+      ])
+    : await getOne<{ id: string }>("SELECT id FROM users WHERE username = ?", [
+        username,
+      ]);
+
+  if (!user) {
     return c.json({ error: "User not found" }, 404);
   }
 
+  const memberId = user.id;
+
   const membership = await MembershipService.upsert({
     tenantId,
-    userId,
+    userId: memberId,
     role,
     createdBy: scope.userId,
   });
@@ -152,7 +164,7 @@ tenants.post("/:id/members", requirePlatformOperator, async (c) => {
     { userId: scope.userId, tenantId },
     "grant_membership",
     "user",
-    userId,
+    memberId,
     { role },
   );
 

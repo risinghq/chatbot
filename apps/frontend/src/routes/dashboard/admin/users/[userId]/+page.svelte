@@ -12,7 +12,10 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
+import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import PermissionMatrix from "#lib/components/admin/permission-matrix.svelte";
+
+let { data } = $props();
 
 let user = $state<any>(null);
 let originalRole = $state<string>("");
@@ -104,6 +107,9 @@ onMount(loadUser);
 
 <PageTitle title={user ? `Editar ${user.username}` : "Cargando..."} />
 
+{#if !data.user?.activeTenantId}
+<NeedsTenant />
+{:else}
 <div class="max-w-3xl mx-auto p-8 md:p-12">
     <div class="mb-8">
         {#if user}
@@ -191,3 +197,4 @@ onMount(loadUser);
         </div>
     {/if}
 </div>
+{/if}

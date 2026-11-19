@@ -2,16 +2,19 @@
 import { auth } from "#lib/state/auth.svelte.js";
 import DashboardGridItem from "#lib/components/shared/dashboard-grid-item.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
+import SetupChecklist from "#lib/components/shared/setup-checklist.svelte";
 import type { PageData } from "./$types";
 
 let { data }: { data: PageData } = $props();
 
 // The tenant's OpenAI key is what lets the bot think. The tenant list the
 // layout loaded says whether it is stored, so the status can warn before a
-// customer finds out.
-let aiConfigured = $derived(
-  auth.tenants.find((t) => t.id === auth.activeTenantId)?.ai_configured ?? true,
+// customer finds out. With no business active there is no key to report on,
+// and the status must not pretend there is one.
+let activeTenant = $derived(
+  auth.tenants.find((t) => t.id === auth.activeTenantId),
 );
+let aiConfigured = $derived(activeTenant?.ai_configured === true);
 </script>
 
 <PageTitle title="Dashboard" />
@@ -32,6 +35,28 @@ let aiConfigured = $derived(
 
 		{#if data.user}
 			<div class="hidden md:block">
+				{#if auth.isPlatformOperator && auth.tenants.length === 0}
+					<div class="border-t border-ink-900/10 pt-6 mb-6">
+						<p
+							class="text-xs uppercase tracking-widest text-ink-400 mb-2 font-bold"
+						>
+							Primeros pasos
+						</p>
+						<p class="text-sm text-ink-600 leading-relaxed mb-4">
+							Todavía no hay negocios. Crea el primero para
+							empezar.
+						</p>
+						<a
+							href="/dashboard/negocios"
+							class="inline-block px-4 py-2 bg-ink-900 text-cream-50 text-xs font-bold uppercase tracking-widest hover:bg-ink-700 transition-colors"
+						>
+							Crear el primer negocio
+						</a>
+					</div>
+				{:else if auth.activeTenantId}
+					<SetupChecklist />
+				{/if}
+
 				<div class="border-t border-ink-900/10 pt-6 mb-6">
 					<p
 						class="text-xs uppercase tracking-widest text-ink-400 mb-2 font-bold"
@@ -39,7 +64,12 @@ let aiConfigured = $derived(
 						Estado del sistema
 					</p>
 					<div class="flex items-center gap-2">
-						{#if aiConfigured}
+						{#if !auth.activeTenantId}
+							<span class="w-2 h-2 rounded-full bg-gray-400"></span>
+							<span class="text-sm font-mono text-ink-600"
+								>Sin negocio</span
+							>
+						{:else if aiConfigured}
 							<span
 								class="w-2 h-2 rounded-full bg-green-500 animate-pulse"
 							></span>
@@ -55,7 +85,7 @@ let aiConfigured = $derived(
 							>
 						{/if}
 					</div>
-					{#if !aiConfigured}
+					{#if auth.activeTenantId && !aiConfigured}
 						<p class="text-xs text-ink-400 mt-2 leading-relaxed">
 							Falta la clave de OpenAI del negocio. El bot no puede
 							interpretar mensajes. El administrador la configura en
@@ -209,6 +239,16 @@ let aiConfigured = $derived(
 					>ACCESO RESTRINGIDO</span
 				>
 			</div>
+		{/if}
+
+		{#if auth.isPlatformOperator}
+			<DashboardGridItem
+				href="/dashboard/negocios"
+				number="09"
+				category="Plataforma"
+				title="Negocios"
+				variant="dark"
+			/>
 		{/if}
 	</div>
 </div>
