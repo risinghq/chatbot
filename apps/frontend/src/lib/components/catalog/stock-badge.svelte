@@ -21,19 +21,12 @@ let open = $state(false);
 let isUpdating = $state(false);
 
 const statusConfig = {
-  in_stock: {
-    label: "En stock",
-    class: "bg-ink-900 text-white border-ink-900",
-  },
+  in_stock: { label: "En stock", class: "bg-success-soft text-success-text" },
   low_stock: {
     label: "Stock bajo",
-    class: "bg-white text-ink-900 border-ink-200",
+    class: "bg-warning-soft text-warning-text",
   },
-  out_of_stock: {
-    label: "Agotado",
-    class:
-      "bg-white text-ink-300 border-ink-100 line-through decoration-ink-300",
-  },
+  out_of_stock: { label: "Agotado", class: "bg-sunken text-fg-muted" },
 };
 
 async function updateStatus(newStatus: StockStatus) {
@@ -60,25 +53,21 @@ async function updateStatus(newStatus: StockStatus) {
 	<DropdownTrigger
 		onclick={() => canEdit && !isUpdating && (open = !open)}
 		disabled={!canEdit || isUpdating}
-		class="inline-flex items-center gap-2 px-3 py-1 border text-[10px] font-bold uppercase tracking-wider rounded-full transition-all min-h-7! {statusConfig[stockStatus].class} {canEdit ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}"
+		class="inline-flex h-6 items-center gap-1 rounded-sm px-2 text-xs font-medium whitespace-nowrap transition-colors pointer-coarse:h-9 {statusConfig[stockStatus].class} {canEdit ? 'cursor-pointer hover:brightness-95' : 'cursor-default'}"
 	>
 		<span>{statusConfig[stockStatus].label}</span>
 		{#if canEdit}
-			<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-3" aria-hidden="true">
 				<polyline points="6 9 12 15 18 9"/>
 			</svg>
 		{/if}
 	</DropdownTrigger>
 
-	<DropdownMenu
-		{open}
-		class="absolute top-full left-0 mt-2 min-w-35 bg-white border border-ink-200 shadow-lg rounded-lg overflow-hidden z-50"
-	>
-		{#each Object.entries(statusConfig) as [status, config]}
+	<DropdownMenu {open} class="left-0">
+		{#each Object.entries(statusConfig) as [status, config] (status)}
 			<DropdownItem
 				onclick={() => updateStatus(status as StockStatus)}
 				disabled={isUpdating || status === stockStatus}
-				class="w-full text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-ink-600 hover:bg-ink-50 focus:bg-ink-50 transition-colors border-b last:border-b-0 border-ink-50 disabled:opacity-50 cursor-pointer outline-none"
 			>
 				{config.label}
 			</DropdownItem>

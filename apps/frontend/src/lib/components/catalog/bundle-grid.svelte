@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Bundle } from "@vendeya/types";
+import Badge from "#lib/components/ui/badge.svelte";
 import { formatPrice } from "#lib/utils/formatters.js";
 import StockBadge from "./stock-badge.svelte";
 
@@ -36,111 +37,57 @@ function getInstallmentsText(json: string): string {
 }
 </script>
 
-<div
-  class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
->
-  {#each bundles as bundle (bundle.id)}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="group flex flex-col h-full bg-white hover:bg-cream-50 p-4 transition-all duration-300 border border-transparent hover:border-emerald-200 shadow-sm hover:shadow-md rounded-lg {canEdit
-        ? 'cursor-pointer'
-        : ''}"
-      onclick={() => canEdit && onBundleClick?.(bundle)}
-    >
-      <div
-        class="aspect-video w-full bg-white mb-3 overflow-hidden relative rounded-md border border-ink-900/5"
-      >
-        <img
-          src="/media/{bundle.tenant_id}/images/{bundle.image_id}.jpg"
-          alt={bundle.name}
-          class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-          onerror={(e) => {
-            const target = e.currentTarget;
-            if (target instanceof HTMLImageElement) {
-              target.src = "/placeholder.svg";
-            }
-          }}
-        />
-        {#if bundle.is_active === 0}
-          <div
-            class="absolute inset-0 bg-white/80 backdrop-blur-[1px] flex items-center justify-center"
-          >
-            <span
-              class="text-ink-400 font-bold uppercase text-xs tracking-wider border border-ink-200 px-2 py-1"
-            >
-              Inactivo
-            </span>
-          </div>
-        {/if}
-        <div class="absolute bottom-2 left-2">
-          <span
-            class="bg-emerald-600 text-white text-xs font-bold px-2 py-1 rounded-sm shadow-sm"
-          >
-            S/ {formatPrice(bundle.price)}
-          </span>
-        </div>
-      </div>
+<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+	{#each bundles as bundle (bundle.id)}
+		{@const installments = getInstallmentsText(bundle.installments_json)}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="flex h-full flex-col overflow-hidden rounded-md border border-border bg-surface transition-colors duration-150 {canEdit
+				? 'cursor-pointer hover:border-border-strong'
+				: ''}"
+			onclick={() => canEdit && onBundleClick?.(bundle)}
+		>
+			<div class="relative aspect-video w-full overflow-hidden border-b border-border-subtle bg-sunken">
+				<img
+					src="/media/{bundle.tenant_id}/images/{bundle.image_id}.jpg"
+					alt={bundle.name}
+					class="size-full object-cover {bundle.is_active === 0 ? 'opacity-40 grayscale' : ''}"
+					onerror={(e) => {
+						const target = e.currentTarget;
+						if (target instanceof HTMLImageElement) {
+							target.src = "/placeholder.svg";
+						}
+					}}
+				/>
+				{#if bundle.is_active === 0}
+					<Badge class="absolute top-2 left-2">Inactivo</Badge>
+				{/if}
+			</div>
 
-      <div class="flex justify-between items-start mb-2">
-        <h3 class="font-serif text-lg leading-tight text-ink-900 line-clamp-2">
-          {bundle.name}
-        </h3>
-      </div>
+			<div class="flex flex-1 flex-col gap-2 p-3">
+				<div class="flex items-start justify-between gap-2">
+					<h3 class="line-clamp-2 text-base font-medium text-fg">{bundle.name}</h3>
+					<span class="shrink-0 text-base text-fg tabular-nums">S/ {formatPrice(bundle.price)}</span>
+				</div>
 
-      <div class="flex justify-between items-center mb-3">
-        <span
-          class="text-[10px] font-bold uppercase tracking-widest text-ink-400"
-        >
-          {bundle.primary_category}
-        </span>
-        <div onclick={(e) => e.stopPropagation()} role="presentation">
-          <StockBadge
-            bundleId={bundle.id}
-            bundleName={bundle.name}
-            stockStatus={bundle.stock_status}
-            {canEdit}
-            onUpdate={(s) => onStockUpdate(bundle.id, s)}
-          />
-        </div>
-      </div>
+				<div class="flex items-center justify-between gap-2">
+					<span class="truncate text-sm text-fg-muted">{bundle.primary_category}</span>
+					<div onclick={(e) => e.stopPropagation()} role="presentation">
+						<StockBadge
+							bundleId={bundle.id}
+							bundleName={bundle.name}
+							stockStatus={bundle.stock_status}
+							{canEdit}
+							onUpdate={(s) => onStockUpdate(bundle.id, s)}
+						/>
+					</div>
+				</div>
 
-      <div
-        class="mt-auto pt-3 border-t border-ink-900/5 flex flex-col gap-1 text-xs text-ink-500"
-      >
-        <div class="flex items-center gap-2">
-          <svg
-            class="w-3 h-3"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            ><path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-            ></path></svg
-          >
-          <span
-            >{getCompositionCount(bundle.composition_json)} piezas incluidas</span
-          >
-        </div>
-        <div class="flex items-center gap-2">
-          <svg
-            class="w-3 h-3"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            ><path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-            ></path></svg
-          >
-          <span>{getInstallmentsText(bundle.installments_json)}</span>
-        </div>
-      </div>
-    </div>
-  {/each}
+				<p class="mt-auto border-t border-border-subtle pt-2 text-sm text-fg-muted">
+					{getCompositionCount(bundle.composition_json)} piezas incluidas{installments ? ` · ${installments}` : ""}
+				</p>
+			</div>
+		</div>
+	{/each}
 </div>

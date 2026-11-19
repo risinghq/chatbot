@@ -80,43 +80,41 @@ function handleOverlayClick(e: MouseEvent) {
         onclick={handleOverlayClick}
         role="presentation"
     >
-        <!-- Overlay -->
-        <div class="absolute inset-0 bg-white/80 backdrop-blur-sm" aria-hidden="true"></div>
-        
-        <!-- Modal -->
-        <div 
+        <div class="absolute inset-0 bg-overlay" aria-hidden="true"></div>
+
+        <div
             bind:this={modalRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
-            class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border border-ink-200 shadow-xl max-w-2xl w-[calc(100%-4rem)] max-h-[90vh] flex flex-col focus-visible:outline-none"
+            class="absolute top-1/2 left-1/2 flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-popover-border bg-surface shadow-md focus-visible:outline-none"
         >
-            <div class="flex justify-between items-start p-8 border-b border-ink-100">
-                <div>
-                    {#if subtitle}
-                        <span class="block text-[11px] font-bold uppercase tracking-wider text-ink-400 mb-2">{subtitle}</span>
-                    {/if}
+            <div class="flex items-start justify-between gap-4 border-b border-border-subtle px-4 py-3">
+                <div class="min-w-0">
                     {#if title}
-                        <h2 id={titleId} class="text-3xl font-serif text-ink-900">{title}</h2>
+                        <h2 id={titleId} class="text-md text-fg">{title}</h2>
+                    {/if}
+                    {#if subtitle}
+                        <p class="mt-0.5 text-sm text-fg-muted">{subtitle}</p>
                     {/if}
                 </div>
-                <button 
+                <button
                     type="button"
                     onclick={onClose}
-                    class="text-ink-400 hover:text-ink-900 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-2 p-2 min-w-10 min-h-10 rounded-full transition-colors -mt-2 -mr-2 touch-action-manipulation" 
+                    class="-mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-2 focus-visible:outline-ring pointer-coarse:size-11 touch-manipulation"
                     aria-label="Cerrar"
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <line x1="18" y1="6" x2="6" y2="18"/>
                         <line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                 </button>
             </div>
-            <div class="flex-1 overflow-y-auto p-8 overscroll-contain">
+            <div class="flex-1 overflow-y-auto overscroll-contain p-4">
                 {@render children()}
             </div>
             {#if footer}
-                <div class="flex justify-end gap-4 p-6 border-t border-ink-100 bg-ink-50">
+                <div class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3">
                     {@render footer()}
                 </div>
             {/if}

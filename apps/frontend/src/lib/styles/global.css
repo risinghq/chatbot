@@ -1,22 +1,41 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist-mono";
 @import "tailwindcss";
 @import "./tokens.css";
 @plugin "@tailwindcss/forms";
 
-:root {
-  background-color: var(--color-cream-100);
-  color: var(--color-ink-900);
+html {
+  background-color: var(--color-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 100%;
+  font-weight: var(--font-weight-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
 }
 
 h1,
 h2,
 h3,
-h4,
-h5,
-h6 {
-  font-family: var(--font-serif);
+h4 {
+  font-weight: var(--font-weight-medium);
+  text-wrap: balance;
+}
+
+::selection {
+  background-color: var(--color-accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }

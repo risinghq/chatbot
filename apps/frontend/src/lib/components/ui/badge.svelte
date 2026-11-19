@@ -2,7 +2,7 @@
 import type { Snippet } from "svelte";
 
 type Props = {
-  variant?: "default" | "success" | "error" | "warning";
+  variant?: "default" | "success" | "error" | "warning" | "info" | "accent";
   class?: string;
   children: Snippet;
 };
@@ -10,13 +10,15 @@ type Props = {
 let { variant = "default", class: className = "", children }: Props = $props();
 
 const baseStyles =
-  "inline-flex items-center px-2 py-1 text-[10px] font-bold border tracking-wider";
+  "inline-flex h-5 items-center gap-1 rounded-sm px-1.5 text-xs font-medium whitespace-nowrap";
 
 const variants = {
-  default: "bg-ink-100 text-ink-800 border-ink-200",
-  success: "bg-green-100 text-green-800 border-green-200",
-  error: "bg-red-100 text-red-800 border-red-200",
-  warning: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  default: "bg-sunken text-fg-muted",
+  success: "bg-success-soft text-success-text",
+  error: "bg-danger-soft text-danger-text",
+  warning: "bg-warning-soft text-warning-text",
+  info: "bg-info-soft text-info-text",
+  accent: "bg-accent-soft text-accent-text",
 };
 </script>
 

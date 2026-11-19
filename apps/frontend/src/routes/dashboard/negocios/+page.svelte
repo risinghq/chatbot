@@ -3,9 +3,13 @@ import { onMount } from "svelte";
 import { auth } from "#lib/state/auth.svelte.js";
 import { fetchApi, ApiError } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
+import { roleLabel, roleLabels } from "#lib/utils/roles.js";
+import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
+import Select from "#lib/components/ui/select.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
@@ -33,12 +37,14 @@ let memberPassword = $state("");
 let memberRole = $state("admin");
 let addingMember = $state(false);
 
-const roleLabels: Record<string, string> = {
-  admin: "Administrador",
-  developer: "Desarrollador",
-  supervisor: "Supervisor",
-  sales_agent: "Agente de ventas",
-};
+const roleItems = Object.entries(roleLabels).map(([value, label]) => ({
+  value,
+  label,
+}));
+
+const activeTenant = $derived(
+  auth.tenants.find((t) => t.id === auth.activeTenantId),
+);
 
 // The slug is a lookup key in the URL and the CLI, so the form derives a safe
 // one from the name and lets the operator adjust it.
@@ -145,217 +151,146 @@ onMount(() => {
 
 <PageTitle title="Negocios" />
 
-<div class="max-w-7xl mx-auto p-8 md:p-12 min-h-screen">
-  <PageHeader
-    title="Negocios"
-    subtitle="Alta y administración de los negocios de la plataforma"
-  />
+<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+	<PageHeader title="Negocios" subtitle="Crea negocios, entra a uno y deja listo su equipo." />
 
-  <div class="grid gap-6 lg:grid-cols-2">
-    <div class="space-y-6">
-      <SectionShell
-        title="Crear negocio"
-        description="Un negocio nuevo nace sin catálogo, números ni miembros."
-      >
-        <form class="p-6 space-y-4" onsubmit={createBusiness}>
-          <FormField label="Nombre" for="business-name">
-            <Input
-              id="business-name"
-              bind:value={newName}
-              placeholder="Ej. Bodega Los Andes"
-            />
-          </FormField>
-          <FormField label="Slug" for="business-slug">
-            <Input
-              id="business-slug"
-              bind:value={newSlug}
-              placeholder="bodega-los-andes"
-              oninput={() => (slugTouched = true)}
-            />
-            <p class="text-xs text-ink-500 mt-1">
-              Minúsculas, números y guiones. Identifica al negocio y no se puede
-              cambiar.
-            </p>
-          </FormField>
-          <div class="flex justify-end">
-            <Button type="submit" disabled={creating || !newName || !newSlug}>
-              {creating ? "Creando..." : "Crear negocio"}
-            </Button>
-          </div>
-        </form>
-      </SectionShell>
+	<div class="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+		<div class="flex flex-col gap-6">
+			<SectionShell title="Negocios" description="Entra a un negocio para administrarlo.">
+				{#if auth.tenants.length === 0}
+					<EmptyState title="Sin negocios" description="Crea el primero con el formulario de abajo." />
+				{:else}
+					<ul class="divide-y divide-border-subtle">
+						{#each auth.tenants as tenant (tenant.id)}
+							<li class="flex items-center justify-between gap-4 px-4 py-3">
+								<div class="min-w-0">
+									<p class="truncate text-base text-fg">{tenant.name}</p>
+									<p class="font-mono text-sm text-fg-muted">{tenant.slug}</p>
+								</div>
+								{#if auth.activeTenantId === tenant.id}
+									<Badge variant="accent">Activo</Badge>
+								{:else}
+									<Button size="sm" variant="secondary" onclick={() => auth.selectTenant(tenant.id)}>Entrar</Button>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</SectionShell>
 
-      <SectionShell
-        title="Negocios"
-        description="Entra a un negocio para administrarlo."
-      >
-        {#if auth.tenants.length === 0}
-          <div class="p-8 text-sm text-ink-500">
-            Todavía no hay negocios. Crea el primero con el formulario de
-            arriba.
-          </div>
-        {:else}
-          <div class="divide-y divide-ink-100/50">
-            {#each auth.tenants as tenant (tenant.id)}
-              <div class="p-6 flex items-center justify-between gap-4">
-                <div>
-                  <div class="font-medium text-sm text-ink-900">
-                    {tenant.name}
-                  </div>
-                  <div class="text-xs text-ink-500 font-mono mt-0.5">
-                    {tenant.slug}
-                  </div>
-                </div>
-                {#if auth.activeTenantId === tenant.id}
-                  <span
-                    class="text-xs font-bold uppercase tracking-wider text-green-700"
-                  >
-                    Activo
-                  </span>
-                {:else}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onclick={() => auth.selectTenant(tenant.id)}
-                  >
-                    Entrar
-                  </Button>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </SectionShell>
-    </div>
+			<form onsubmit={createBusiness}>
+				<SectionShell title="Crear negocio" description="Nace sin catálogo, números ni miembros. Entras a él al crearlo.">
+					<div class="p-4">
+						<FormField label="Nombre" for="business-name">
+							<Input id="business-name" bind:value={newName} placeholder="Bodega Los Andes" />
+						</FormField>
+						<FormField label="Slug" for="business-slug" class="mb-0!">
+							<Input
+								id="business-slug"
+								bind:value={newSlug}
+								placeholder="bodega-los-andes"
+								class="font-mono"
+								oninput={() => (slugTouched = true)}
+							/>
+							<p class="mt-1.5 text-sm text-fg-muted">
+								Minúsculas, números y guiones. Identifica al negocio y no se puede cambiar.
+							</p>
+						</FormField>
+					</div>
+					<footer class="flex justify-end border-t border-border-subtle px-4 py-3">
+						<Button type="submit" disabled={creating || !newName || !newSlug}>
+							{creating ? "Creando…" : "Crear negocio"}
+						</Button>
+					</footer>
+				</SectionShell>
+			</form>
+		</div>
 
-    <div class="space-y-6">
-      {#if auth.activeTenantId}
-        <SectionShell
-          title="Configuración del negocio activo"
-          description="Lo que falta antes de que el negocio pueda vender."
-        >
-          <div class="p-6">
-            <SetupChecklist />
-          </div>
-        </SectionShell>
+		<div class="flex flex-col gap-6">
+			{#if activeTenant}
+				<SetupChecklist />
 
-        <SectionShell
-          title="Miembros del negocio activo"
-          description="Quién puede entrar al panel de este negocio."
-        >
-          {#if membersLoading}
-            <div class="p-8 space-y-4 animate-pulse">
-              <div class="h-10 bg-cream-50 rounded w-full"></div>
-            </div>
-          {:else}
-            <div class="divide-y divide-ink-100/50">
-              {#each members as member (member.id)}
-                <div class="px-6 py-3 flex items-center justify-between">
-                  <div>
-                    <div class="font-medium text-sm text-ink-900">
-                      {member.name}
-                    </div>
-                    <div class="text-xs text-ink-500 font-mono">
-                      @{member.username}
-                    </div>
-                  </div>
-                  <span class="text-xs text-ink-500">
-                    {roleLabels[member.role] ?? member.role}
-                  </span>
-                </div>
-              {:else}
-                <div class="p-6 text-sm text-ink-500">
-                  Este negocio no tiene miembros todavía.
-                </div>
-              {/each}
-            </div>
-          {/if}
+				<SectionShell title="Miembros de {activeTenant.name}" description="Quién puede entrar al panel de este negocio.">
+					{#if membersLoading}
+						<div class="p-4" aria-busy="true">
+							<div class="h-8 animate-pulse rounded-sm bg-sunken"></div>
+						</div>
+					{:else if members.length === 0}
+						<p class="px-4 py-3 text-base text-fg-muted">Este negocio no tiene miembros todavía.</p>
+					{:else}
+						<ul class="divide-y divide-border-subtle">
+							{#each members as member (member.id)}
+								<li class="flex items-center justify-between gap-4 px-4 py-2.5">
+									<div class="min-w-0">
+										<p class="truncate text-base text-fg">{member.name}</p>
+										<p class="font-mono text-sm text-fg-muted">@{member.username}</p>
+									</div>
+									<span class="text-sm text-fg-muted">{roleLabel(member.role)}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
 
-          <form
-            class="p-6 border-t border-ink-100/50 space-y-4"
-            onsubmit={addMember}
-          >
-            <div class="flex gap-6 text-sm">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="member-mode"
-                  value="new"
-                  bind:group={memberMode}
-                  class="h-4 w-4 border-ink-300 text-ink-900 focus:ring-ink-900"
-                />
-                Usuario nuevo
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="member-mode"
-                  value="existing"
-                  bind:group={memberMode}
-                  class="h-4 w-4 border-ink-300 text-ink-900 focus:ring-ink-900"
-                />
-                Usuario existente
-              </label>
-            </div>
+					<form class="border-t border-border-subtle" onsubmit={addMember}>
+						<div class="p-4">
+							<fieldset class="mb-4">
+								<legend class="sr-only">Tipo de miembro</legend>
+								<div class="inline-flex rounded-sm bg-sunken p-0.5">
+									{@render modeOption("new", "Usuario nuevo")}
+									{@render modeOption("existing", "Usuario existente")}
+								</div>
+							</fieldset>
 
-            <FormField label="Usuario" for="member-username">
-              <Input
-                id="member-username"
-                bind:value={memberUsername}
-              />
-            </FormField>
-            {#if memberMode === "new"}
-              <FormField label="Nombre" for="member-name">
-                <Input
-                  id="member-name"
-                  bind:value={memberFullName}
-                />
-              </FormField>
-              <FormField label="Contraseña" for="member-password">
-                <Input
-                  id="member-password"
-                  type="password"
-                  bind:value={memberPassword}
-                />
-                <p class="text-xs text-ink-500 mt-1">
-                  Mínimo {MIN_PASSWORD_LENGTH} caracteres.
-                </p>
-              </FormField>
-            {/if}
-            <FormField label="Rol" for="member-role">
-              <select
-                id="member-role"
-                bind:value={memberRole}
-                class="w-full border border-ink-200 bg-white px-3 py-2 text-sm rounded focus:ring-ink-900 focus:border-ink-900"
-              >
-                {#each Object.entries(roleLabels) as [value, label]}
-                  <option {value}>{label}</option>
-                {/each}
-              </select>
-            </FormField>
-            <div class="flex justify-end">
-              <Button
-                type="submit"
-                disabled={addingMember ||
-                  !memberUsername ||
-                  (memberMode === "new" &&
-                    (!memberFullName || !memberPassword))}
-              >
-                {addingMember ? "Agregando..." : "Agregar miembro"}
-              </Button>
-            </div>
-          </form>
-        </SectionShell>
-      {:else}
-        <SectionShell
-          title="Configuración"
-          description="Entra a un negocio para ver su configuración pendiente y sus miembros."
-        >
-          <div class="p-6 text-sm text-ink-500">
-            Ningún negocio está activo. Usa Entrar en la lista de la izquierda.
-          </div>
-        </SectionShell>
-      {/if}
-    </div>
-  </div>
+							<div class="grid gap-x-4 md:grid-cols-2">
+								<FormField label="Usuario" for="member-username">
+									<Input id="member-username" bind:value={memberUsername} autocomplete="off" class="font-mono" />
+								</FormField>
+								<FormField label="Rol" for="member-role">
+									<Select id="member-role" bind:value={memberRole} items={roleItems} />
+								</FormField>
+								{#if memberMode === "new"}
+									<FormField label="Nombre" for="member-name">
+										<Input id="member-name" bind:value={memberFullName} />
+									</FormField>
+									<FormField label="Contraseña" for="member-password">
+										<Input id="member-password" type="password" bind:value={memberPassword} autocomplete="new-password" />
+										<p class="mt-1.5 text-sm text-fg-muted">Mínimo {MIN_PASSWORD_LENGTH} caracteres.</p>
+									</FormField>
+								{/if}
+							</div>
+						</div>
+						<footer class="flex justify-end border-t border-border-subtle px-4 py-3">
+							<Button
+								type="submit"
+								disabled={addingMember ||
+									!memberUsername ||
+									(memberMode === "new" && (!memberFullName || !memberPassword))}
+							>
+								{addingMember ? "Agregando…" : "Agregar miembro"}
+							</Button>
+						</footer>
+					</form>
+				</SectionShell>
+			{:else}
+				<div class="rounded-md border border-border bg-surface">
+					<EmptyState
+						title="Ningún negocio activo"
+						description="Entra a un negocio para ver lo que le falta configurar y su equipo."
+					/>
+				</div>
+			{/if}
+		</div>
+	</div>
 </div>
+
+{#snippet modeOption(value: "new" | "existing", label: string)}
+	<label
+		class="flex h-7 cursor-pointer items-center rounded-[5px] px-3 text-sm transition-colors duration-150 ease-out has-checked:bg-surface has-checked:text-fg has-checked:shadow-sm has-focus-visible:outline-2 has-focus-visible:outline-ring {memberMode ===
+		value
+			? ''
+			: 'text-fg-muted hover:text-fg'}"
+	>
+		<input type="radio" name="member-mode" {value} bind:group={memberMode} class="sr-only" />
+		{label}
+	</label>
+{/snippet}

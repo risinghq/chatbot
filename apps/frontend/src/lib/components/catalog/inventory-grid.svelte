@@ -1,5 +1,7 @@
 <script lang="ts">
 import type { Product } from "@vendeya/types";
+import Badge from "#lib/components/ui/badge.svelte";
+import DataTable from "#lib/components/ui/data-table.svelte";
 
 type Props = {
   products: Product[];
@@ -8,47 +10,47 @@ type Props = {
 };
 
 let { products, canEdit, onProductClick }: Props = $props();
+
+// `specs_json` is a flat object written by the catalog import. A value that
+// does not parse shows as stored.
+function formatSpecs(json: string | null): string {
+  if (!json) return "–";
+  try {
+    const entries = Object.entries(JSON.parse(json) as Record<string, unknown>);
+    if (entries.length === 0) return "–";
+    return entries
+      .map(([key, value]) => (value === true ? key : `${key} ${value}`))
+      .join(" · ");
+  } catch {
+    return json;
+  }
+}
+
+const columns = [
+  { header: "Nombre", key: "name" as const, class: "text-fg" },
+  { header: "Categoría", cell: categoryCell },
+  { header: "Marca / Modelo", cell: brandCell },
+  { header: "Specs", cell: specsCell },
+];
 </script>
 
-<div class="overflow-x-auto border border-ink-200 rounded-lg">
-  <table class="w-full text-sm text-left">
-    <thead class="bg-ink-50 text-ink-500 uppercase font-bold text-xs">
-      <tr>
-        <th class="px-4 py-3">Nombre</th>
-        <th class="px-4 py-3">Categoría</th>
-        <th class="px-4 py-3">Marca / Modelo</th>
-        <th class="px-4 py-3">Specs</th>
-        <th class="px-4 py-3">ID</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-ink-100 bg-white">
-      {#each products as product (product.id)}
-        <tr 
-          class="hover:bg-cream-50 transition-colors {canEdit ? 'cursor-pointer' : ''}"
-          onclick={() => canEdit && onProductClick?.(product)}
-        >
-          <td class="px-4 py-3 font-medium text-ink-900">{product.name}</td>
-          <td class="px-4 py-3">
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
-              {product.category}
-            </span>
-          </td>
-          <td class="px-4 py-3 text-ink-500">
-            {product.brand || "-"} {product.model ? `/ ${product.model}` : ""}
-          </td>
-          <td class="px-4 py-3 text-ink-400 font-mono text-xs max-w-xs truncate">
-            {product.specs_json ? product.specs_json : "-"}
-          </td>
-          <td class="px-4 py-3 text-ink-300 font-mono text-xs">{product.id}</td>
-        </tr>
-      {/each}
-      {#if products.length === 0}
-        <tr>
-          <td colspan="5" class="px-4 py-8 text-center text-ink-400 italic">
-            No hay productos base registrados.
-          </td>
-        </tr>
-      {/if}
-    </tbody>
-  </table>
+<div class="rounded-md border border-border bg-surface">
+	<DataTable
+		data={products}
+		{columns}
+		emptyMessage="No hay productos base registrados."
+		onRowClick={canEdit ? onProductClick : undefined}
+	/>
 </div>
+
+{#snippet categoryCell(p: Product)}
+	<Badge>{p.category}</Badge>
+{/snippet}
+
+{#snippet brandCell(p: Product)}
+	<span class="text-fg-muted">{p.brand || "–"}{p.model ? ` / ${p.model}` : ""}</span>
+{/snippet}
+
+{#snippet specsCell(p: Product)}
+	<span class="block max-w-md truncate text-sm text-fg-muted">{formatSpecs(p.specs_json)}</span>
+{/snippet}

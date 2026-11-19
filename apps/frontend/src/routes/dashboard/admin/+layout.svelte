@@ -15,36 +15,29 @@ const tabs = [
 
 function isActive(path: string) {
   const current = page.url.pathname;
-  if (path === "/dashboard/admin/users") {
-    return current.includes("/dashboard/admin/users");
-  }
-  return current.startsWith(path);
+  return current === path || current.startsWith(`${path}/`);
 }
 </script>
 
 <PageTitle title="Administración" />
 
-<div class="max-w-7xl mx-auto p-8 md:p-12 min-h-screen">
-    <PageHeader title="Panel de administración" subtitle="Control y gestión" />
+<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+	<PageHeader title="Administración" subtitle="Equipo, números y claves del negocio." />
 
-    <div class="mb-10 border-b border-ink-100">
-        <nav class="flex gap-8" aria-label="Tabs">
-            {#each tabs as tab}
-                <a
-                    href={tab.href}
-                    class="
-                        py-4 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors
-                        {isActive(tab.href) 
-                            ? 'border-ink-900 text-ink-900' 
-                            : 'border-transparent text-ink-400 hover:text-ink-600 hover:border-ink-200'}
-                    "
-                    aria-current={isActive(tab.href) ? "page" : undefined}
-                >
-                    {tab.label}
-                </a>
-            {/each}
-        </nav>
-    </div>
+	<nav class="-mx-4 mb-6 flex gap-1 overflow-x-auto border-b border-border-subtle px-4 md:mx-0 md:px-0" aria-label="Secciones">
+		{#each tabs as tab (tab.href)}
+			{@const active = isActive(tab.href)}
+			<a
+				href={tab.href}
+				class="-mb-px flex h-9 shrink-0 items-center border-b-2 px-2 text-base transition-colors duration-150 ease-out {active
+					? 'border-fg text-fg'
+					: 'border-transparent text-fg-muted hover:text-fg'}"
+				aria-current={active ? "page" : undefined}
+			>
+				{tab.label}
+			</a>
+		{/each}
+	</nav>
 
-    {@render children()}
+	{@render children()}
 </div>

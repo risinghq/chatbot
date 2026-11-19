@@ -1,4 +1,6 @@
 <script lang="ts">
+import { fieldStyles } from "./field-styles";
+
 type SelectItem = {
   value: string;
   label: string;
@@ -31,11 +33,6 @@ let {
 let open = $state(false);
 let triggerRef: HTMLButtonElement | undefined = $state();
 let selectedIndex = $state(-1);
-
-const baseStyles =
-  "block w-full bg-transparent border-b px-0 py-2 min-h-[44px] text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-1 transition-colors duration-200 text-[16px] md:text-lg font-serif touch-action-manipulation";
-const normalBorder = "border-ink-900/30 data-[open]:border-ink-900";
-const errorBorder = "border-red-600 data-[open]:border-red-600";
 
 const selectedLabel = $derived(
   items.find((item) => item.value === value)?.label,
@@ -118,10 +115,10 @@ $effect(() => {
 		aria-expanded={open}
 		data-open={open ? "" : undefined}
 		onclick={() => !disabled && (open = !open)}
-		class="{baseStyles} {error ? errorBorder : normalBorder} {className} flex items-center justify-between cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+		class="{fieldStyles(error)} flex h-8 cursor-pointer items-center justify-between gap-2 text-left pointer-coarse:h-11 data-[open]:border-border-strong {className}"
 	>
-		<span class="text-ink-900">{selectedLabel || placeholder}</span>
-		<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-ink-400 shrink-0" aria-hidden="true">
+		<span class="truncate {selectedLabel ? 'text-fg' : 'text-fg-subtle'}">{selectedLabel || placeholder}</span>
+		<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 text-fg-muted" aria-hidden="true">
 			<polyline points="6 9 12 15 18 9"></polyline>
 		</svg>
 	</button>
@@ -129,7 +126,7 @@ $effect(() => {
 	{#if open}
 		<div 
 			data-select-dropdown
-			class="absolute top-full left-0 right-0 mt-1 bg-white border border-ink-200 shadow-xl max-h-75 overflow-auto z-100 rounded-md p-1"
+			class="absolute top-full right-0 left-0 z-100 mt-1 max-h-75 overflow-auto rounded-lg border border-popover-border bg-surface p-1 shadow-md"
 			onkeydown={handleKeydown}
 			role="listbox"
 			tabindex="-1"
@@ -139,14 +136,14 @@ $effect(() => {
 					type="button"
 					disabled={itemDisabled}
 					onclick={() => !itemDisabled && handleSelect(itemValue)}
-					class="w-full min-h-10 px-4 py-3 hover:bg-ink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-1 cursor-pointer text-ink-900 text-left rounded transition-colors touch-action-manipulation disabled:opacity-50 disabled:cursor-not-allowed {value === itemValue ? 'bg-ink-50 font-medium' : ''} {selectedIndex === i ? 'bg-ink-100' : ''}"
+					class="flex h-8 w-full cursor-pointer items-center rounded-sm px-2 text-left text-base text-fg transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-11 touch-manipulation {selectedIndex === i ? 'bg-hover' : ''}"
 					role="option"
 					aria-selected={value === itemValue}
 					tabindex={itemDisabled ? -1 : 0}
 				>
-					<span class="flex items-center gap-3">
-						<span class="w-4 flex items-center justify-center">
-							{#if value === itemValue}<span class="text-ink-900 font-bold">✓</span>{/if}
+					<span class="flex items-center gap-2">
+						<span class="flex w-4 items-center justify-center text-accent-text">
+							{#if value === itemValue}✓{/if}
 						</span>
 						<span class:font-medium={value === itemValue}>{label}</span>
 					</span>

@@ -47,23 +47,16 @@ onMount(() => {
 
 <PageTitle title="Iniciar sesión" />
 
-<div
-	class="h-screen flex flex-col items-center justify-center bg-cream-100 p-8"
->
-	<div
-		class="w-full max-w-md bg-cream-50 p-12 border border-cream-200 shadow-xl"
-	>
-		<h1 class="text-6xl font-serif mb-4 italic text-ink-900">vendeya</h1>
-		<p class="text-ink-600 mb-12 font-serif text-lg leading-relaxed">
-			Plataforma de gestión interna y control de operaciones.
-		</p>
+<div class="flex min-h-dvh flex-col items-center justify-center bg-canvas p-4">
+	<div class="w-full max-w-sm rounded-lg border border-border bg-surface p-6 shadow-sm">
+		<h1 class="text-lg font-medium text-fg">vendeya</h1>
+		<p class="mt-1 mb-6 text-base text-fg-muted">Entra con la cuenta que te dio tu negocio.</p>
 
 		<form
 			onsubmit={(e) => {
 				e.preventDefault();
 				handleSubmit();
 			}}
-			class="space-y-6"
 		>
 			<FormField label="Identificador" for="username">
 				<Input
@@ -86,22 +79,12 @@ onMount(() => {
 			</FormField>
 
 			{#if error}
-				<div class="py-4">
-					<p
-						class="text-red-700 text-sm font-serif italic border-l-2 border-red-600 pl-3"
-					>
-						{error}
-					</p>
-				</div>
+				<p role="alert" class="mb-4 rounded-sm bg-danger-soft px-3 py-2 text-sm text-danger-text">{error}</p>
 			{/if}
 
 			<Button type="submit" disabled={loading} class="w-full">
-				{loading ? "Verificando..." : "Acceder"}
+				{loading ? "Verificando…" : "Acceder"}
 			</Button>
 		</form>
-	</div>
-
-	<div class="mt-12 text-center text-xs text-ink-400 font-mono">
-		SISTEMA DE USO INTERNO
 	</div>
 </div>

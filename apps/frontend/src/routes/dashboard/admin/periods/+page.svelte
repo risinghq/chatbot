@@ -1,386 +1,234 @@
 <script lang="ts">
 import { onMount } from "svelte";
 import type { CatalogPeriod } from "@vendeya/types";
-import { fetchApi } from "#lib/utils/api.js";
+import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
-import Button from "#lib/components/ui/button.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
-import Modal from "#lib/components/ui/modal.svelte";
+import Banner from "#lib/components/ui/banner.svelte";
+import Button from "#lib/components/ui/button.svelte";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
+import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
-import Label from "#lib/components/ui/label.svelte";
+import Modal from "#lib/components/ui/modal.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 
+type Action = "publish" | "archive" | "delete";
+
 let periods = $state<CatalogPeriod[]>([]);
-let isLoading = $state(true);
+let loading = $state(true);
 
-let isCreateModalOpen = $state(false);
-let isPublishModalOpen = $state(false);
-let isArchiveModalOpen = $state(false);
-let isDeleteModalOpen = $state(false);
+let creating = $state(false);
+let newName = $state("");
+let newMonth = $state("");
 
-let selectedPeriod = $state<CatalogPeriod | null>(null);
-let activePeriod = $derived(periods.find((p) => p.status === "active"));
+// One confirmation dialog serves every state change; `pending` says which.
+let pending = $state<{ action: Action; period: CatalogPeriod } | null>(null);
+let confirming = $state(false);
 
-let newPeriodName = $state("");
-let newPeriodMonth = $state("");
+const activePeriod = $derived(periods.find((p) => p.status === "active"));
+
+const statusLabels: Record<string, string> = {
+  active: "Activo",
+  draft: "Borrador",
+  archived: "Archivado",
+};
+const statusVariants: Record<string, "success" | "warning" | "default"> = {
+  active: "success",
+  draft: "warning",
+  archived: "default",
+};
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
 
 async function loadPeriods() {
-  isLoading = true;
+  loading = true;
   try {
     periods = await fetchApi<CatalogPeriod[]>("/api/periods");
-  } catch (error) {
-    console.error("Failed to load periods:", error);
-    toast.error("Error al cargar los periodos");
+  } catch (err) {
+    toast.error(errorMessage(err, "Error al cargar los periodos"));
   } finally {
-    isLoading = false;
+    loading = false;
   }
 }
 
-async function handleCreate() {
-  if (!newPeriodName || !newPeriodMonth) {
-    toast.error("Todos los campos son obligatorios");
-    return;
-  }
+function openCreate() {
+  newName = "";
+  newMonth = new Date().toISOString().slice(0, 7);
+  creating = true;
+}
 
+async function create(e: Event) {
+  e.preventDefault();
   try {
-    const newPeriod = await fetchApi<CatalogPeriod>("/api/periods", {
+    const period = await fetchApi<CatalogPeriod>("/api/periods", {
       method: "POST",
-      body: JSON.stringify({
-        name: newPeriodName,
-        year_month: newPeriodMonth,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newName, year_month: newMonth }),
     });
-
-    periods = [newPeriod, ...periods].sort((a, b) =>
+    periods = [period, ...periods].sort((a, b) =>
       b.year_month.localeCompare(a.year_month),
     );
-    toast.success("Periodo creado exitosamente");
-    closeCreateModal();
-  } catch (error) {
-    console.error("Failed to create period:", error);
-    toast.error("Error al crear el periodo");
+    toast.success("Periodo creado");
+    creating = false;
+  } catch (err) {
+    toast.error(errorMessage(err, "Error al crear el periodo"));
   }
 }
 
-async function handlePublish() {
-  if (!selectedPeriod) return;
+async function setStatus(period: CatalogPeriod, status: "active" | "archived") {
+  const updated = await fetchApi<CatalogPeriod>(
+    `/api/periods/${period.id}/status`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    },
+  );
+  // Publishing archives the previous active period on the server.
+  periods = periods.map((p) => {
+    if (p.id === updated.id) return updated;
+    if (status === "active" && p.status === "active")
+      return { ...p, status: "archived" as const };
+    return p;
+  });
+}
 
+async function confirm() {
+  if (!pending) return;
+  const { action, period } = pending;
+  confirming = true;
   try {
-    const updated = await fetchApi<CatalogPeriod>(
-      `/api/periods/${selectedPeriod.id}/status`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ status: "active" }),
-      },
-    );
-
-    // Update local state:
-    // 1. Archive previous active period if exists
-    // 2. Set new period to active
-    periods = periods.map((p) => {
-      if (p.id === updated.id) return updated;
-      if (p.status === "active") return { ...p, status: "archived" as const };
-      return p;
-    });
-
-    toast.success("Periodo publicado exitosamente");
-    closePublishModal();
-  } catch (error) {
-    console.error("Failed to publish period:", error);
-    toast.error("Error al publicar el periodo");
+    if (action === "publish") {
+      await setStatus(period, "active");
+      toast.success(`${period.name} publicado`);
+    } else if (action === "archive") {
+      await setStatus(period, "archived");
+      toast.success(`${period.name} archivado`);
+    } else {
+      await fetchApi(`/api/periods/${period.id}`, { method: "DELETE" });
+      periods = periods.filter((p) => p.id !== period.id);
+      toast.success(`${period.name} eliminado`);
+    }
+    pending = null;
+  } catch (err) {
+    toast.error(errorMessage(err, "No se pudo completar la acción"));
+  } finally {
+    confirming = false;
   }
 }
 
-async function handleArchive() {
-  if (!selectedPeriod) return;
+const confirmTitles: Record<Action, string> = {
+  publish: "Publicar periodo",
+  archive: "Archivar periodo",
+  delete: "Eliminar borrador",
+};
+const confirmLabels: Record<Action, string> = {
+  publish: "Publicar",
+  archive: "Archivar",
+  delete: "Eliminar",
+};
 
-  try {
-    const updated = await fetchApi<CatalogPeriod>(
-      `/api/periods/${selectedPeriod.id}/status`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ status: "archived" }),
-      },
-    );
-
-    periods = periods.map((p) => (p.id === updated.id ? updated : p));
-    toast.success("Periodo archivado exitosamente");
-    closeArchiveModal();
-  } catch (error) {
-    console.error("Failed to archive period:", error);
-    toast.error("Error al archivar el periodo");
-  }
-}
-
-async function handleDelete() {
-  if (!selectedPeriod) return;
-
-  try {
-    await fetchApi(`/api/periods/${selectedPeriod.id}`, {
-      method: "DELETE",
-    });
-
-    periods = periods.filter((p) => p.id !== selectedPeriod?.id);
-    toast.success("Periodo eliminado exitosamente");
-    closeDeleteModal();
-  } catch (error) {
-    console.error("Failed to delete period:", error);
-    // Backend validation message might be useful here if we parse it
-    // Assuming fetchApi throws usually, but we might want to alert specific message regarding products
-    toast.error("Error al eliminar. Verifique que no tenga productos.");
-  }
-}
-
-function openCreateModal() {
-  newPeriodName = "";
-  newPeriodMonth = new Date().toISOString().slice(0, 7); // Default to current YYYY-MM
-  isCreateModalOpen = true;
-}
-
-function closeCreateModal() {
-  isCreateModalOpen = false;
-}
-
-function openPublishModal(period: CatalogPeriod) {
-  selectedPeriod = period;
-  isPublishModalOpen = true;
-}
-
-function closePublishModal() {
-  selectedPeriod = null;
-  isPublishModalOpen = false;
-}
-
-function openArchiveModal(period: CatalogPeriod) {
-  selectedPeriod = period;
-  isArchiveModalOpen = true;
-}
-
-function closeArchiveModal() {
-  selectedPeriod = null;
-  isArchiveModalOpen = false;
-}
-
-function openDeleteModal(period: CatalogPeriod) {
-  selectedPeriod = period;
-  isDeleteModalOpen = true;
-}
-
-function closeDeleteModal() {
-  selectedPeriod = null;
-  isDeleteModalOpen = false;
-}
-
-function getStatusVariant(status: string): "default" | "success" | "warning" {
-  switch (status) {
-    case "active":
-      return "success";
-    case "draft":
-      return "warning";
-    case "archived":
-      return "default";
-    default:
-      return "default";
-  }
-}
-
-function getStatusLabel(status: string): string {
-  switch (status) {
-    case "active":
-      return "ACTIVO";
-    case "draft":
-      return "BORRADOR";
-    case "archived":
-      return "ARCHIVADO";
-    default:
-      return status;
-  }
-}
-
-onMount(() => {
-  loadPeriods();
-});
+onMount(loadPeriods);
 </script>
 
-<div class="space-y-6">
-  <SectionShell 
-      title="Gestión de periodos" 
-      description="Administra los ciclos de venta y publicación de catálogos."
-      action={headerAction}
-  >
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm text-left">
-          <thead class="bg-cream-50 font-mono text-xs uppercase tracking-wider text-ink-500 border-b border-ink-100">
-              <tr>
-                  <th class="px-6 py-4 font-bold select-none whitespace-nowrap">Nombre</th>
-                  <th class="px-6 py-4 font-bold select-none whitespace-nowrap">Código (Mes)</th>
-                  <th class="px-6 py-4 font-bold select-none whitespace-nowrap">Estado</th>
-                  <th class="px-6 py-4 font-bold select-none whitespace-nowrap text-right">Acciones</th>
-              </tr>
-          </thead>
-          <tbody class="divide-y divide-ink-50 bg-white">
-              {#if isLoading}
-                  {#each Array(3) as _}
-                      <tr class="animate-pulse">
-                        <td class="px-6 py-4"><div class="h-4 bg-cream-100 rounded w-2/3"></div></td>
-                        <td class="px-6 py-4"><div class="h-4 bg-cream-100 rounded w-1/3"></div></td>
-                        <td class="px-6 py-4"><div class="h-4 bg-cream-100 rounded w-16"></div></td>
-                        <td class="px-6 py-4"><div class="h-4 bg-cream-100 rounded w-20 ml-auto"></div></td>
-                      </tr>
-                  {/each}
-              {:else if periods.length === 0}
-                  <tr>
-                      <td colspan="4" class="px-6 py-12 text-center text-ink-400 italic">
-                          No hay periodos registrados. Crea uno nuevo para comenzar.
-                      </td>
-                  </tr>
-              {:else}
-                  {#each periods as period}
-                      <tr class="group transition-colors hover:bg-cream-50/50">
-                          <td class="px-6 py-4">
-                              <div class="font-serif font-medium text-ink-900">
-                                {period.name}
-                                {#if period.status === 'active'}
-                                  <span class="ml-2 text-[10px] text-green-600 font-bold tracking-widest uppercase inline-block bg-green-50 px-1.5 py-0.5 rounded">Bot vendiendo</span>
-                                {/if}
-                              </div>
-                          </td>
-                          <td class="px-6 py-4 font-mono text-xs text-ink-500">
-                              {period.year_month}
-                          </td>
-                          <td class="px-6 py-4">
-                              <Badge variant={getStatusVariant(period.status)}>
-                                {getStatusLabel(period.status)}
-                              </Badge>
-                          </td>
-                          <td class="px-6 py-4 text-right">
-                            <div class="flex justify-end gap-2">
-                              {#if period.status === 'draft'}
-                                <Button variant="ghost" size="sm" onclick={() => openDeleteModal(period)} class="text-red-600 hover:bg-red-50 hover:text-red-700 h-8 px-3">
-                                  Eliminar
-                                </Button>
-                                <Button variant="primary" size="sm" onclick={() => openPublishModal(period)} class="h-8 px-3 py-0">
-                                  Publicar
-                                </Button>
-                              {:else if period.status === 'active'}
-                                <Button variant="secondary" size="sm" onclick={() => openArchiveModal(period)} class="h-8 px-3 py-0">
-                                  Archivar
-                                </Button>
-                              {:else}
-                                 <span class="text-xs text-ink-400 italic py-1 px-3">Solo lectura</span>
-                              {/if}
-                            </div>
-                          </td>
-                      </tr>
-                  {/each}
-              {/if}
-          </tbody>
-      </table>
-    </div>
-  </SectionShell>
-</div>
+<SectionShell
+	title="Periodos de catálogo"
+	description="Cada periodo es un catálogo. El bot vende solo los productos del periodo activo."
+	action={creating ? undefined : createAction}
+>
+	{#if creating}
+		<form class="border-b border-border-subtle" onsubmit={create}>
+			<div class="grid gap-x-4 p-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+				<FormField label="Nombre" for="period-name" class="md:mb-0!">
+					<Input id="period-name" bind:value={newName} placeholder="Campaña escolar 2026" />
+				</FormField>
+				<FormField label="Mes" for="period-month" class="mb-0!">
+					<Input id="period-month" type="month" bind:value={newMonth} />
+				</FormField>
+			</div>
+			<footer class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3">
+				<Button variant="ghost" onclick={() => (creating = false)}>Cancelar</Button>
+				<Button type="submit" disabled={!newName || !newMonth}>Crear periodo</Button>
+			</footer>
+		</form>
+	{/if}
 
-{#snippet headerAction()}
-  <Button onclick={openCreateModal}>
-    + Nuevo Periodo
-  </Button>
+	{#if loading}
+		<div class="flex flex-col gap-3 p-4" aria-busy="true">
+			<div class="h-8 animate-pulse rounded-sm bg-sunken"></div>
+			<div class="h-8 animate-pulse rounded-sm bg-sunken"></div>
+		</div>
+	{:else if periods.length === 0}
+		<EmptyState
+			title="Sin periodos"
+			description="Crea un periodo, carga sus productos en el catálogo y publícalo para que el bot venda."
+		/>
+	{:else}
+		<ul class="divide-y divide-border-subtle">
+			{#each periods as period (period.id)}
+				<li class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+					<div class="min-w-0">
+						<p class="truncate text-base text-fg">{period.name}</p>
+						<p class="text-sm text-fg-muted tabular-nums">{period.year_month}</p>
+					</div>
+					<div class="flex items-center gap-2">
+						<Badge variant={statusVariants[period.status] ?? "default"}>
+							{statusLabels[period.status] ?? period.status}
+						</Badge>
+						{#if period.status === "draft"}
+							<Button size="sm" variant="ghost" onclick={() => (pending = { action: "delete", period })}>
+								Eliminar
+							</Button>
+							<Button size="sm" onclick={() => (pending = { action: "publish", period })}>Publicar</Button>
+						{:else if period.status === "active"}
+							<Button size="sm" variant="secondary" onclick={() => (pending = { action: "archive", period })}>
+								Archivar
+							</Button>
+						{/if}
+					</div>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+</SectionShell>
+
+{#snippet createAction()}
+	<Button size="sm" variant="secondary" onclick={openCreate}>Nuevo periodo</Button>
 {/snippet}
 
 <Modal
-  bind:open={isCreateModalOpen} 
-  onClose={closeCreateModal}
-  title="Crear nuevo periodo"
-  subtitle="Configuración inicial"
+	open={pending !== null}
+	onClose={() => (pending = null)}
+	title={pending ? confirmTitles[pending.action] : ""}
 >
-  <div class="space-y-6">
-    <div class="space-y-2">
-      <Label for="name">Nombre de la campaña</Label>
-      <Input id="name" bind:value={newPeriodName} placeholder="Ej. Campaña Escolar 2026" />
-    </div>
-    
-    <div class="space-y-2">
-      <Label for="month">Mes de facturación (YYYY-MM)</Label>
-      <Input id="month" type="text" bind:value={newPeriodMonth} placeholder="2026-03" />
-      <p class="text-[10px] text-ink-400">
-        Debe tener el formato AAAA-MM (Ej. 2026-03)
-      </p>
-    </div>
-  </div>
+	{#if pending}
+		<div class="flex flex-col gap-3 text-base text-fg">
+			{#if pending.action === "publish"}
+				<p>El bot empieza a vender los productos de <strong class="font-medium">{pending.period.name}</strong> en cuanto lo publiques.</p>
+				{#if activePeriod}
+					<Banner tone="warning">{activePeriod.name} pasa a archivado.</Banner>
+				{/if}
+				<p class="text-fg-muted">Revisa que el catálogo de este periodo esté completo.</p>
+			{:else if pending.action === "archive"}
+				<p><strong class="font-medium">{pending.period.name}</strong> deja de estar a la venta.</p>
+				<Banner tone="warning">El bot no vende nada hasta que publiques otro periodo.</Banner>
+			{:else}
+				<p>Se elimina <strong class="font-medium">{pending.period.name}</strong> para siempre.</p>
+				<p class="text-fg-muted">Solo se puede eliminar un borrador sin productos. Si tiene productos, quítalos antes desde el catálogo.</p>
+			{/if}
+		</div>
+	{/if}
 
-  {#snippet footer()}
-      <Button variant="secondary" onclick={closeCreateModal}>Cancelar</Button>
-      <Button onclick={handleCreate}>Crear Periodo</Button>
-  {/snippet}
-</Modal>
-
-<Modal
-  bind:open={isPublishModalOpen} 
-  onClose={closePublishModal}
-  title="Publicar periodo"
-  subtitle="Confirmación de activación"
->
-  <div class="space-y-4">
-    <div class="p-4 bg-amber-50 border border-amber-200 rounded-md text-amber-900 text-sm">
-      <p class="font-bold mb-2">Atención</p>
-      <p>Estás a punto de publicar el periodo <strong>{selectedPeriod?.name}</strong>.</p>
-    </div>
-
-    <p class="text-ink-600">
-      Al realizar esta acción:
-    </p>
-    <ul class="list-disc pl-5 space-y-2 text-ink-600 text-sm">
-      <li>El periodo actual ({activePeriod?.name || 'Ninguno'}) será <strong>archivado automáticamente</strong>.</li>
-      <li>El bot de ventas comenzará a ofrecer <strong>inmediatamente</strong> los productos de este nuevo catálogo.</li>
-      <li>Verifica que hayas cargado todos los productos y paquetes antes de continuar.</li>
-    </ul>
-  </div>
-
-  {#snippet footer()}
-      <Button variant="secondary" onclick={closePublishModal}>Cancelar</Button>
-      <Button onclick={handlePublish}>Sí, Publicar Catálogo</Button>
-  {/snippet}
-</Modal>
-
-<Modal
-  bind:open={isArchiveModalOpen} 
-  onClose={closeArchiveModal}
-  title="Archivar Periodo"
-  subtitle="Desactivar catálogo actual"
->
-  <div class="space-y-4">
-    <p class="text-ink-600">
-      ¿Estás seguro de que deseas archivar el periodo <strong>{selectedPeriod?.name}</strong>?
-    </p>
-    <p class="text-ink-500 text-sm">
-      El bot dejará de vender productos inmediatamente. No habrá ningún catálogo activo hasta que publiques uno nuevo.
-    </p>
-  </div>
-
-  {#snippet footer()}
-      <Button variant="secondary" onclick={closeArchiveModal}>Cancelar</Button>
-      <Button onclick={handleArchive}>Archivar</Button>
-  {/snippet}
-</Modal>
-
-<Modal
-  bind:open={isDeleteModalOpen} 
-  onClose={closeDeleteModal}
-  title="Eliminar Borrador"
-  subtitle="Acción irreversible"
->
-  <div class="space-y-4">
-    <div class="p-4 bg-red-50 border border-red-200 rounded-md text-red-900 text-sm">
-      <p class="font-bold mb-1">¿Estás completamente seguro?</p>
-      <p>Esta acción eliminará permanentemente el borrador <strong>{selectedPeriod?.name}</strong>.</p>
-    </div>
-    
-    <p class="text-ink-500 text-sm">
-      Nota: Solo se pueden eliminar periodos que no tengan productos asociados. Si tienes productos en este periodo, elimínalos primero desde el catálogo.
-    </p>
-  </div>
-
-  {#snippet footer()}
-      <Button variant="secondary" onclick={closeDeleteModal}>Cancelar</Button>
-      <Button variant="ghost" class="text-red-600 hover:bg-red-50" onclick={handleDelete}>Eliminar</Button>
-  {/snippet}
+	{#snippet footer()}
+		<Button variant="ghost" onclick={() => (pending = null)}>Cancelar</Button>
+		<Button
+			variant={pending?.action === "delete" ? "danger" : "primary"}
+			onclick={confirm}
+			disabled={confirming}
+		>
+			{pending ? confirmLabels[pending.action] : ""}
+		</Button>
+	{/snippet}
 </Modal>

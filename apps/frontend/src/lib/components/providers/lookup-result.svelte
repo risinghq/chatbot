@@ -10,19 +10,19 @@ type Props = {
 let { result }: Props = $props();
 
 const outcomes = {
-  eligible: { label: "APROBADO", variant: "success", note: "" },
+  eligible: { label: "Aprobado", variant: "success", note: "" },
   not_eligible: {
-    label: "RECHAZADO",
+    label: "Rechazado",
     variant: "error",
     note: "El cliente no califica para una línea de crédito.",
   },
   system_outage: {
-    label: "SIN RESPUESTA",
+    label: "Sin respuesta",
     variant: "warning",
     note: "Ningún proveedor respondió. Intenta de nuevo más tarde.",
   },
   needs_human: {
-    label: "REVISIÓN MANUAL",
+    label: "Revisión manual",
     variant: "warning",
     note: "La consulta necesita revisión de una persona.",
   },
@@ -31,50 +31,44 @@ const outcomes = {
 // `error` is set when the backend could not run the check at all.
 const outcome = $derived(
   result.error
-    ? ({ label: "ERROR", variant: "error", note: result.error } as const)
+    ? ({ label: "Error", variant: "error", note: result.error } as const)
     : outcomes[result.status ?? "needs_human"],
 );
 
 const segmentLabels = { fnb: "FNB (Retail)", gaso: "Gaso (Servicios)" };
 </script>
 
-<div class="bg-cream-50 border border-ink-900 p-8 relative overflow-hidden">
-	<div class="flex justify-between items-start mb-8">
+<section class="rounded-md border border-border bg-surface">
+	<header class="flex items-start justify-between gap-4 border-b border-border-subtle px-4 py-3">
 		<div>
-			<h2 class="text-2xl font-serif font-bold">Reporte de elegibilidad</h2>
-			<p class="text-sm text-ink-600 font-mono mt-1">
-				{formatDate(new Date())} — {formatTime(new Date())}
+			<h2 class="text-md text-fg">Reporte de elegibilidad</h2>
+			<p class="mt-0.5 text-sm text-fg-muted tabular-nums">
+				{formatDate(new Date())} · {formatTime(new Date())}
 			</p>
 		</div>
-		<Badge variant={outcome.variant} class="px-4 py-2 border-2 text-sm">
-			{outcome.label}
-		</Badge>
-	</div>
+		<Badge variant={outcome.variant}>{outcome.label}</Badge>
+	</header>
 
 	{#if result.status === "eligible"}
-		<div class="grid grid-cols-1 md:grid-cols-2 gap-8 font-mono text-sm border-t border-dashed border-ink-300 pt-8">
+		<dl class="grid grid-cols-1 gap-x-6 gap-y-4 p-4 sm:grid-cols-2">
+			{@render item("Nombre del cliente", result.name || "N/A")}
+			{@render item("Segmento", result.segment ? segmentLabels[result.segment] : "N/A")}
 			<div>
-				<span class="block text-ink-400 text-xs uppercase mb-1">Nombre del cliente</span>
-				<span class="text-lg">{result.name || "N/A"}</span>
-			</div>
-			<div>
-				<span class="block text-ink-400 text-xs uppercase mb-1">Segmento</span>
-				<span class="text-lg">{result.segment ? segmentLabels[result.segment] : "N/A"}</span>
-			</div>
-			<div>
-				<span class="block text-ink-400 text-xs uppercase mb-1">Línea aprobada</span>
-				<span class="text-2xl font-bold">S/ {formatPrice(result.credit ?? 0)}</span>
+				<dt class="text-sm text-fg-muted">Línea aprobada</dt>
+				<dd class="mt-0.5 text-xl text-fg tabular-nums">S/ {formatPrice(result.credit ?? 0)}</dd>
 			</div>
 			{#if result.nse !== undefined}
-				<div>
-					<span class="block text-ink-400 text-xs uppercase mb-1">Nivel NSE</span>
-					<span class="text-lg">{result.nse}</span>
-				</div>
+				{@render item("Nivel NSE", String(result.nse))}
 			{/if}
-		</div>
+		</dl>
 	{:else}
-		<div class="border-t border-dashed border-ink-300 pt-8">
-			<p class="text-ink-900 font-serif italic">{outcome.note}</p>
-		</div>
+		<p class="p-4 text-base text-fg">{outcome.note}</p>
 	{/if}
-</div>
+</section>
+
+{#snippet item(label: string, value: string)}
+	<div>
+		<dt class="text-sm text-fg-muted">{label}</dt>
+		<dd class="mt-0.5 text-md text-fg">{value}</dd>
+	</div>
+{/snippet}

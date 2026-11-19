@@ -16,30 +16,26 @@ let {
 }: Props = $props();
 </script>
 
-<div class="mb-6 p-6 bg-ink-50 rounded-lg border border-ink-100">
-  <span class="block text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-    {hasExistingImage ? "Reemplazar imagen (opcional)" : "Imagen comercial*"}
-  </span>
-
-  <div>
-    <FileUpload
-      bind:file={image}
-      error={!!error}
-      placeholder={hasExistingImage ? "Subir nueva imagen..." : "Subir imagen..."}
-      onchange={onImageChange}
-    />
-    {#if error}
-      <span class="block mt-2 text-xs text-red-600 font-medium">{error}</span>
-    {/if}
-    {#if image}
-      <div class="flex justify-end mt-2">
-        <button
-          onclick={() => onImageChange(null)}
-          class="text-xs text-red-600 hover:underline font-medium uppercase tracking-wide"
-        >
-          Cancelar cambio
-        </button>
-      </div>
-    {/if}
-  </div>
+<div class="mb-4">
+	<span class="mb-1.5 block text-sm text-fg-muted">
+		{hasExistingImage ? "Reemplazar imagen (opcional)" : "Imagen comercial*"}
+	</span>
+	<FileUpload
+		bind:file={image}
+		error={!!error}
+		placeholder={hasExistingImage ? "Subir nueva imagen…" : "Subir imagen…"}
+		onchange={onImageChange}
+	/>
+	{#if error}
+		<p class="mt-1.5 text-sm text-danger-text">{error}</p>
+	{/if}
+	{#if image}
+		<button
+			type="button"
+			onclick={() => onImageChange(null)}
+			class="mt-1.5 text-sm text-fg-muted hover:text-fg hover:underline"
+		>
+			Cancelar cambio
+		</button>
+	{/if}
 </div>

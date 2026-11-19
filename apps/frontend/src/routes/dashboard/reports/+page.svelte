@@ -2,20 +2,32 @@
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import FormField from "#lib/components/ui/form-field.svelte";
+import Input from "#lib/components/ui/input.svelte";
+import Select from "#lib/components/ui/select.svelte";
+import SectionShell from "#lib/components/ui/section-shell.svelte";
+import { toast } from "#lib/state/toast.svelte.js";
 import { limaDateString } from "#lib/utils/formatters.js";
+import { orderStatusLabels } from "#lib/utils/order-status.js";
 import type { PageData } from "./$types";
 
 let { data }: { data: PageData } = $props();
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 let startDate = $state(limaDateString());
 let endDate = $state(limaDateString());
-let segmentFnb = $state(true);
-let segmentGaso = $state(true);
-let segmentNone = $state(true);
-let saleStatusAll = $state(true);
-let saleStatusConfirmed = $state(false);
-let saleStatusPending = $state(false);
-let saleStatusRejected = $state(false);
+let segments = $state<Record<string, boolean>>({
+  fnb: true,
+  gaso: true,
+  none: true,
+});
+// No status picked means every status.
+let saleStatuses = $state<Record<string, boolean>>({
+  confirmed: false,
+  pending: false,
+  rejected: false,
+});
 let generating = $state(false);
 
 let orderStartDate = $state("");
@@ -23,103 +35,88 @@ let orderEndDate = $state("");
 let orderStatus = $state("");
 let generatingOrders = $state(false);
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const segmentLabels: Record<string, string> = {
+  fnb: "FNB",
+  gaso: "GASO",
+  none: "Sin segmento",
+};
+const saleStatusLabels: Record<string, string> = {
+  confirmed: "Confirmados",
+  pending: "Pendientes",
+  rejected: "Rechazados",
+};
+const orderStatusItems = Object.entries(orderStatusLabels).map(
+  ([value, label]) => ({ value, label }),
+);
 
-function setQuickDate(days: number) {
+const presets = [
+  { label: "Hoy", from: 0, to: 0 },
+  { label: "Ayer", from: 1, to: 1 },
+  { label: "7 días", from: 7, to: 0 },
+  { label: "30 días", from: 30, to: 0 },
+];
+
+function applyPreset(from: number, to: number) {
   const now = Date.now();
-  startDate = limaDateString(now - days * DAY_MS);
-  endDate = limaDateString(now);
+  startDate = limaDateString(now - from * DAY_MS);
+  endDate = limaDateString(now - to * DAY_MS);
 }
 
-function setToday() {
-  const today = limaDateString();
-  startDate = today;
-  endDate = today;
+function picked(set: Record<string, boolean>): string[] {
+  return Object.keys(set).filter((key) => set[key]);
 }
 
-function setYesterday() {
-  const yesterday = limaDateString(Date.now() - DAY_MS);
-  startDate = yesterday;
-  endDate = yesterday;
+// The API answers with the workbook; the browser saves it under `filename`.
+async function download(url: string, filename: string) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const href = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(href);
 }
 
-async function generateReport() {
-  generating = true;
-
-  const segments: string[] = [];
-  if (segmentFnb) segments.push("fnb");
-  if (segmentGaso) segments.push("gaso");
-  if (segmentNone) segments.push("none");
-
-  const saleStatuses: string[] = [];
-  if (saleStatusAll) {
-    saleStatuses.push("all");
-  } else {
-    if (saleStatusConfirmed) saleStatuses.push("confirmed");
-    if (saleStatusPending) saleStatuses.push("pending");
-    if (saleStatusRejected) saleStatuses.push("rejected");
-  }
-
+async function generateActivity(e: Event) {
+  e.preventDefault();
+  const statuses = picked(saleStatuses);
   const params = new URLSearchParams({
-    startDate: startDate,
-    endDate: endDate,
-    segments: segments.join(","),
-    saleStatuses: saleStatuses.join(","),
-  } as Record<string, string>);
-
+    startDate,
+    endDate,
+    segments: picked(segments).join(","),
+    saleStatuses: statuses.length ? statuses.join(",") : "all",
+  });
+  generating = true;
   try {
-    const res = await fetch(`/api/reports/activity?${params}`);
-    if (!res.ok) throw new Error("Failed to generate report");
-
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `reporte-actividad-${startDate}-a-${endDate}.xlsx`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error("Failed to generate report:", error);
+    await download(
+      `/api/reports/activity?${params}`,
+      `reporte-actividad-${startDate}-a-${endDate}.xlsx`,
+    );
+  } catch {
+    toast.error("No se pudo generar el reporte de actividad");
   } finally {
     generating = false;
   }
 }
 
-function handleSaleStatusChange(status: string) {
-  if (status === "all") {
-    saleStatusAll = true;
-    saleStatusConfirmed = false;
-    saleStatusPending = false;
-    saleStatusRejected = false;
-  } else {
-    saleStatusAll = false;
-  }
-}
-
-async function generateOrderReport() {
-  generatingOrders = true;
-
+async function generateOrders(e: Event) {
+  e.preventDefault();
   const params = new URLSearchParams();
   if (orderStartDate) params.append("startDate", orderStartDate);
   if (orderEndDate) params.append("endDate", orderEndDate);
   if (orderStatus) params.append("status", orderStatus);
-
+  const range = orderStartDate
+    ? `${orderStartDate}-a-${orderEndDate || "hoy"}`
+    : "todas";
+  generatingOrders = true;
   try {
-    const res = await fetch(`/api/reports/orders?${params}`);
-    if (!res.ok) throw new Error("Failed to generate order report");
-
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const dateRange = orderStartDate
-      ? `${orderStartDate}-a-${orderEndDate || "hoy"}`
-      : "todas";
-    a.download = `reporte-ordenes-${dateRange}.xlsx`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error("Failed to generate order report:", error);
+    await download(
+      `/api/reports/orders?${params}`,
+      `reporte-ordenes-${range}.xlsx`,
+    );
+  } catch {
+    toast.error("No se pudo generar el reporte de órdenes");
   } finally {
     generatingOrders = false;
   }
@@ -128,231 +125,103 @@ async function generateOrderReport() {
 
 <PageTitle title="Reportes" />
 
-<div class="max-w-4xl mx-auto p-8 md:p-12 min-h-screen">
-  <PageHeader title="Reportes" subtitle="Exportación de datos" />
+<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+	<PageHeader title="Reportes" subtitle="Descarga los datos en Excel." />
 
-  <div class="bg-white border border-cream-200 p-8">
-    <h2 class="font-serif text-2xl mb-2">Reporte de actividad diaria</h2>
-    <p class="text-ink-400 text-sm mb-8">
-      Exporta todos los contactos gestionados con sus datos recopilados.
-      Este reporte incluye todos los clientes que contactaron al bot,
-      independientemente del resultado de la venta.
-    </p>
+	<div class="flex flex-col gap-6">
+		<form onsubmit={generateActivity}>
+			<SectionShell
+				title="Actividad"
+				description="Cada cliente que escribió al bot, con los datos que dio, haya comprado o no."
+			>
+				<div class="flex flex-col gap-5 p-4">
+					<div>
+						<div class="mb-3 flex flex-wrap gap-1.5">
+							{#each presets as preset (preset.label)}
+								<Button size="sm" variant="secondary" onclick={() => applyPreset(preset.from, preset.to)}>
+									{preset.label}
+								</Button>
+							{/each}
+						</div>
+						{@render dateRange("activity", startDate, endDate, (v) => (startDate = v), (v) => (endDate = v))}
+					</div>
 
-    <div class="space-y-8">
-      <!-- Date Range -->
-      <div>
-        <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-3">
-          Período
-        </h3>
-        <div class="flex flex-wrap gap-3 mb-4">
-          <button
-            onclick={setToday}
-            class="px-4 py-2 text-xs font-medium border border-ink-200 hover:border-ink-900 hover:bg-ink-50 transition-colors"
-          >
-            Hoy
-          </button>
-          <button
-            onclick={setYesterday}
-            class="px-4 py-2 text-xs font-medium border border-ink-200 hover:border-ink-900 hover:bg-ink-50 transition-colors"
-          >
-            Ayer
-          </button>
-          <button
-            onclick={() => setQuickDate(7)}
-            class="px-4 py-2 text-xs font-medium border border-ink-200 hover:border-ink-900 hover:bg-ink-50 transition-colors"
-          >
-            Últimos 7 días
-          </button>
-          <button
-            onclick={() => setQuickDate(30)}
-            class="px-4 py-2 text-xs font-medium border border-ink-200 hover:border-ink-900 hover:bg-ink-50 transition-colors"
-          >
-            Últimos 30 días
-          </button>
-        </div>
-        <div class="flex gap-4 items-center">
-          <div>
-            <label for="start-date" class="block text-xs text-ink-400 mb-1">Desde</label>
-            <input
-              id="start-date"
-              type="date"
-              bind:value={startDate}
-              class="px-4 py-2 border border-ink-200 font-mono text-sm focus:outline-none focus:border-ink-900"
-            />
-          </div>
-          <span class="text-ink-300 mt-5">—</span>
-          <div>
-            <label for="end-date" class="block text-xs text-ink-400 mb-1">Hasta</label>
-            <input
-              id="end-date"
-              type="date"
-              bind:value={endDate}
-              class="px-4 py-2 border border-ink-200 font-mono text-sm focus:outline-none focus:border-ink-900"
-            />
-          </div>
-        </div>
-      </div>
+					<fieldset>
+						<legend class="mb-1.5 text-sm text-fg-muted">Segmento</legend>
+						<div class="flex flex-wrap gap-1.5">
+							{#each Object.entries(segmentLabels) as [key, label] (key)}
+								{@render chip(label, segments[key] ?? false, (v) => (segments[key] = v))}
+							{/each}
+						</div>
+					</fieldset>
 
-      <!-- Segment Filter -->
-      <div>
-        <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-3">
-          Segmento
-        </h3>
-        <div class="flex flex-wrap gap-4">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={segmentFnb}
-              class="w-4 h-4 accent-ink-900"
-            />
-            <span class="text-sm">FNB</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={segmentGaso}
-              class="w-4 h-4 accent-ink-900"
-            />
-            <span class="text-sm">GASO</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={segmentNone}
-              class="w-4 h-4 accent-ink-900"
-            />
-            <span class="text-sm">Sin segmento</span>
-          </label>
-        </div>
-      </div>
+					<fieldset>
+						<legend class="mb-1.5 text-sm text-fg-muted">Estado de venta · ninguno marcado incluye todos</legend>
+						<div class="flex flex-wrap gap-1.5">
+							{#each Object.entries(saleStatusLabels) as [key, label] (key)}
+								{@render chip(label, saleStatuses[key] ?? false, (v) => (saleStatuses[key] = v))}
+							{/each}
+						</div>
+					</fieldset>
+				</div>
+				<footer class="flex items-center justify-between gap-3 border-t border-border-subtle px-4 py-3">
+					<p class="text-sm text-fg-muted">
+						Contactos de hoy: <span class="text-fg tabular-nums">{data.todayCount}</span>
+					</p>
+					<Button type="submit" disabled={generating || picked(segments).length === 0}>
+						{generating ? "Generando…" : "Descargar Excel"}
+					</Button>
+				</footer>
+			</SectionShell>
+		</form>
 
-      <!-- Sale Status Filter -->
-      <div>
-        <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-3">
-          Estado de venta
-        </h3>
-        <div class="flex flex-wrap gap-4">
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={saleStatusAll}
-              onchange={() => handleSaleStatusChange("all")}
-              class="w-4 h-4 accent-ink-900"
-            />
-            <span class="text-sm">Todos</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={saleStatusConfirmed}
-              onchange={() => handleSaleStatusChange("confirmed")}
-              class="w-4 h-4 accent-ink-900"
-            />
-            <span class="text-sm">Confirmados</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={saleStatusPending}
-              onchange={() => handleSaleStatusChange("pending")}
-              class="w-4 h-4 accent-ink-900"
-            />
-            <span class="text-sm">Pendientes</span>
-          </label>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={saleStatusRejected}
-              onchange={() => handleSaleStatusChange("rejected")}
-              class="w-4 h-4 accent-ink-900"
-            />
-            <span class="text-sm">Rechazados</span>
-          </label>
-        </div>
-      </div>
-
-      <!-- Generate Button -->
-      <div class="pt-4 border-t border-cream-200">
-        <div class="flex items-center justify-between">
-          <p class="text-sm text-ink-400">
-            {#if data.todayCount > 0}
-              Contactos de hoy: <span class="font-bold text-ink-900">{data.todayCount}</span>
-            {:else}
-              Sin contactos registrados hoy
-            {/if}
-          </p>
-          <Button onclick={generateReport} disabled={generating}>
-            {generating ? "Generando..." : "Generar Excel"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Order Report -->
-  <div class="bg-white border border-cream-200 p-8 mt-8">
-    <h2 class="font-serif text-2xl mb-2">Reporte de órdenes</h2>
-    <p class="text-ink-400 text-sm mb-8">
-      Exporta todas las órdenes registradas con detalles de estado, montos y aprobaciones.
-    </p>
-
-    <div class="space-y-6">
-      <!-- Date Range -->
-      <div>
-        <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-3">
-          Período (opcional)
-        </h3>
-        <div class="flex gap-4 items-center">
-          <div>
-            <label for="order-start-date" class="block text-xs text-ink-400 mb-1">Desde</label>
-            <input
-              id="order-start-date"
-              type="date"
-              bind:value={orderStartDate}
-              class="px-4 py-2 border border-ink-200 font-mono text-sm focus:outline-none focus:border-ink-900"
-            />
-          </div>
-          <span class="text-ink-300 mt-5">—</span>
-          <div>
-            <label for="order-end-date" class="block text-xs text-ink-400 mb-1">Hasta</label>
-            <input
-              id="order-end-date"
-              type="date"
-              bind:value={orderEndDate}
-              class="px-4 py-2 border border-ink-200 font-mono text-sm focus:outline-none focus:border-ink-900"
-            />
-          </div>
-        </div>
-      </div>
-
-      <!-- Status Filter -->
-      <div>
-        <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-3">
-          Estado (opcional)
-        </h3>
-        <select
-          bind:value={orderStatus}
-          class="px-4 py-2 border border-ink-200 text-sm focus:outline-none focus:border-ink-900 min-w-50"
-        >
-          <option value="">Todos los estados</option>
-          <option value="pending">Pendiente</option>
-          <option value="supervisor_approved">Aprobado supervisor</option>
-          <option value="supervisor_rejected">Rechazado supervisor</option>
-          <option value="calidda_approved">Aprobado Calidda</option>
-          <option value="calidda_rejected">Rechazado Calidda</option>
-          <option value="delivered">Entregado</option>
-        </select>
-      </div>
-
-      <!-- Generate Button -->
-      <div class="pt-4 border-t border-cream-200">
-        <div class="flex items-center justify-end">
-          <Button onclick={generateOrderReport} disabled={generatingOrders}>
-            {generatingOrders ? "Generando..." : "Generar Excel"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  </div>
+		<form onsubmit={generateOrders}>
+			<SectionShell
+				title="Órdenes"
+				description="Cada orden con su estado, monto y aprobaciones. Sin fechas, incluye todas."
+			>
+				<div class="flex flex-col gap-4 p-4">
+					{@render dateRange("orders", orderStartDate, orderEndDate, (v) => (orderStartDate = v), (v) => (orderEndDate = v))}
+					<FormField label="Estado" for="order-status" class="mb-0! max-w-xs">
+						<Select
+							id="order-status"
+							bind:value={orderStatus}
+							items={[{ value: "", label: "Todos los estados" }, ...orderStatusItems]}
+						/>
+					</FormField>
+				</div>
+				<footer class="flex justify-end border-t border-border-subtle px-4 py-3">
+					<Button type="submit" disabled={generatingOrders}>
+						{generatingOrders ? "Generando…" : "Descargar Excel"}
+					</Button>
+				</footer>
+			</SectionShell>
+		</form>
+	</div>
 </div>
+
+{#snippet dateRange(
+	id: string,
+	from: string,
+	to: string,
+	setFrom: (value: string) => void,
+	setTo: (value: string) => void,
+)}
+	<div class="grid max-w-md grid-cols-2 gap-3">
+		<FormField label="Desde" for="{id}-from" class="mb-0!">
+			<Input id="{id}-from" type="date" value={from} oninput={(e) => setFrom(e.currentTarget.value)} />
+		</FormField>
+		<FormField label="Hasta" for="{id}-to" class="mb-0!">
+			<Input id="{id}-to" type="date" value={to} oninput={(e) => setTo(e.currentTarget.value)} />
+		</FormField>
+	</div>
+{/snippet}
+
+{#snippet chip(label: string, checked: boolean, set: (value: boolean) => void)}
+	<label
+		class="flex h-7 cursor-pointer items-center rounded-sm border border-border px-2.5 text-sm text-fg-muted transition-colors duration-150 ease-out hover:bg-hover has-checked:border-accent has-checked:bg-accent-soft has-checked:text-accent-text has-focus-visible:outline-2 has-focus-visible:outline-ring"
+	>
+		<input type="checkbox" {checked} onchange={(e) => set(e.currentTarget.checked)} class="sr-only" />
+		{label}
+	</label>
+{/snippet}

@@ -14,6 +14,9 @@ import Badge from "#lib/components/ui/badge.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import PermissionMatrix from "#lib/components/admin/permission-matrix.svelte";
+import Input from "#lib/components/ui/input.svelte";
+import SectionShell from "#lib/components/ui/section-shell.svelte";
+import { roleLabels } from "#lib/utils/roles.js";
 
 let { data } = $props();
 
@@ -79,12 +82,10 @@ async function toggleStatus() {
   }
 }
 
-async function resetPassword() {
-  const newPass = prompt(
-    `Nueva contraseña (mínimo ${MIN_PASSWORD_LENGTH} caracteres):`,
-  );
-  if (!newPass) return;
+let newPassword = $state("");
 
+async function resetPassword() {
+  const newPass = newPassword;
   if (newPass.length < MIN_PASSWORD_LENGTH) {
     toast.error(PASSWORD_TOO_SHORT_MESSAGE);
     return;
@@ -96,13 +97,16 @@ async function resetPassword() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ newPassword: newPass }),
     });
+    newPassword = "";
     toast.success("Contraseña actualizada");
   } catch (e) {
     toast.error("Error al actualizar contraseña");
   }
 }
 
-onMount(loadUser);
+onMount(() => {
+  if (data.user?.activeTenantId) loadUser();
+});
 </script>
 
 <PageTitle title={user ? `Editar ${user.username}` : "Cargando..."} />
@@ -110,91 +114,75 @@ onMount(loadUser);
 {#if !data.user?.activeTenantId}
 <NeedsTenant />
 {:else}
-<div class="max-w-3xl mx-auto p-8 md:p-12">
-    <div class="mb-8">
-        {#if user}
-            <div class="flex items-center gap-4">
-                <h1 class="text-3xl font-serif text-ink-900">{user.name}</h1>
-                <Badge variant={user.is_active ? "success" : "error"}>
-                    {user.is_active ? "ACTIVO" : "INACTIVO"}
-                </Badge>
-            </div>
-            <p class="text-ink-500 font-mono text-sm mt-1">{user.username}</p>
-        {:else}
-            <div class="h-10 bg-gray-100 rounded w-1/3 animate-pulse"></div>
-        {/if}
-    </div>
+<div class="flex max-w-2xl flex-col gap-6">
+	<a href="/dashboard/admin/users" class="self-start text-sm text-fg-muted hover:text-fg">← Usuarios</a>
 
-    {#if user}
-        <div class="space-y-8">
-            <!-- Role & Permissions Section -->
-            <div class="bg-white border border-cream-200 shadow-sm p-8">
-                <h2 class="text-lg font-serif mb-6 border-b border-cream-100 pb-2">Rol y permisos</h2>
-                
-                <div class="space-y-6">
-                    <FormField label="Rol asignado" for="role">
-                        <Select
-                            id="role"
-                            bind:value={user.role}
-                            items={[
-                                { value: "sales_agent", label: "Agente de ventas" },
-                                { value: "supervisor", label: "Supervisor" },
-                                { value: "developer", label: "Desarrollador" },
-                                { value: "admin", label: "Administrador" },
-                            ]}
-                        />
-                        <p class="text-xs text-ink-400 mt-2">
-                            Advertencia: Cambiar el rol modificará inmediatamente los accesos del usuario.
-                        </p>
-                    </FormField>
+	{#if user}
+		<header class="flex items-start justify-between gap-4">
+			<div class="min-w-0">
+				<h2 class="text-lg text-fg">{user.name}</h2>
+				<p class="mt-0.5 font-mono text-sm text-fg-muted">@{user.username}</p>
+			</div>
+			<Badge variant={user.is_active ? "success" : "default"}>
+				{user.is_active ? "Activo" : "Inactivo"}
+			</Badge>
+		</header>
 
-                    <PermissionMatrix role={user.role} />
-                </div>
-            </div>
+		<SectionShell title="Rol y permisos" description="Un cambio de rol cambia sus accesos en cuanto guardas.">
+			<div class="p-4">
+				<FormField label="Rol" for="role" class="mb-0!">
+					<Select
+						id="role"
+						bind:value={user.role}
+						items={Object.entries(roleLabels).map(([value, label]) => ({ value, label }))}
+					/>
+				</FormField>
+				<PermissionMatrix role={user.role} />
+			</div>
+			<footer class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3">
+				<Button variant="ghost" href="/dashboard/admin/users">Cancelar</Button>
+				<Button onclick={saveChanges} disabled={saving}>
+					{saving ? "Guardando…" : "Guardar cambios"}
+				</Button>
+			</footer>
+		</SectionShell>
 
-            <!-- Security section -->
-            <div class="bg-white border border-cream-200 shadow-sm p-8">
-                <h2 class="text-lg font-serif mb-6 border-b border-cream-100 pb-2">Seguridad y acceso</h2>
-                
-                {#if accountLocked}
-                <p class="text-sm text-ink-500 py-4">
-                    Esta cuenta pertenece al equipo de VendeYa. Solo el equipo de VendeYa puede desactivarla o restablecer su contraseña.
-                </p>
-                {:else}
-                <div class="flex items-center justify-between py-4 border-b border-cream-100">
-                    <div>
-                        <p class="font-bold text-ink-900">Estado de la cuenta</p>
-                        <p class="text-xs text-ink-500">Desactivar para bloquear acceso inmediato.</p>
-                    </div>
-                    <Button 
-                        variant="secondary" 
-                        class={user.is_active ? "hover:bg-red-50 hover:text-red-700" : "hover:bg-green-50 hover:text-green-700"}
-                        onclick={toggleStatus}
-                    >
-                        {user.is_active ? "Desactivar Cuenta" : "Activar Cuenta"}
-                    </Button>
-                </div>
-
-                <div class="flex items-center justify-between py-4">
-                    <div>
-                        <p class="font-bold text-ink-900">Contraseña</p>
-                        <p class="text-xs text-ink-500">Forzar cambio de contraseña.</p>
-                    </div>
-                    <Button variant="secondary" onclick={resetPassword}>
-                        Restablecer
-                    </Button>
-                </div>
-                {/if}
-            </div>
-
-            <!-- Actions -->
-            <div class="flex justify-end gap-3">
-                <Button variant="secondary" onclick={() => goto("/dashboard/admin/users")}>Cancelar</Button>
-                <Button onclick={saveChanges} disabled={saving}>
-                    {saving ? "Guardando..." : "Guardar Cambios"}
-                </Button>
-            </div>
-        </div>
-    {/if}
+		<SectionShell title="Seguridad y acceso">
+			{#if accountLocked}
+				<p class="p-4 text-base text-fg-muted">
+					Esta cuenta pertenece al equipo de VendeYa. Solo ese equipo puede desactivarla o restablecer su contraseña.
+				</p>
+			{:else}
+				<div class="divide-y divide-border-subtle">
+					<div class="flex items-center justify-between gap-4 p-4">
+						<div>
+							<p class="text-base font-medium text-fg">Estado de la cuenta</p>
+							<p class="text-sm text-fg-muted">Una cuenta desactivada no puede entrar.</p>
+						</div>
+						<Button size="sm" variant={user.is_active ? "danger" : "secondary"} onclick={toggleStatus}>
+							{user.is_active ? "Desactivar" : "Activar"}
+						</Button>
+					</div>
+					<form
+						class="p-4"
+						onsubmit={(e) => {
+							e.preventDefault();
+							resetPassword();
+						}}
+					>
+						<FormField label="Nueva contraseña" for="new-password" class="mb-0!">
+							<div class="flex gap-2">
+								<Input id="new-password" type="password" bind:value={newPassword} autocomplete="new-password" />
+								<Button type="submit" variant="secondary" disabled={!newPassword}>Restablecer</Button>
+							</div>
+							<p class="mt-1.5 text-sm text-fg-muted">Mínimo {MIN_PASSWORD_LENGTH} caracteres.</p>
+						</FormField>
+					</form>
+				</div>
+			{/if}
+		</SectionShell>
+	{:else}
+		<div class="h-12 w-1/3 animate-pulse rounded-sm bg-sunken" aria-busy="true"></div>
+	{/if}
 </div>
 {/if}

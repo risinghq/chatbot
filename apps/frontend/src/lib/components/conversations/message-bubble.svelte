@@ -24,43 +24,36 @@ let {
 }: Props = $props();
 
 const isMe = $derived(direction === currentUserSide);
+
+// `received` and `sent` are the normal case and show nothing.
+const exceptionLabels: Record<string, string> = {
+  queued: "En cola",
+  failed: "No enviado",
+  cancelled: "Cancelado",
+};
+const exception = $derived(status ? exceptionLabels[status] : undefined);
 </script>
 
-<div class="flex {isMe ? 'justify-end' : 'justify-start'} group">
+<div class="group flex {isMe ? 'justify-end' : 'justify-start'}">
   <div
-    class="relative max-w-xl p-4 {isMe
-      ? 'bg-ink-900 text-cream-50'
-      : 'bg-white text-ink-900 border border-ink-900/10'}"
+    class="relative max-w-[min(36rem,85%)] rounded-lg px-3 py-2 {isMe
+      ? 'bg-accent-soft text-fg'
+      : 'border border-border-subtle bg-surface text-fg'}"
   >
     {#if actions}
       <div
-        class="absolute -top-3 -right-3 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+        class="absolute -top-3 -right-3 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100"
       >
         {@render actions()}
       </div>
     {/if}
     {#if type === "image"}
-      <img
-        src="/media/{content}"
-        alt="Imagen"
-        class="max-w-full h-auto mb-4 border border-ink-900/10"
-      />
+      <img src="/media/{content}" alt="Imagen" class="mb-1 h-auto max-w-full rounded-md" />
     {:else}
-      <p
-        class="font-serif text-base leading-relaxed whitespace-pre-wrap {isMe
-          ? 'text-cream-50'
-          : 'text-ink-900'}"
-      >
-        {content}
-      </p>
+      <p class="text-base whitespace-pre-wrap break-words">{content}</p>
     {/if}
-    <span
-      class="text-[10px] font-mono uppercase tracking-widest block mt-2 {isMe
-        ? 'text-cream-50/40'
-        : 'text-ink-300'}"
-    >
-      {formatTime(createdAt)}{#if status}
-        • {status}{/if}
+    <span class="mt-1 block text-right text-xs text-fg-muted tabular-nums">
+      {formatTime(createdAt)}{#if exception}&nbsp;· <span class={status === "failed" ? "text-danger-text" : ""}>{exception}</span>{/if}
     </span>
   </div>
 </div>

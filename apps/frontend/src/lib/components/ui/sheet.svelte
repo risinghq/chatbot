@@ -14,8 +14,8 @@ function close() {
 {#if open}
     <div class="fixed inset-0 z-50 overflow-hidden">
         <div
-            class="absolute inset-0 bg-ink-900/20 backdrop-blur-sm transition-opacity cursor-default"
-            transition:fade={{ duration: 200 }}
+            class="absolute inset-0 cursor-default bg-overlay"
+            transition:fade={{ duration: 150 }}
             on:click={close}
             on:keydown={(e) => e.key === "Escape" && close()}
             role="button"
@@ -26,32 +26,32 @@ function close() {
             class="fixed inset-y-0 right-0 max-w-2xl w-full flex pointer-events-none"
         >
             <div
-                class="w-full h-full bg-white shadow-2xl pointer-events-auto transform transition font-sans flex flex-col"
-                transition:fly={{ x: 400, duration: 300 }}
+                class="pointer-events-auto flex h-full w-full flex-col border-l border-popover-border bg-surface shadow-md"
+                transition:fly={{ x: 400, duration: 200 }}
             >
                 <div
-                    class="px-6 py-4 border-b border-ink-100 flex items-center justify-between bg-cream-50"
+                    class="flex items-center justify-between gap-4 border-b border-border-subtle px-4 py-3"
                 >
                     <div>
                         {#if title}
-                            <h2 class="text-lg font-serif text-ink-900">
+                            <h2 class="text-md text-fg">
                                 {title}
                             </h2>
                         {/if}
                         {#if description}
-                            <p class="text-xs text-ink-500 mt-1">
+                            <p class="mt-0.5 text-sm text-fg-muted">
                                 {description}
                             </p>
                         {/if}
                     </div>
                     <button
-                        class="text-ink-400 hover:text-ink-900 transition-colors p-1"
+                        class="inline-flex size-7 items-center justify-center rounded-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg pointer-coarse:size-11"
                         on:click={close}
-                        aria-label="Close details"
+                        aria-label="Cerrar"
                     >
                         <svg
                             xmlns="http://www.w3.org/2000/svg"
-                            class="h-6 w-6"
+                            class="size-4"
                             fill="none"
                             viewBox="0 0 24 24"
                             stroke="currentColor"
@@ -66,13 +66,13 @@ function close() {
                     </button>
                 </div>
 
-                <div class="flex-1 overflow-y-auto p-6 space-y-6">
+                <div class="flex-1 space-y-4 overflow-y-auto p-4">
                     <slot />
                 </div>
 
                 {#if $$slots.footer}
                     <div
-                        class="border-t border-ink-100 px-6 py-4 bg-cream-50 flex justify-end gap-3"
+                        class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3"
                     >
                         <slot name="footer" />
                     </div>

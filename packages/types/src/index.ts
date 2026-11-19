@@ -229,6 +229,9 @@ export type Order = {
   updated_at: number;
 };
 
+/** One order as its detail page shows it, with the agent's display name. */
+export type OrderDetail = Order & { assigned_agent_name: string | null };
+
 export type SystemLogSource = "llm" | "audit";
 export type SystemLogStatus = "success" | "error" | "info";
 

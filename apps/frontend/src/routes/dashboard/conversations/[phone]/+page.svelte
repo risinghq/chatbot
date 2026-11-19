@@ -22,8 +22,16 @@ import { toast } from "#lib/state/toast.svelte.js";
 import { auth } from "#lib/state/auth.svelte.js";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import Badge from "#lib/components/ui/badge.svelte";
+import Banner from "#lib/components/ui/banner.svelte";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
+import FormField from "#lib/components/ui/form-field.svelte";
+import Icon from "#lib/components/ui/icon.svelte";
+import Input from "#lib/components/ui/input.svelte";
+import Textarea from "#lib/components/ui/textarea.svelte";
 import MessageThread from "#lib/components/conversations/message-thread.svelte";
 import MessageInput from "#lib/components/conversations/message-input.svelte";
+import { phaseLabel } from "#lib/utils/conversation-phase.js";
 import type { PageData } from "./$types";
 
 interface Props {
@@ -261,303 +269,196 @@ function goBack() {
 
 <PageTitle title={conversation?.client_name || formatPhone(conversation?.phone_number || "")} />
 
+{#snippet sectionHeading(title: string)}
+	<h2 class="mb-3 text-md font-medium text-fg">{title}</h2>
+{/snippet}
+
+{#snippet fileField(id: string, label: string, accept: string, onpick: (file: File | null) => void)}
+	<FormField {label} for={id}>
+		<input
+			{id}
+			type="file"
+			{accept}
+			onchange={(e) => onpick(e.currentTarget.files?.[0] || null)}
+			class="block w-full text-base text-fg-muted file:mr-3 file:h-8 file:cursor-pointer file:rounded-sm file:border file:border-border file:bg-surface file:px-3 file:text-base file:font-medium file:text-fg hover:file:bg-hover"
+		/>
+	</FormField>
+{/snippet}
+
 {#if !conversation}
-  <div class="max-w-4xl mx-auto p-8 md:p-12 min-h-screen">
-    <div class="text-center py-20">
-      <p class="font-serif text-xl text-ink-400 italic">Conversación no encontrada</p>
-      <button onclick={goBack} class="mt-4 text-sm text-ink-600 hover:underline">
-        Volver a conversaciones
-      </button>
-    </div>
-  </div>
+	<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+		<EmptyState
+			title="Conversación no encontrada"
+			description="Puede que el cliente haya escrito a otro número del negocio."
+		>
+			{#snippet action()}
+				<Button variant="secondary" size="sm" onclick={goBack}>Volver a conversaciones</Button>
+			{/snippet}
+		</EmptyState>
+	</div>
 {:else}
-  <div class="min-h-screen bg-cream-100">
-    <!-- Assignment Banner -->
-    {#if isPendingAssignment && isAssignedToCurrentUser && auth.isSalesAgent}
-      <div class="bg-blue-600 text-white">
-        <div class="max-w-7xl mx-auto px-8 py-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="font-bold mb-1">Nueva asignación de cliente</p>
-              <p class="text-sm text-blue-100">Este cliente está listo para contratar. Acepta para continuar o rechaza para reasignar.</p>
-            </div>
-            <div class="flex gap-3">
-              <Button 
-                onclick={handleAcceptAssignment}
-                variant="secondary"
-                class="bg-white! text-blue-600! hover:bg-blue-50!"
-              >
-                Aceptar
-              </Button>
-              <Button 
-                onclick={handleDeclineAssignment}
-                variant="secondary"
-                class="bg-blue-700! text-white! hover:bg-blue-800! border-blue-500!"
-              >
-                Rechazar
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    {/if}
+	<!-- From lg up the thread and the side panel scroll on their own; below lg the page scrolls. -->
+	<div class="flex flex-col lg:h-dvh lg:overflow-hidden">
+		<header class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle bg-surface px-4 py-2 md:min-h-12">
+			<a
+				href="/dashboard/conversations"
+				aria-label="Volver a conversaciones"
+				class="-ml-1 inline-flex size-8 items-center justify-center rounded-sm text-fg-muted hover:bg-hover hover:text-fg pointer-coarse:size-11"
+			>
+				<Icon name="arrow" class="size-4 rotate-180" />
+			</a>
+			<div class="min-w-0 flex-1">
+				<h1 class="truncate text-md font-medium text-fg">
+					{conversation.client_name || formatPhone(conversation.phone_number)}
+				</h1>
+				{#if conversation.client_name}
+					<p class="font-mono text-sm text-fg-muted">{formatPhone(conversation.phone_number)}</p>
+				{/if}
+			</div>
+			{#if isHumanTakeover}
+				<Badge variant="error">Intervención activa</Badge>
+				<Button variant="secondary" size="sm" onclick={handleRelease}>Devolver al bot</Button>
+			{:else}
+				<Badge>Bot</Badge>
+				<Button variant="secondary" size="sm" onclick={handleTakeover}>Intervenir</Button>
+			{/if}
+		</header>
 
-    <!-- Header -->
-    <div class="bg-white border-b border-ink-900/10 sticky z-10">
-      <div class="max-w-7xl mx-auto px-8 py-6">
-        <div class="flex justify-between items-start mb-6">
-          <div>
-            <h1 class="font-serif text-3xl text-ink-900">
-              {#if conversation.client_name}
-                {conversation.client_name}
-              {:else}
-                {formatPhone(conversation.phone_number)}
-              {/if}
-            </h1>
-            {#if conversation.client_name}
-              <p class="text-ink-400 font-mono text-sm mt-1">{formatPhone(conversation.phone_number)}</p>
-            {/if}
-          </div>
+		{#if isPendingAssignment && isAssignedToCurrentUser && auth.isSalesAgent}
+			<div class="shrink-0 border-b border-border-subtle p-3">
+				<Banner tone="info" title="Nueva asignación de cliente">
+					Este cliente está listo para contratar. Acepta para continuar o rechaza para reasignarlo.
+					{#snippet action()}
+						<div class="flex gap-2">
+							<Button size="sm" variant="secondary" onclick={handleDeclineAssignment}>Rechazar</Button>
+							<Button size="sm" onclick={handleAcceptAssignment}>Aceptar</Button>
+						</div>
+					{/snippet}
+				</Banner>
+			</div>
+		{/if}
 
-          <div class="flex items-center gap-3">
-            {#if isHumanTakeover}
-              <Button variant="secondary" onclick={handleRelease}>
-                Devolver al bot
-              </Button>
-            {:else}
-              <Button variant="secondary" onclick={handleTakeover}>
-                Intervenir
-              </Button>
-            {/if}
-          </div>
-        </div>
+		<dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 border-b border-border-subtle bg-surface px-4 py-2 text-sm">
+			{#each [
+				["DNI", conversation.dni || "—"],
+				["Segmento", conversation.segment?.toUpperCase() || "—"],
+				["Crédito", conversation.credit_line ? `S/ ${formatPrice(conversation.credit_line)}` : "—"],
+				["NSE", conversation.nse || "—"],
+				["Estado", phaseLabel(conversation.current_state)],
+			] as [term, value] (term)}
+				<div class="flex gap-1.5">
+					<dt class="text-fg-muted">{term}</dt>
+					<dd class="text-fg">{value}</dd>
+				</div>
+			{/each}
+		</dl>
 
-        <!-- Context Data Bar -->
-        <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-[10px] font-mono uppercase tracking-wider text-ink-500 border-t border-ink-900/5 pt-4">
-          <div class="flex gap-2">
-            <span class="text-ink-300">DNI:</span>
-            <span class="text-ink-900 font-bold">{conversation.dni || "—"}</span>
-          </div>
-          <div class="w-px h-3 bg-ink-200"></div>
-          <div class="flex gap-2">
-            <span class="text-ink-300">Segmento:</span>
-            <span class="text-ink-900 font-bold">{conversation.segment?.toUpperCase() || "—"}</span>
-          </div>
-          <div class="w-px h-3 bg-ink-200"></div>
-          <div class="flex gap-2">
-            <span class="text-ink-300">Crédito:</span>
-            <span class="text-ink-900 font-bold">
-              {conversation.credit_line ? `S/ ${formatPrice(conversation.credit_line)}` : "—"}
-            </span>
-          </div>
-          <div class="w-px h-3 bg-ink-200"></div>
-          <div class="flex gap-2">
-            <span class="text-ink-300">NSE:</span>
-            <span class="text-ink-900 font-bold">{conversation.nse || "—"}</span>
-          </div>
-          <div class="w-px h-3 bg-ink-200"></div>
-          <div class="flex gap-2">
-            <span class="text-ink-300">Estado:</span>
-            <span class="text-ink-900 font-bold">{conversation.current_state}</span>
-          </div>
-          {#if isHumanTakeover}
-            <div class="w-px h-3 bg-ink-200"></div>
-            <div class="flex items-center gap-1.5">
-              <span class="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
-              <span class="text-red-600 font-bold">Intervención activa</span>
-            </div>
-          {/if}
-        </div>
-      </div>
-    </div>
+		<div class="flex flex-col lg:min-h-0 lg:flex-1 lg:flex-row">
+			<section aria-label="Mensajes" class="flex h-[70dvh] min-w-0 flex-col bg-canvas lg:h-auto lg:min-h-0 lg:flex-1">
+				<MessageThread {messages} />
+				{#if isHumanTakeover}
+					<MessageInput bind:value={messageText} onSend={handleSendMessage} />
+				{/if}
+			</section>
 
-    <!-- Main Content -->
-    <div class="max-w-7xl mx-auto px-8 py-8">
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <!-- Left Column: Messages -->
-        <div class="lg:col-span-2 bg-white border border-cream-200 flex flex-col" style="height: 600px;">
-          <MessageThread {messages} />
-          {#if isHumanTakeover}
-            <div class="border-t border-cream-200">
-              <MessageInput
-                bind:value={messageText}
-                onSend={handleSendMessage}
-              />
-            </div>
-          {/if}
-        </div>
+			<aside class="divide-y divide-border-subtle border-t border-border-subtle bg-surface lg:w-80 lg:overflow-y-auto lg:border-t-0 lg:border-l">
+				<fieldset class="p-4">
+					<legend class="contents">{@render sectionHeading("Estado de venta")}</legend>
+					<div class="flex flex-col">
+						{#each saleStatusOptions as option (option.value)}
+							<label class="-mx-2 flex h-8 cursor-pointer items-center gap-2 rounded-sm px-2 text-base text-fg hover:bg-hover pointer-coarse:h-11">
+								<input
+									type="radio"
+									name="saleStatus"
+									value={option.value}
+									bind:group={saleStatus}
+									class="size-4 border-border bg-surface text-accent"
+								/>
+								{option.label}
+							</label>
+						{/each}
+					</div>
+				</fieldset>
 
-        <!-- Right Column: Agent Actions -->
-        <div class="space-y-6">
-          <!-- Sale Status -->
-          <div class="bg-white border border-cream-200 p-6">
-            <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-              Estado de venta
-            </h3>
-            <div class="space-y-2">
-              {#each saleStatusOptions as option}
-                <label class="flex items-center gap-3 cursor-pointer p-2 hover:bg-cream-50 transition-colors">
-                  <input
-                    type="radio"
-                    name="saleStatus"
-                    value={option.value}
-                    bind:group={saleStatus}
-                    class="w-4 h-4 accent-ink-900"
-                  />
-                  <span class="text-sm">{option.label}</span>
-                </label>
-              {/each}
-            </div>
-          </div>
+				{#if saleStatus === "confirmed"}
+					<div class="p-4">
+						{@render sectionHeading("Datos de entrega")}
+						<FormField label="Dirección" for="delivery-address">
+							<Textarea id="delivery-address" bind:value={deliveryAddress} rows={2} placeholder="Av. Lima 123, San Isidro" />
+						</FormField>
+						<FormField label="Referencia" for="delivery-reference" class="mb-0!">
+							<Input id="delivery-reference" bind:value={deliveryReference} placeholder="Frente al parque" />
+						</FormField>
+					</div>
+				{/if}
 
-          <!-- Delivery Info (only show if confirmed) -->
-          {#if saleStatus === "confirmed"}
-            <div class="bg-white border border-cream-200 p-6">
-              <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                Datos de entrega
-              </h3>
-              <div class="space-y-4">
-                <div>
-                  <label for="delivery-address" class="block text-xs text-ink-400 mb-1">Dirección</label>
-                  <textarea
-                    id="delivery-address"
-                    bind:value={deliveryAddress}
-                    rows="2"
-                    class="w-full px-3 py-2 border border-ink-200 text-sm focus:outline-none focus:border-ink-900 resize-none"
-                    placeholder="Av. Lima 123, San Isidro"
-                  ></textarea>
-                </div>
-                <div>
-                  <label for="delivery-reference" class="block text-xs text-ink-400 mb-1">Referencia</label>
-                  <input
-                    id="delivery-reference"
-                    type="text"
-                    bind:value={deliveryReference}
-                    class="w-full px-3 py-2 border border-ink-200 text-sm focus:outline-none focus:border-ink-900"
-                    placeholder="Frente al parque"
-                  />
-                </div>
-              </div>
-            </div>
-          {/if}
+				<div class="p-4">
+					<FormField label="Observaciones" for="agent-notes" class="mb-0!">
+						<Textarea id="agent-notes" bind:value={agentNotes} rows={4} placeholder="Notas sobre la llamada, productos de interés…" />
+					</FormField>
+				</div>
 
-          <!-- Agent Notes -->
-          <div class="bg-white border border-cream-200 p-6">
-            <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-              Observaciones
-            </h3>
-            <textarea
-              bind:value={agentNotes}
-              rows="4"
-              class="w-full px-3 py-2 border border-ink-200 text-sm focus:outline-none focus:border-ink-900 resize-none"
-              placeholder="Notas sobre la llamada, productos de interés, etc."
-            ></textarea>
-          </div>
+				{#if conversation.products_interested && conversation.products_interested !== "[]"}
+					<div class="p-4">
+						{@render sectionHeading("Productos de interés")}
+						<p class="text-sm break-words text-fg-muted">{conversation.products_interested}</p>
+					</div>
+				{/if}
 
-          <!-- Products Interested -->
-          {#if conversation.products_interested && conversation.products_interested !== "[]"}
-            <div class="bg-white border border-cream-200 p-6">
-              <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                Productos de interés
-              </h3>
-              <p class="text-sm text-ink-600 font-mono">
-                {conversation.products_interested}
-              </p>
-            </div>
-          {/if}
+				<div class="p-4">
+					<Button onclick={saveAgentData} disabled={saving} class="w-full">
+						{saving ? "Guardando…" : "Guardar cambios"}
+					</Button>
+				</div>
 
-          <!-- Save Button -->
-          <Button onclick={saveAgentData} disabled={saving} class="w-full">
-            {saving ? "Guardando..." : "Guardar cambios"}
-          </Button>
+				{#if isHumanTakeover && !conversation.recording_uploaded_at && auth.isSalesAgent}
+					<div class="p-4">
+						{@render sectionHeading("Subir contrato")}
+						<p class="-mt-2 mb-3 text-base text-fg-muted">
+							Sube el contrato firmado y la grabación de la llamada para completar la venta.
+						</p>
+						{@render fileField("contract-file", "Contrato (PDF o DOCX)", ".pdf,.docx,.doc", (f) => (contractFile = f))}
+						{@render fileField("audio-file", "Grabación de audio", ".mp3,.m4a,.wav,.ogg", (f) => (audioFile = f))}
+						<Button
+							variant="secondary"
+							onclick={handleUploadContract}
+							disabled={!contractFile || !audioFile || uploadingContract}
+							class="w-full"
+						>
+							{uploadingContract ? "Subiendo…" : "Subir contrato y grabación"}
+						</Button>
+					</div>
+				{/if}
 
-          <!-- Contract Upload (only for agents with takeover, before recording uploaded) -->
-          {#if isHumanTakeover && !conversation.recording_uploaded_at && auth.isSalesAgent}
-            <div class="bg-cream-50 border border-cream-300 p-6">
-              <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                📄 Subir Contrato
-              </h3>
-              <p class="text-xs text-ink-600 mb-4">
-                Sube el contrato firmado y la grabación de la llamada para completar la venta.
-              </p>
-              
-              <div class="space-y-4">
-                <div>
-                  <label for="contract-file" class="block text-xs text-ink-500 mb-2 font-medium">
-                    Contrato (PDF/DOCX)
-                  </label>
-                  <input
-                    id="contract-file"
-                    type="file"
-                    accept=".pdf,.docx,.doc"
-                    onchange={(e) => (contractFile = e.currentTarget.files?.[0] || null)}
-                    class="w-full text-sm border border-cream-300 p-2 file:mr-4 file:py-1 file:px-3 file:border-0 file:text-xs file:font-medium file:bg-ink-900 file:text-white hover:file:bg-ink-700 file:cursor-pointer"
-                  />
-                </div>
+				{#if saleStatus === "confirmed" && !order && deliveryAddress}
+					<div class="p-4">
+						<p class="mb-3 text-base text-fg-muted">La venta está confirmada. Puedes crear una orden para este cliente.</p>
+						<Button variant="secondary" onclick={createOrder} disabled={creatingOrder} class="w-full">
+							{creatingOrder ? "Creando…" : "Crear orden"}
+						</Button>
+					</div>
+				{/if}
 
-                <div>
-                  <label for="audio-file" class="block text-xs text-ink-500 mb-2 font-medium">
-                    Grabación de Audio
-                  </label>
-                  <input
-                    id="audio-file"
-                    type="file"
-                    accept=".mp3,.m4a,.wav,.ogg"
-                    onchange={(e) => (audioFile = e.currentTarget.files?.[0] || null)}
-                    class="w-full text-sm border border-cream-300 p-2 file:mr-4 file:py-1 file:px-3 file:border-0 file:text-xs file:font-medium file:bg-ink-900 file:text-white hover:file:bg-ink-700 file:cursor-pointer"
-                  />
-                </div>
+				{#if order}
+					<div class="p-4">
+						{@render sectionHeading("Orden creada")}
+						<a
+							href="/dashboard/orders/{order.id}"
+							class="flex items-center justify-between rounded-md border border-border px-3 py-2 hover:bg-hover"
+						>
+							<span class="font-mono text-base text-fg">{order.order_number}</span>
+							<span class="flex items-center gap-1 text-sm text-fg-muted">Ver orden <Icon name="arrow" class="size-3.5" /></span>
+						</a>
+					</div>
+				{/if}
 
-                <Button
-                  onclick={handleUploadContract}
-                  disabled={!contractFile || !audioFile || uploadingContract}
-                  class="w-full"
-                >
-                  {uploadingContract ? "Subiendo..." : "Subir Contrato y Grabación"}
-                </Button>
-              </div>
-            </div>
-          {/if}
-
-          <!-- ton>
-
-          <!-- Create Order Button (only if sale confirmed and no order exists) -->
-          {#if saleStatus === "confirmed" && !order && deliveryAddress}
-            <div class="bg-cream-100 border border-cream-300 p-4">
-              <p class="text-xs text-ink-600 mb-3">
-                La venta está confirmada. Puedes crear una orden para este cliente.
-              </p>
-              <Button onclick={createOrder} disabled={creatingOrder} variant="primary" class="w-full">
-                {creatingOrder ? "Creando..." : "Crear Orden"}
-              </Button>
-            </div>
-          {/if}
-
-          <!-- Order Link (if order exists) -->
-          {#if order}
-            <div class="bg-white border border-cream-200 p-6">
-              <h3 class="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">
-                Orden creada
-              </h3>
-              <a 
-                href="/dashboard/orders/{order.id}"
-                class="block px-4 py-3 bg-cream-100 hover:bg-cream-200 border border-cream-300 transition-colors"
-              >
-                <p class="font-mono text-sm font-bold text-ink-900">{order.order_number}</p>
-                <p class="text-xs text-ink-500 mt-1">Ver detalles de orden →</p>
-              </a>
-            </div>
-          {/if}
-
-          <!-- Metadata -->
-          <div class="text-xs text-ink-300 space-y-1">
-            <p>Última actividad: {formatDateTime(conversation.last_activity_at)}</p>
-            {#if conversation.handover_reason}
-              <p class="text-red-600">Razón escalamiento: {conversation.handover_reason}</p>
-            {/if}
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+				<div class="space-y-1 p-4 text-sm text-fg-muted">
+					<p>Última actividad: {formatDateTime(conversation.last_activity_at)}</p>
+					{#if conversation.handover_reason}
+						<p class="text-danger-text">Motivo de escalamiento: {conversation.handover_reason}</p>
+					{/if}
+				</div>
+			</aside>
+		</div>
+	</div>
 {/if}

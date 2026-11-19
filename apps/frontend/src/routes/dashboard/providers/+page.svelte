@@ -8,6 +8,7 @@ import type {
 import Input from "#lib/components/ui/input.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import FormField from "#lib/components/ui/form-field.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import LookupResultCard from "#lib/components/providers/lookup-result.svelte";
@@ -67,57 +68,52 @@ async function handleQuery() {
 
 <PageTitle title="Proveedores" />
 
-<div class="p-8 md:p-12 max-w-7xl mx-auto">
-	<PageHeader title="Historial crediticio" subtitle="Base de datos">
+<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+	<PageHeader title="Historial crediticio" subtitle="Consulta si un cliente califica para crédito en Cálidda.">
 		{#snippet actions()}
 			{#if providersChecked}
-				<div class="flex gap-4 text-xs font-mono">
-					<div class="flex items-center gap-2">
-						<span class="w-2 h-2 rounded-full {providersChecked.includes('fnb') ? 'bg-green-500' : 'bg-red-500'}"></span>
-						<span>Sistema FNB</span>
-					</div>
-					<div class="flex items-center gap-2">
-						<span class="w-2 h-2 rounded-full {providersChecked.includes('gaso') ? 'bg-green-500' : 'bg-red-500'}"></span>
-						<span>Sistema Gaso</span>
-					</div>
-				</div>
+				<ul class="flex gap-4 text-sm text-fg-muted">
+					{@render provider("fnb", "Sistema FNB")}
+					{@render provider("gaso", "Sistema Gaso")}
+				</ul>
 			{/if}
 		{/snippet}
 	</PageHeader>
 
-	<div class="bg-white p-8 border border-cream-200 shadow-sm mb-8">
-		<label for="tenant" class="block text-sm font-bold uppercase tracking-wider mb-4">
-			Negocio (cuenta de Cálidda)
-		</label>
-		<div class="mb-6">
+	<form
+		class="mb-6 rounded-md border border-border bg-surface p-4"
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleQuery();
+		}}
+	>
+		<FormField label="Negocio (cuenta de Cálidda)" for="tenant">
 			<Select
 				id="tenant"
 				bind:value={tenantSlug}
-				placeholder="Sin negocio — FNB no consulta"
+				placeholder="Sin negocio: FNB no consulta"
 				items={tenants.map((t) => ({ value: t.slug, label: t.name }))}
 			/>
-		</div>
-		<label for="dni" class="block text-sm font-bold uppercase tracking-wider mb-4">
-			Identificación del cliente
-		</label>
-		<div class="flex gap-4">
-			<Input
-				id="dni"
-				bind:value={dni}
-				disabled={loading}
-				placeholder="DNI (ej. 12345678)"
-				class="text-2xl font-mono tracking-widest"
-			/>
-			<Button onclick={handleQuery} disabled={loading || !dni} class="shrink-0 self-end mb-2">
-				{loading ? "Escaneando..." : "Consultar"}
-			</Button>
-		</div>
-		{#if error}
-			<p class="mt-4 text-red-600 font-serif italic">{error}</p>
-		{/if}
-	</div>
+		</FormField>
+		<FormField label="DNI del cliente" for="dni" error={error || undefined} class="mb-0!">
+			<div class="flex gap-2">
+				<Input id="dni" bind:value={dni} disabled={loading} placeholder="12345678" class="font-mono tabular-nums" />
+				<Button type="submit" disabled={loading || !dni}>
+					{loading ? "Consultando…" : "Consultar"}
+				</Button>
+			</div>
+		</FormField>
+	</form>
 
 	{#if result}
 		<LookupResultCard {result} />
 	{/if}
 </div>
+
+{#snippet provider(key: string, label: string)}
+	{@const up = providersChecked?.includes(key)}
+	<li class="flex items-center gap-1.5">
+		<span aria-hidden="true" class="size-2 rounded-full {up ? 'bg-success' : 'bg-danger'}"></span>
+		{label}<span class="sr-only">: {up ? "responde" : "sin respuesta"}</span>
+	</li>
+{/snippet}

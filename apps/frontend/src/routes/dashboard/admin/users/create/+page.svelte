@@ -6,6 +6,8 @@ import Select from "#lib/components/ui/select.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import PermissionMatrix from "#lib/components/admin/permission-matrix.svelte";
+import SectionShell from "#lib/components/ui/section-shell.svelte";
+import { roleLabels } from "#lib/utils/roles.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import { fetchApi } from "#lib/utils/api.js";
 import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
@@ -61,68 +63,53 @@ async function handleSubmit() {
 {#if !data.user?.activeTenantId}
 <NeedsTenant />
 {:else}
-<div class="max-w-3xl mx-auto p-8 md:p-12">
-  <div class="mb-8">
-    <h1 class="text-3xl font-serif text-ink-900">Registrar nuevo usuario</h1>
-    <p class="text-ink-500 mt-2">Crea las credenciales de acceso iniciales para un nuevo miembro del equipo.</p>
-  </div>
+<form
+	class="max-w-2xl"
+	onsubmit={(e) => {
+		e.preventDefault();
+		handleSubmit();
+	}}
+>
+	<SectionShell title="Nuevo usuario" description="Crea el acceso inicial de un miembro del equipo.">
+		<div class="p-4">
+			<div class="grid grid-cols-1 gap-x-4 md:grid-cols-2">
+				<FormField label="Nombre completo" for="name">
+					<Input id="name" bind:value={formData.name} placeholder="Juan Pérez" />
+				</FormField>
+				<FormField label="Nombre de usuario" for="username">
+					<Input id="username" bind:value={formData.username} placeholder="jperez" autocomplete="off" />
+				</FormField>
+			</div>
 
-  <div class="bg-white border border-cream-200 shadow-sm p-8">
-    <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-6">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-             <FormField label="Nombre completo" for="name">
-                <Input id="name" bind:value={formData.name} placeholder="Juan Pérez" />
-            </FormField>
-        
-            <FormField label="Nombre de usuario" for="username">
-                <Input id="username" bind:value={formData.username} placeholder="jperez" />
-            </FormField>
-        </div>
+			<FormField label="Contraseña temporal" for="password">
+				<Input id="password" type="password" bind:value={formData.password} autocomplete="new-password" />
+				<p class="mt-1.5 text-sm text-fg-muted">
+					Mínimo {MIN_PASSWORD_LENGTH} caracteres. El usuario la cambia en su primer acceso.
+				</p>
+			</FormField>
 
-        <FormField label="Contraseña temporal" for="password">
-            <Input id="password" type="password" bind:value={formData.password} />
-            <p class="text-xs text-ink-400 mt-1">Mínimo {MIN_PASSWORD_LENGTH} caracteres. El usuario deberá cambiarla en su primer acceso.</p>
-        </FormField>
-    
-        <div class="border-t border-cream-200 my-6 pt-6">
-            <h3 class="text-lg font-serif mb-4">Configuración de acceso</h3>
-            
-            <FormField label="Rol de sistema" for="role">
-                <Select
-                    id="role"
-                    bind:value={formData.role}
-                    items={[
-                        { value: "sales_agent", label: "Agente de ventas" },
-                        { value: "supervisor", label: "Supervisor" },
-                        { value: "developer", label: "Desarrollador" },
-                        { value: "admin", label: "Administrador" },
-                    ]}
-                />
-            </FormField>
+			<FormField label="Rol" for="role" class="mb-0!">
+				<Select
+					id="role"
+					bind:value={formData.role}
+					items={Object.entries(roleLabels).map(([value, label]) => ({ value, label }))}
+				/>
+			</FormField>
+			<PermissionMatrix role={formData.role} />
 
-            <PermissionMatrix role={formData.role} />
-        </div>
-
-        {#if formData.role === "sales_agent"}
-             <div class="bg-blue-50 p-4 rounded border border-blue-100">
-                <FormField label="Teléfono (WhatsApp)" for="phoneNumber">
-                    <Input 
-                        id="phoneNumber" 
-                        bind:value={formData.phoneNumber} 
-                        placeholder="+51987654321"
-                    />
-                    <p class="text-xs text-blue-700 mt-1">Requerido para la asignación automática de conversaciones.</p>
-                </FormField>
-             </div>
-        {/if}
-    
-        <div class="flex justify-end gap-3 pt-4">
-            <Button variant="secondary" onclick={() => goto("/dashboard/admin/users")}>Cancelar</Button>
-            <Button type="submit" disabled={loading}>
-                {loading ? 'Creando...' : 'Crear Usuario'}
-            </Button>
-        </div>
-    </form>
-  </div>
-</div>
+			{#if formData.role === "sales_agent"}
+				<FormField label="Teléfono (WhatsApp)" for="phoneNumber" class="mt-4 mb-0!">
+					<Input id="phoneNumber" bind:value={formData.phoneNumber} placeholder="+51987654321" />
+					<p class="mt-1.5 text-sm text-fg-muted">Se usa para asignarle conversaciones.</p>
+				</FormField>
+			{/if}
+		</div>
+		<footer class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3">
+			<Button variant="ghost" href="/dashboard/admin/users">Cancelar</Button>
+			<Button type="submit" disabled={loading}>
+				{loading ? "Creando…" : "Crear usuario"}
+			</Button>
+		</footer>
+	</SectionShell>
+</form>
 {/if}

@@ -1,7 +1,8 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import { fetchApi } from "#lib/utils/api.js";
+import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
+import Banner from "#lib/components/ui/banner.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
@@ -12,16 +13,18 @@ let settings = $state<Record<string, string>>({});
 let initialSettings = $state<Record<string, string>>({});
 let loading = $state(true);
 let saving = $state(false);
-let showConfirmModal = $state(false);
 
 // The Cálidda password and the OpenAI key are write-only: the API reports
 // `_has_<key>`, never the value. Each field stays out of `settings` so a save
 // posts it only when the admin typed a new one.
 let caliddaPassword = $state("");
 let openaiKey = $state("");
-let waitingCount = $state<number | null>(null);
 
-let hasChanges = $derived(
+let waitingCount = $state<number | null>(null);
+let confirmRetry = $state(false);
+let retrying = $state(false);
+
+const hasChanges = $derived(
   JSON.stringify(settings) !== JSON.stringify(initialSettings) ||
     caliddaPassword !== "" ||
     openaiKey !== "",
@@ -30,7 +33,7 @@ let hasChanges = $derived(
 // The Calidda integrations are shared platform infrastructure, not per
 // business, so only VendeYa staff can suspend them. A tenant admin sees the
 // current state read-only rather than a toggle that would silently no-op.
-let canEditPlatformSettings = $derived(settings._scope === "platform");
+const canEditPlatformSettings = $derived(settings._scope === "platform");
 
 // Where a platform switch's value is. An operator with no tenant selected
 // owns these and edits them under their own names. A tenant admin sees them
@@ -40,6 +43,12 @@ function platformSwitchOn(key: string): boolean {
   return (
     settings[canEditPlatformSettings ? key : `_platform_${key}`] === "true"
   );
+}
+
+function secretPlaceholder(stored: string | undefined): string {
+  return stored === "true"
+    ? "Configurada; escribe para reemplazarla"
+    : "Sin configurar";
 }
 
 async function loadSettings() {
@@ -53,9 +62,12 @@ async function loadSettings() {
   } finally {
     loading = false;
   }
+  await loadOutage();
+}
 
-  // Loaded client-side like the rest: an `{#await}` on this fetch runs during
-  // SSR, where a relative URL cannot resolve and the rejection 500s the page.
+// Loaded client-side like the rest: an `{#await}` on this fetch runs during
+// SSR, where a relative URL cannot resolve and the rejection 500s the page.
+async function loadOutage() {
   try {
     const outage = await fetchApi<{ waitingCount: number }>(
       "/api/admin/outage-status",
@@ -66,19 +78,38 @@ async function loadSettings() {
   }
 }
 
-async function handleSave(e?: Event) {
-  e?.preventDefault();
-  showConfirmModal = true;
+async function retryEligibility() {
+  retrying = true;
+  try {
+    const res = await fetchApi<{ message: string }>(
+      "/api/admin/retry-eligibility",
+      { method: "POST" },
+    );
+    toast.success(res.message);
+    confirmRetry = false;
+    await loadOutage();
+  } catch (e) {
+    toast.error(
+      e instanceof ApiError
+        ? e.message
+        : "Error al reintentar las verificaciones",
+    );
+  } finally {
+    retrying = false;
+  }
 }
 
-async function confirmSave() {
+function discard() {
+  settings = { ...initialSettings };
+  caliddaPassword = "";
+  openaiKey = "";
+}
+
+async function save() {
   saving = true;
-  showConfirmModal = false;
   try {
     // Only the writable keys go back. The underscore-prefixed ones are the
-    // server's read-only commentary: the platform values and the scope. The
-    // POST ignores them, and leaving them out keeps a save to what this page
-    // owns.
+    // server's read-only commentary: the platform values and the scope.
     const payload = Object.fromEntries(
       Object.entries(settings).filter(([key]) => !key.startsWith("_")),
     );
@@ -91,356 +122,175 @@ async function confirmSave() {
       body: JSON.stringify(payload),
     });
 
-    initialSettings = {
-      ...settings,
-      _has_calidda_password:
-        caliddaPassword || settings._has_calidda_password ? "true" : "false",
-      _has_openai_api_key:
-        openaiKey || settings._has_openai_api_key ? "true" : "false",
-    };
     if (caliddaPassword) settings._has_calidda_password = "true";
     if (openaiKey) settings._has_openai_api_key = "true";
+    initialSettings = { ...settings };
     caliddaPassword = "";
     openaiKey = "";
-    toast.success("Configuración actualizada");
+    toast.success("Configuración guardada");
   } catch (e) {
-    toast.error("Error al guardar configuración");
+    toast.error(
+      e instanceof ApiError ? e.message : "Error al guardar la configuración",
+    );
   } finally {
     saving = false;
   }
 }
 
-onMount(() => {
-  loadSettings();
-});
+onMount(loadSettings);
 </script>
 
-<div class="space-y-6">
-  {#if !loading}
-    <SectionShell
-      title="Operaciones de Recuperación"
-      description="Herramientas para recuperar conversiones afectadas por fallos del sistema."
-    >
-      <div class="p-6">
-        <div class="border border-blue-100 bg-blue-50/30 p-4 rounded">
-          <div class="flex items-start gap-3">
-            <div class="flex-1">
-              <div class="font-bold text-sm text-blue-900">
-                Recuperación de Elegibilidad
-              </div>
-              <p class="text-xs text-blue-700/80 mt-1 leading-relaxed">
-                Si hubo una caída de proveedores (Calidda/PowerBI), los usuarios
-                pueden haber quedado en espera. Use este botón para reintentar
-                la verificación de eligibilidad para todos los usuarios
-                afectados.
-              </p>
+{#if loading}
+	<div class="flex flex-col gap-3" aria-busy="true">
+		<div class="h-32 animate-pulse rounded-md bg-sunken"></div>
+		<div class="h-32 animate-pulse rounded-md bg-sunken"></div>
+	</div>
+{:else}
+	<form
+		class="flex flex-col gap-6"
+		onsubmit={(e) => {
+			e.preventDefault();
+			save();
+		}}
+	>
+		{#if canEditPlatformSettings}
+			<SectionShell
+				title="Reporte Power BI (GASO)"
+				description="El reporte público de Cálidda que consulta la verificación GASO. Es uno para todos los negocios."
+			>
+				<div class="grid gap-x-4 p-4 md:grid-cols-2">
+					<FormField label="Resource key" for="powerbi-resource-key">
+						<Input id="powerbi-resource-key" bind:value={settings.powerbi_resource_key} class="font-mono" />
+					</FormField>
+					<FormField label="Report id" for="powerbi-report-id">
+						<Input id="powerbi-report-id" bind:value={settings.powerbi_report_id} class="font-mono" />
+					</FormField>
+					<FormField label="Dataset id" for="powerbi-dataset-id" class="md:mb-0!">
+						<Input id="powerbi-dataset-id" bind:value={settings.powerbi_dataset_id} class="font-mono" />
+					</FormField>
+					<FormField label="Model id" for="powerbi-model-id" class="mb-0!">
+						<Input id="powerbi-model-id" bind:value={settings.powerbi_model_id} class="font-mono" />
+					</FormField>
+				</div>
+			</SectionShell>
+		{:else}
+			<SectionShell
+				title="OpenAI"
+				description="La clave de API de OpenAI de este negocio. El bot la usa para entender y responder mensajes."
+			>
+				<div class="p-4">
+					{#if settings._has_openai_api_key !== "true"}
+						<Banner tone="warning" class="mb-4">
+							Sin clave, el bot solo entiende los mensajes que siguen sus patrones.
+						</Banner>
+					{/if}
+					<FormField label="Clave de API" for="openai-api-key" class="mb-0!">
+						<Input
+							id="openai-api-key"
+							type="password"
+							bind:value={openaiKey}
+							autocomplete="off"
+							placeholder={secretPlaceholder(settings._has_openai_api_key)}
+						/>
+						<p class="mt-1.5 text-sm text-fg-muted">Se guarda cifrada y no se vuelve a mostrar.</p>
+					</FormField>
+				</div>
+			</SectionShell>
 
-              {#if waitingCount !== null}
-                {#if waitingCount > 0}
-                  <div
-                    class="mt-2 flex items-center gap-2 text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded border border-orange-100"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path
-                        d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"
-                      />
-                      <path d="M12 9v4" />
-                      <path d="M12 17h.01" />
-                    </svg>
-                    {waitingCount} usuarios esperando recuperación
-                  </div>
-                {:else}
-                  <div
-                    class="mt-2 flex items-center gap-2 text-xs text-green-700 bg-green-50 px-3 py-2 rounded border border-green-100"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                      <path d="m9 11 3 3L22 4" />
-                    </svg>
-                    No hay usuarios en espera
-                  </div>
-                {/if}
-              {/if}
+			<SectionShell
+				title="Cálidda (FNB)"
+				description="La cuenta de Cálidda de este negocio. Con ella se verifica si un cliente tiene crédito."
+			>
+				<div class="grid gap-x-4 p-4 md:grid-cols-2">
+					<FormField label="Usuario" for="calidda-username" class="md:mb-0!">
+						<Input id="calidda-username" bind:value={settings.calidda_username} autocomplete="off" />
+					</FormField>
+					<FormField label="Contraseña" for="calidda-password" class="mb-0!">
+						<Input
+							id="calidda-password"
+							type="password"
+							bind:value={caliddaPassword}
+							autocomplete="off"
+							placeholder={secretPlaceholder(settings._has_calidda_password)}
+						/>
+					</FormField>
+				</div>
+			</SectionShell>
+		{/if}
 
-              <div class="mt-3">
-                <Button
-                  size="sm"
-                  onclick={async () => {
-                    if (
-                      !confirm(
-                        "¿Estás seguro de reintentar la verificación para todos los usuarios en espera?",
-                      )
-                    )
-                      return;
-                    try {
-                      const res = await fetchApi<{ message: string }>(
-                        "/api/admin/retry-eligibility",
-                        { method: "POST" },
-                      );
-                      toast.success(res.message);
-                      // Force reload of status
-                      const outage = await fetchApi<{
-                        waitingCount: number;
-                      }>("/api/admin/outage-status");
-                      waitingCount = outage.waitingCount;
-                    } catch (e) {
-                      toast.error("Error al ejecutar recuperación");
-                    }
-                  }}
-                >
-                  Reintentar verificaciones pendientes
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </SectionShell>
-  {/if}
+		<SectionShell
+			title="Proveedores de crédito"
+			description={canEditPlatformSettings
+				? "Suspende un proveedor para todos los negocios cuando falla. El bot usa la otra verificación si puede."
+				: "El equipo de VendeYa los suspende cuando fallan. Aquí ves su estado."}
+		>
+			<div class="divide-y divide-border-subtle">
+				{@render providerSwitch(
+					"force_fnb_down",
+					"Suspender FNB (Cálidda)",
+					"La verificación de elegibilidad deja de consultar a Cálidda.",
+				)}
+				{@render providerSwitch(
+					"force_gaso_down",
+					"Suspender GASO (Power BI)",
+					"La verificación deja de consultar el reporte de Power BI.",
+				)}
+				<div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+					<div class="min-w-0">
+						<p class="text-base text-fg">Clientes en espera</p>
+						<p class="text-sm text-fg-muted">
+							Quedan en espera cuando un proveedor falla durante su verificación.
+						</p>
+					</div>
+					<div class="flex items-center gap-3">
+						<span class="text-md text-fg tabular-nums">{waitingCount ?? "—"}</span>
+						<Button size="sm" variant="secondary" disabled={!waitingCount} onclick={() => (confirmRetry = true)}>
+							Reintentar
+						</Button>
+					</div>
+				</div>
+			</div>
+		</SectionShell>
 
-  <SectionShell
-    title="Integraciones"
-    description={canEditPlatformSettings
-      ? "Gestión de conexiones con servicios externos."
-      : "Conexiones compartidas de la plataforma. Solo el equipo de VendeYa puede modificarlas."}
-  >
-    {#if loading}
-      <div class="p-8 space-y-4 animate-pulse">
-        <div class="h-10 bg-cream-50 rounded w-full"></div>
-        <div class="h-10 bg-cream-50 rounded w-full"></div>
-      </div>
-    {:else}
-      <div class="divide-y divide-ink-100/50">
-        <div class="p-6 hover:bg-cream-50/30 transition-colors">
-          <label class="flex items-start gap-3 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={platformSwitchOn("force_fnb_down")}
-              disabled={!canEditPlatformSettings}
-              onchange={(e) =>
-                (settings["force_fnb_down"] = e.currentTarget.checked
-                  ? "true"
-                  : "false")}
-              class="mt-1 h-4 w-4 rounded border-ink-300 text-ink-900 focus:ring-ink-900 focus:ring-offset-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-            />
-            <div class="flex-1">
-              <div class="font-medium text-sm text-ink-900">
-                Suspender API FNB (Calidda)
-              </div>
-              <p class="text-xs text-ink-500 mt-1">
-                Forzar desconexión del servicio de elegibilidad. El sistema
-                activará el mecanismo de fallback si está disponible.
-              </p>
-            </div>
-          </label>
-        </div>
+		{#if hasChanges}
+			<div
+				class="sticky bottom-4 flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-4 py-3 shadow-md"
+			>
+				<p class="text-sm text-fg-muted">Tienes cambios sin guardar.</p>
+				<div class="flex gap-2">
+					<Button variant="ghost" onclick={discard}>Descartar</Button>
+					<Button type="submit" disabled={saving}>{saving ? "Guardando…" : "Guardar"}</Button>
+				</div>
+			</div>
+		{/if}
+	</form>
+{/if}
 
-        <div class="p-6 hover:bg-cream-50/30 transition-colors">
-          <label class="flex items-start gap-3 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={platformSwitchOn("force_gaso_down")}
-              disabled={!canEditPlatformSettings}
-              onchange={(e) =>
-                (settings["force_gaso_down"] = e.currentTarget.checked
-                  ? "true"
-                  : "false")}
-              class="mt-1 h-4 w-4 rounded border-ink-300 text-ink-900 focus:ring-ink-900 focus:ring-offset-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-            />
-            <div class="flex-1">
-              <div class="font-medium text-sm text-ink-900">
-                Suspender API PowerBI (GASO)
-              </div>
-              <p class="text-xs text-ink-500 mt-1">
-                Simular caída del servicio de reportes. Útil para desarrollo y
-                validación de errores.
-              </p>
-            </div>
-          </label>
-        </div>
-      </div>
-    {/if}
-  </SectionShell>
-
-  {#if !loading && canEditPlatformSettings}
-    <SectionShell
-      title="Reporte Power BI (GASO)"
-      description="El reporte público de Cálidda que la verificación GASO consulta. Es uno solo para todos los negocios."
-    >
-      <div class="p-6">
-        <FormField label="Resource key" for="powerbi-resource-key">
-          <Input
-            id="powerbi-resource-key"
-            bind:value={settings.powerbi_resource_key}
-            placeholder="Clave del recurso del reporte"
-          />
-        </FormField>
-        <FormField label="Report ID" for="powerbi-report-id">
-          <Input
-            id="powerbi-report-id"
-            bind:value={settings.powerbi_report_id}
-          />
-        </FormField>
-        <FormField label="Dataset ID" for="powerbi-dataset-id">
-          <Input
-            id="powerbi-dataset-id"
-            bind:value={settings.powerbi_dataset_id}
-          />
-        </FormField>
-        <FormField label="Model ID" for="powerbi-model-id">
-          <Input id="powerbi-model-id" bind:value={settings.powerbi_model_id} />
-        </FormField>
-      </div>
-    </SectionShell>
-  {/if}
-
-  {#if !loading && !canEditPlatformSettings}
-    <SectionShell
-      title="Cálidda (FNB)"
-      description="La cuenta de Cálidda de este negocio, con la que se verifica la elegibilidad de crédito."
-    >
-      <div class="p-6">
-        <FormField label="Usuario" for="calidda-username">
-          <Input id="calidda-username" bind:value={settings.calidda_username} />
-        </FormField>
-        <FormField label="Contraseña" for="calidda-password">
-          <Input
-            id="calidda-password"
-            type="password"
-            bind:value={caliddaPassword}
-            placeholder={settings._has_calidda_password === "true"
-              ? "Configurada — escribe para reemplazarla"
-              : "Sin configurar"}
-          />
-          <p class="text-xs text-ink-500 mt-1">
-            Se guarda cifrada y no se vuelve a mostrar. Deja el campo vacío para
-            conservar la actual.
-          </p>
-        </FormField>
-      </div>
-    </SectionShell>
-
-    <SectionShell
-      title="OpenAI"
-      description="La clave de API de OpenAI de este negocio. El bot la usa para entender y responder mensajes."
-    >
-      <div class="p-6">
-        {#if settings._has_openai_api_key !== "true"}
-          <div
-            class="mb-4 flex items-center gap-2 text-xs font-bold text-orange-700 bg-orange-50 px-3 py-2 rounded border border-orange-100"
-          >
-            Sin clave configurada: el bot no puede interpretar mensajes fuera de
-            sus patrones.
-          </div>
-        {/if}
-        <FormField label="Clave de API" for="openai-api-key">
-          <Input
-            id="openai-api-key"
-            type="password"
-            bind:value={openaiKey}
-            placeholder={settings._has_openai_api_key === "true"
-              ? "Configurada — escribe para reemplazarla"
-              : "Sin configurar"}
-          />
-          <p class="text-xs text-ink-500 mt-1">
-            Se guarda cifrada y no se vuelve a mostrar. Deja el campo vacío para
-            conservar la actual.
-          </p>
-        </FormField>
-      </div>
-    </SectionShell>
-  {/if}
-
-  {#if hasChanges}
-    <div
-      class="sticky bottom-6 flex justify-end gap-3 bg-white/80 backdrop-blur-sm p-4 border border-ink-100 rounded shadow-lg animate-in slide-in-from-bottom-2"
-    >
-      <Button
-        type="button"
-        variant="outline"
-        onclick={() => {
-          settings = { ...initialSettings };
-        }}
-      >
-        Descartar cambios
-      </Button>
-      <Button onclick={handleSave} disabled={saving}>
-        {saving ? "Guardando..." : "Guardar configuración"}
-      </Button>
-    </div>
-  {/if}
-</div>
-
-<Modal
-  bind:open={showConfirmModal}
-  title="Confirmar cambios"
-  subtitle="Configuración del sistema"
-  onClose={() => (showConfirmModal = false)}
-  {footer}
->
-  <div class="space-y-4">
-    <p class="text-ink-600">
-      Estás a punto de modificar la configuración global del sistema. Estas
-      acciones afectarán inmediatamente a los usuarios activos.
-    </p>
-
-    <div
-      class="bg-cream-50 p-4 rounded text-sm font-mono border border-cream-200"
-    >
-      <p class="text-xs text-ink-400 mb-2 uppercase tracking-wider">
-        Cambios detectados:
-      </p>
-      <ul class="space-y-1">
-        {#each Object.keys(settings) as key}
-          {#if settings[key] !== initialSettings[key]}
-            <li class="flex justify-between gap-4">
-              <span class="text-ink-600">{key}</span>
-              <span class="font-bold text-ink-900">
-                {initialSettings[key]} → {settings[key]}
-              </span>
-            </li>
-          {/if}
-        {/each}
-        {#if caliddaPassword}
-          <li class="flex justify-between gap-4">
-            <span class="text-ink-600">calidda_password</span>
-            <span class="font-bold text-ink-900">nueva contraseña</span>
-          </li>
-        {/if}
-        {#if openaiKey}
-          <li class="flex justify-between gap-4">
-            <span class="text-ink-600">openai_api_key</span>
-            <span class="font-bold text-ink-900">nueva clave</span>
-          </li>
-        {/if}
-      </ul>
-    </div>
-  </div>
-</Modal>
-
-{#snippet footer()}
-  <Button variant="outline" onclick={() => (showConfirmModal = false)}>
-    Cancelar
-  </Button>
-  <Button onclick={confirmSave}>Confirmar aplicación</Button>
+{#snippet providerSwitch(key: string, label: string, description: string)}
+	<label class="flex items-start gap-3 px-4 py-3 {canEditPlatformSettings ? 'cursor-pointer hover:bg-hover' : ''}">
+		<input
+			type="checkbox"
+			checked={platformSwitchOn(key)}
+			disabled={!canEditPlatformSettings}
+			onchange={(e) => (settings[key] = e.currentTarget.checked ? "true" : "false")}
+			class="mt-1 size-4 rounded-sm border-border bg-surface text-accent disabled:cursor-not-allowed"
+		/>
+		<span class="min-w-0">
+			<span class="block text-base text-fg">{label}</span>
+			<span class="block text-sm text-fg-muted">{description}</span>
+		</span>
+	</label>
 {/snippet}
+
+<Modal open={confirmRetry} onClose={() => (confirmRetry = false)} title="Reintentar verificaciones">
+	<p class="text-base text-fg">
+		Se vuelve a verificar la elegibilidad de los {waitingCount} clientes en espera.
+	</p>
+
+	{#snippet footer()}
+		<Button variant="ghost" onclick={() => (confirmRetry = false)}>Cancelar</Button>
+		<Button onclick={retryEligibility} disabled={retrying}>
+			{retrying ? "Reintentando…" : "Reintentar"}
+		</Button>
+	{/snippet}
+</Modal>

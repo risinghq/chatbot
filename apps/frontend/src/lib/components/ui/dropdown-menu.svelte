@@ -32,7 +32,7 @@ function handleKeydown(e: KeyboardEvent & { currentTarget: HTMLElement }) {
 
 {#if open}
 	<div
-		class={className}
+		class="absolute z-50 mt-1 min-w-44 rounded-lg border border-popover-border bg-surface p-1 shadow-md {className}"
 		onkeydown={handleKeydown}
 		role="menu"
 		tabindex="-1"
