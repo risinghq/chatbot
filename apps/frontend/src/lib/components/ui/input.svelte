@@ -16,7 +16,9 @@ type Props = {
 let {
   id,
   type = "text",
-  value = $bindable(""),
+  // No fallback: Svelte refuses `bind:value={undefined}` on a prop with one,
+  // and forms bind fields of records the API leaves sparse.
+  value = $bindable(),
   placeholder,
   disabled = false,
   error = false,
