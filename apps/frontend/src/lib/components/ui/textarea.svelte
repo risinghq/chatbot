@@ -14,7 +14,8 @@ type Props = {
 
 let {
   id,
-  value = $bindable(""),
+  // No fallback, as in input.svelte.
+  value = $bindable(),
   placeholder,
   disabled = false,
   error = false,
