@@ -15,17 +15,17 @@ import LookupResultCard from "#lib/components/providers/lookup-result.svelte";
 import { onMount } from "svelte";
 
 let dni = $state("");
-let tenantSlug = $state("");
-let tenants = $state<{ slug: string; name: string }[]>([]);
+let tenantId = $state("");
+let tenants = $state<{ id: string; name: string }[]>([]);
 let loading = $state(false);
 
 onMount(async () => {
   try {
     const data = await fetchApi<{
-      tenants: { slug: string; name: string }[];
+      tenants: { id: string; name: string }[];
     }>("/api/tenants");
     tenants = data.tenants;
-    if (tenants.length === 1) tenantSlug = tenants[0]!.slug;
+    if (tenants.length === 1) tenantId = tenants[0]!.id;
   } catch {
     // Without a tenant the lookup still runs and reports FNB needs one.
   }
@@ -48,7 +48,7 @@ async function handleQuery() {
   result = null;
 
   try {
-    const query = tenantSlug ? `?tenant=${tenantSlug}` : "";
+    const query = tenantId ? `?tenant=${tenantId}` : "";
     const data = await fetchApi<ProviderLookup>(
       `/api/providers/${dni}${query}`,
     );
@@ -90,9 +90,9 @@ async function handleQuery() {
 		<FormField label="Negocio (cuenta de Cálidda)" for="tenant">
 			<Select
 				id="tenant"
-				bind:value={tenantSlug}
+				bind:value={tenantId}
 				placeholder="Sin negocio: FNB no consulta"
-				items={tenants.map((t) => ({ value: t.slug, label: t.name }))}
+				items={tenants.map((t) => ({ value: t.id, label: t.name }))}
 			/>
 		</FormField>
 		<FormField label="DNI del cliente" for="dni" error={error || undefined} class="mb-0!">

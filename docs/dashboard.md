@@ -181,11 +181,14 @@ commands.
 ## Onboarding a business
 
 `/dashboard/negocios` is the platform operator's business page: the tenant list,
-a form that posts `POST /api/tenants`, an Entrar button per business that pins
-the session through `POST /api/tenants/active`, and a member form for the active
-business — `POST /api/admin/users` to create the account, or
-`POST /api/tenants/:id/members` with `{ username, role }` for a user that
-already exists.
+a form that posts `POST /api/tenants` with a name, and an Entrar button per
+business that pins the session through `POST /api/tenants/active`. People join
+the active business by invitation from Usuarios (`/dashboard/admin/users`):
+`POST /api/admin/invitations` with `{ email, role }` answers a link the admin
+copies and sends. The link opens `/invitacion/<token>`. A business owner who is
+not VendeYa staff starts at `/registro`, which opens the business and logs them
+in as its admin. Each user's own profile and password are at
+`/dashboard/cuenta`.
 
 While a business is unfinished, the home page and the Negocios page show a setup
 checklist (`lib/components/shared/setup-checklist.svelte`) fed by

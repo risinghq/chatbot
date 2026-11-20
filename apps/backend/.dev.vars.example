@@ -14,12 +14,5 @@ GRAPH_API_BASE_URL=https://graph.facebook.com
 # Encrypts every stored credential in D1: 32 bytes as hex, base64 or base64url.
 # Generate it at the repository root with `bun scripts/generate-token.ts secrets`.
 SECRETS_KEY=
-
-# Seed only. `bun run seed` gives the default tenant this number and its
-# credentials, stored encrypted on the channel account. Without them the
-# tenant gets a pending placeholder number. Every other credential — the
-# tenant's OpenAI key, another number's token or app secret — is entered on
-# the dashboard or the account CLI, never here.
-WHATSAPP_PHONE_ID=
-WHATSAPP_TOKEN=
-WHATSAPP_APP_SECRET=
+# Every business's credentials (OpenAI key, WhatsApp token and app secret,
+# Cálidda login) are entered on the dashboard, never here.

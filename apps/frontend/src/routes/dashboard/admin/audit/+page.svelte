@@ -10,7 +10,7 @@ import Badge from "#lib/components/ui/badge.svelte";
 
 type AuditLogWithName = AuditLog & {
   user_name?: string;
-  user_username?: string | null;
+  user_email?: string | null;
 };
 let logs = $state<AuditLogWithName[]>([]);
 let loading = $state(true);
@@ -80,8 +80,8 @@ const columns = [
 
 {#snippet userCell(item: AuditLogWithName)}
 	<div class="text-fg">{item.user_name || item.actor}</div>
-	{#if item.user_username}
-		<div class="font-mono text-sm text-fg-muted">@{item.user_username}</div>
+	{#if item.user_email}
+		<div class="text-sm text-fg-muted">{item.user_email}</div>
 	{/if}
 {/snippet}
 

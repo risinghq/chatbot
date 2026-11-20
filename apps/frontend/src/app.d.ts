@@ -5,7 +5,7 @@ declare global {
     interface Locals {
       user: {
         id: string;
-        username: string;
+        email: string;
         /**
          * Admin for a platform operator. Anyone else has their membership role
          * in the active tenant, or null while none is selected.

@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:workers";
-import { ensureChannelAccountFromEnv } from "../src/db/seeds/tenants.ts";
+import { demoChannelAccount } from "../src/db/seeds/demo.ts";
 import { getAll, getOne, run } from "../src/db/index.ts";
 import { seedPeriods } from "../src/db/seeds/periods.ts";
 import { seedProducts } from "../src/db/seeds/products.ts";
@@ -21,8 +21,8 @@ function currentYearMonth(): string {
 }
 
 describe("seeding a catalog", () => {
-  async function tenant(slug: string, id?: string): Promise<string> {
-    return (await TenantService.create({ slug, name: slug, id })).id;
+  async function tenant(name: string, id?: string): Promise<string> {
+    return (await TenantService.create({ name, id })).id;
   }
 
   async function seedCatalog(tenantId: string): Promise<void> {
@@ -144,19 +144,26 @@ describe("seeding a catalog", () => {
   });
 });
 
-describe("seeding the channel account", () => {
-  // Credentials are stored encrypted, so without SECRETS_KEY the seed creates
-  // no account rather than a pending one that can never gain a token.
-  it("creates no channel account without SECRETS_KEY", async () => {
-    const { id: tenantId } = await TenantService.create({
-      slug: "no-key",
-      name: "no-key",
-    });
+describe("seeding the demo number", () => {
+  it("creates one pending number per business, however often it runs", async () => {
+    const { id: tenantId } = await TenantService.create({ name: "Demo" });
+
+    const first = await demoChannelAccount(tenantId);
+    const second = await demoChannelAccount(tenantId);
+
+    expect(first?.status).toBe("pending");
+    expect(second?.id).toBe(first?.id);
+  });
+
+  // The verify token is stored encrypted, so without SECRETS_KEY the seed
+  // creates no account rather than failing.
+  it("creates no number without SECRETS_KEY", async () => {
+    const { id: tenantId } = await TenantService.create({ name: "no-key" });
     const previous = env.SECRETS_KEY;
     try {
       (env as unknown as Record<string, string>).SECRETS_KEY = "";
 
-      const account = await ensureChannelAccountFromEnv(tenantId);
+      const account = await demoChannelAccount(tenantId);
 
       expect(account).toBeNull();
       expect(

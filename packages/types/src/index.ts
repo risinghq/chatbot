@@ -12,7 +12,6 @@ export type TenantStatus = "active" | "suspended";
 
 export type Tenant = {
   id: string;
-  slug: string;
   name: string;
   status: TenantStatus;
   created_at: number;
@@ -173,9 +172,8 @@ export type ConversationMessage = {
 
 export type User = {
   id: string;
-  username: string;
+  email: string;
   password_hash: string;
-  role: UserRole;
   name: string;
   phone_number: string | null;
   is_platform_operator: number;

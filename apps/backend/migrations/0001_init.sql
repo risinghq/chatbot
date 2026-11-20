@@ -4,7 +4,6 @@
 -- `notification_traces` and `audit_log`, whose rows can belong to the platform.
 CREATE TABLE tenants (
     id TEXT PRIMARY KEY,
-    slug TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'suspended')),
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
@@ -15,19 +14,18 @@ CREATE INDEX idx_tenants_status ON tenants(status);
 
 
 -- CORE AUTHENTICATION & USER MANAGEMENT
--- `role` is the user's default role, copied onto a membership when one is
--- created. Authorization reads the membership role, not this column.
+-- A user is one person across every business. What they may do in a business
+-- is their membership's role. The email is the login, compared without case.
 -- `is_platform_operator` marks VendeYa's own staff. They need no membership to
 -- act in a tenant, and a promoted account keeps the memberships it already had.
 CREATE TABLE users (
     id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL COLLATE NOCASE,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('admin', 'developer', 'supervisor', 'sales_agent')),
     name TEXT NOT NULL,
     phone_number TEXT,
     is_platform_operator INTEGER NOT NULL DEFAULT 0 CHECK(is_platform_operator IN (0, 1)),
-    is_active INTEGER DEFAULT 1 CHECK(is_active IN (0, 1)),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
     created_by TEXT REFERENCES users(id)
 );
@@ -64,6 +62,24 @@ CREATE TABLE session (
 
 CREATE INDEX idx_session_user ON session(user_id);
 
+-- An invitation lets one person join a business with a role. The link carries
+-- a random token, and only its SHA-256 hash is stored, as with a session id. It
+-- is spent when accepted and expires at `expires_at`.
+CREATE TABLE invitations (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    email TEXT NOT NULL COLLATE NOCASE,
+    role TEXT NOT NULL CHECK(role IN ('admin', 'developer', 'supervisor', 'sales_agent')),
+    token_hash TEXT UNIQUE NOT NULL,
+    expires_at INTEGER NOT NULL,
+    accepted_at INTEGER,
+    accepted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_invitations_tenant ON invitations(tenant_id, accepted_at);
+
 
 -- CHANNEL ACCOUNTS
 -- Encrypted credential store. Values are AES-256-GCM ciphertext with the tag
@@ -71,7 +87,7 @@ CREATE INDEX idx_session_user ON session(user_id);
 CREATE TABLE channel_secrets (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    purpose TEXT NOT NULL CHECK(purpose IN ('access_token', 'verify_token')),
+    purpose TEXT NOT NULL CHECK(purpose IN ('access_token', 'verify_token', 'app_secret')),
     ciphertext TEXT NOT NULL,
     iv TEXT NOT NULL,
     key_id TEXT NOT NULL,
@@ -80,6 +96,23 @@ CREATE TABLE channel_secrets (
 );
 
 CREATE INDEX idx_channel_secrets_tenant ON channel_secrets(tenant_id);
+
+-- Tenant-scoped secrets, AES-256-GCM encrypted under SECRETS_KEY like
+-- channel_secrets: the tenant's OpenAI key and, when it sells on Cálidda
+-- credit, its Cálidda password. The non-secret parts live in tenant_settings.
+CREATE TABLE tenant_secrets (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    iv TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
+    UNIQUE(tenant_id, key)
+);
+
+CREATE INDEX idx_tenant_secrets_tenant ON tenant_secrets(tenant_id);
 
 -- One row per business phone number. `channel_type` is a column rather than an
 -- assumption so a second channel can be added without reshaping the table.
@@ -93,6 +126,9 @@ CREATE TABLE channel_accounts (
     label TEXT,
     access_token_secret_id TEXT REFERENCES channel_secrets(id) ON DELETE SET NULL,
     verify_token_secret_id TEXT REFERENCES channel_secrets(id) ON DELETE SET NULL,
+    -- Each number has its own Meta app secret, so numbers on more than one
+    -- Meta app can share a deployment.
+    app_secret_secret_id TEXT REFERENCES channel_secrets(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('active', 'pending', 'disabled')),
     created_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),

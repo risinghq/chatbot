@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import type { Tenant, TenantMembership, TenantRole } from "@vendeya/types";
 import { batch, getAll, getOne, run, stmt } from "../../db/index.ts";
 
@@ -8,7 +9,7 @@ export const TENANT_ROLES: TenantRole[] = [
   "sales_agent",
 ];
 
-const TENANT_SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/;
+const MAX_TENANT_NAME = 80;
 
 export function isTenantRole(role: string): role is TenantRole {
   return (TENANT_ROLES as string[]).includes(role);
@@ -20,10 +21,6 @@ export const TenantService = {
 
   getById: async (id: string): Promise<Tenant | null> =>
     (await getOne<Tenant>("SELECT * FROM tenants WHERE id = ?", [id])) ?? null,
-
-  getBySlug: async (slug: string): Promise<Tenant | null> =>
-    (await getOne<Tenant>("SELECT * FROM tenants WHERE slug = ?", [slug])) ??
-    null,
 
   /**
    * Whether the tenant is open for access. Suspension closes a business to
@@ -38,47 +35,27 @@ export const TenantService = {
       )
     )?.status === "active",
 
-  /** Why a new tenant cannot have this slug and name, or null when it can. */
-  newTenantProblem: async (
-    slug: unknown,
-    name: unknown,
-  ): Promise<{ taken: boolean; message: string } | null> => {
-    if (
-      typeof slug !== "string" ||
-      typeof name !== "string" ||
-      !slug ||
-      !name
-    ) {
-      return { taken: false, message: "slug and name are required" };
+  /**
+   * The trimmed business name, or why it is refused. Names are what people
+   * see. They need not be unique: the id tells tenants apart.
+   */
+  checkName: (name: unknown): { name: string } | { problem: string } => {
+    const trimmed = typeof name === "string" ? name.trim() : "";
+    if (!trimmed) return { problem: "name is required" };
+    if (trimmed.length > MAX_TENANT_NAME) {
+      return { problem: `name must be at most ${MAX_TENANT_NAME} characters` };
     }
-    if (!TENANT_SLUG.test(slug)) {
-      return {
-        taken: false,
-        message: "slug must be lowercase alphanumeric with dashes",
-      };
-    }
-    if (await TenantService.getBySlug(slug)) {
-      return { taken: true, message: "A tenant with that slug already exists" };
-    }
-    return null;
+    return { name: trimmed };
   },
 
-  createStatement: (data: {
-    id: string;
-    slug: string;
-    name: string;
-  }): D1PreparedStatement =>
-    stmt(
-      "INSERT INTO tenants (id, slug, name, status) VALUES (?, ?, ?, 'active')",
-      [data.id, data.slug, data.name],
-    ),
+  createStatement: (data: { id: string; name: string }): D1PreparedStatement =>
+    stmt("INSERT INTO tenants (id, name, status) VALUES (?, ?, 'active')", [
+      data.id,
+      data.name,
+    ]),
 
-  create: async (data: {
-    slug: string;
-    name: string;
-    id?: string;
-  }): Promise<Tenant> => {
-    const id = data.id ?? crypto.randomUUID();
+  create: async (data: { name: string; id?: string }): Promise<Tenant> => {
+    const id = data.id ?? newId();
     await TenantService.createStatement({ ...data, id }).run();
     return (await TenantService.getById(id))!;
   },
@@ -179,7 +156,7 @@ export const MembershipService = {
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = excluded.role`,
         [
-          crypto.randomUUID(),
+          newId(),
           data.tenantId,
           data.userId,
           data.role,

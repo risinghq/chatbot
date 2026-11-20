@@ -52,7 +52,7 @@ onMount(() => {
 
 <div class="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
 	<PageHeader
-		title="Hola, {data.user?.name || data.user?.username}"
+		title="Hola, {data.user?.name || data.user?.email}"
 		subtitle={activeTenant ? activeTenant.name : undefined}
 	/>
 
@@ -89,7 +89,9 @@ onMount(() => {
 				</Banner>
 			{/if}
 
-			<SetupChecklist />
+			{#if auth.isAdmin}
+				<SetupChecklist />
+			{/if}
 
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
 				<a

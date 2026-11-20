@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import type { CliOperator } from "../platform/audit/logger.ts";
@@ -6,13 +7,13 @@ import { withPlatform } from "./platform.ts";
 import { readSecret } from "./read-password.ts";
 
 const USAGE = `Usage:
-  bun run account create <username> [--platform-operator | --tenant <tenant>] [--name <display name>]
-  bun run account promote <username>
-  bun run account tenant create <slug> --name <business name>
-  bun run account channel create --tenant <tenant> --phone-number-id <id>
+  bun run account create <email> [--platform-operator | --tenant <tenant id>] [--name <display name>]
+  bun run account promote <email>
+  bun run account tenant create --name <business name>
+  bun run account channel create --tenant <tenant id> --phone-number-id <id>
       [--waba-id <id>] [--display-phone-number <number>] [--label <label>]
 
-<tenant> is a tenant's id or slug. Every command writes to the local D1
+Every command writes to the local D1
 database that \`bun run dev\` uses. Add --remote to write to the deployed one,
 which reads CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN from the
 environment.
@@ -83,23 +84,23 @@ async function run(argv: string[]): Promise<number> {
   switch (command) {
     case "create":
     case "promote": {
-      const [username, ...extra] = rest;
-      if (!username || extra.length > 0) return usage("Expected one username.");
+      const [email, ...extra] = rest;
+      if (!email || extra.length > 0) return usage("Expected one email.");
       if (command === "promote" && Object.keys(options).length > 0) {
-        return usage("promote takes a username and nothing else.");
+        return usage("promote takes an email and nothing else.");
       }
       return go(() =>
         command === "promote"
-          ? promote(username, operator)
-          : createAccount(username, options, operator),
+          ? promote(email, operator)
+          : createAccount(email, options, operator),
       );
     }
     case "tenant": {
-      const [verb, slug, ...extra] = rest;
-      if (verb !== "create" || !slug || extra.length > 0 || !options.name) {
-        return usage("Expected `tenant create <slug> --name <name>`.");
+      const [verb, ...extra] = rest;
+      if (verb !== "create" || extra.length > 0 || !options.name) {
+        return usage("Expected `tenant create --name <name>`.");
       }
-      return go(() => createTenant(slug, options.name!, operator));
+      return go(() => createTenant(options.name!, operator));
     }
     case "channel": {
       const [verb, ...extra] = rest;
@@ -120,34 +121,31 @@ async function run(argv: string[]): Promise<number> {
   }
 }
 
-async function promote(username: string, operator: CliOperator) {
+async function promote(email: string, operator: CliOperator) {
   const { AccountService } = await import("../domains/accounts/index.ts");
-  const promoted = await AccountService.promote(username, operator);
+  const promoted = await AccountService.promote(email, operator);
   if (!promoted.ok) return refuse(promoted.error.message);
 
   console.log(
     promoted.value.changed
-      ? `Promoted ${promoted.value.username} to platform operator.`
-      : `${promoted.value.username} is already a platform operator; nothing changed.`,
+      ? `Promoted ${promoted.value.email} to platform operator.`
+      : `${promoted.value.email} is already a platform operator; nothing changed.`,
   );
   return 0;
 }
 
 async function createAccount(
-  username: string,
+  email: string,
   options: Options,
   operator: CliOperator,
 ) {
   const { AccountService } = await import("../domains/accounts/index.ts");
-  const tenant = options.tenant ? await findTenant(options.tenant) : undefined;
-  if (tenant === null)
-    return refuse(`No tenant has the id or slug ${options.tenant}.`);
 
   const request = {
-    username,
+    email,
     name: options.name,
     platformOperator: options["platform-operator"],
-    tenantId: tenant?.id,
+    tenantId: options.tenant,
   };
 
   // Refused before the prompt, so nobody types a password twice for nothing.
@@ -163,29 +161,28 @@ async function createAccount(
   const { value } = created;
   console.log(
     value.tenant
-      ? `Created ${value.username} as admin of tenant ${value.tenant.slug} (${value.tenant.id}).`
-      : `Created platform operator ${value.username}.`,
+      ? `Created ${value.email} as admin of tenant ${value.tenant.name} (${value.tenant.id}).`
+      : `Created platform operator ${value.email}.`,
   );
   return 0;
 }
 
-async function createTenant(slug: string, name: string, operator: CliOperator) {
+async function createTenant(name: string, operator: CliOperator) {
   const { TenantService } = await import("../domains/tenants/index.ts");
   const { cliAuditStatement } = await import("../platform/audit/logger.ts");
   const { batch } = await import("../db/index.ts");
 
-  const problem = await TenantService.newTenantProblem(slug, name);
-  if (problem) return refuse(problem.message);
+  const checked = TenantService.checkName(name);
+  if ("problem" in checked) return refuse(checked.problem);
 
-  const id = crypto.randomUUID();
+  const id = newId();
   await batch([
-    TenantService.createStatement({ id, slug, name }),
+    TenantService.createStatement({ id, name: checked.name }),
     cliAuditStatement(operator, id, "create_tenant", "tenant", id, {
-      slug,
-      name,
+      name: checked.name,
     }),
   ]);
-  console.log(`Created tenant ${slug} (${id}).`);
+  console.log(`Created tenant ${checked.name} (${id}).`);
   return 0;
 }
 
@@ -206,8 +203,9 @@ async function createChannel(options: Options, operator: CliOperator) {
     );
   }
 
-  const tenant = await findTenant(options.tenant!);
-  if (!tenant) return refuse(`No tenant has the id or slug ${options.tenant}.`);
+  const { TenantService } = await import("../domains/tenants/index.ts");
+  const tenant = await TenantService.getById(options.tenant!);
+  if (!tenant) return refuse(`No tenant has the id ${options.tenant}.`);
 
   const phoneNumberId = options["phone-number-id"]!;
   if (await ChannelAccountService.getByPhoneNumberId(phoneNumberId)) {
@@ -236,17 +234,9 @@ async function createChannel(options: Options, operator: CliOperator) {
   ).run();
 
   console.log(
-    `Created ${account.status} channel account ${account.id} for tenant ${tenant.slug}.`,
+    `Created ${account.status} channel account ${account.id} for tenant ${tenant.name}.`,
   );
   return 0;
-}
-
-async function findTenant(idOrSlug: string) {
-  const { TenantService } = await import("../domains/tenants/index.ts");
-  return (
-    (await TenantService.getById(idOrSlug)) ??
-    (await TenantService.getBySlug(idOrSlug))
-  );
 }
 
 try {

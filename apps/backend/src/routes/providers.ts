@@ -19,10 +19,10 @@ app.get("/:dni", requirePlatformOperator, async (c) => {
     return c.json({ error: "DNI debe tener 8 dígitos" }, 400);
   }
 
-  const tenantSlug = c.req.query("tenant");
+  const tenantId = c.req.query("tenant");
   let ref: ConversationRef | undefined;
-  if (tenantSlug) {
-    const tenant = await TenantService.getBySlug(tenantSlug);
+  if (tenantId) {
+    const tenant = await TenantService.getById(tenantId);
     if (!tenant) {
       return c.json({ error: "Negocio no encontrado" }, 404);
     }

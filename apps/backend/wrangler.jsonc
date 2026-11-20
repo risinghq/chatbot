@@ -55,7 +55,6 @@
     "CALIDDA_BASE_URL": "https://appweb.calidda.com.pe",
     "BOT_RESPONSE_DELAY_MS": "2300",
     "PLATFORM_OPS_PHONE_NUMBER_ID": "",
-    "WHATSAPP_GROUP_AGENT": "",
     "WHATSAPP_GROUP_DEV": "",
   },
   // Set each with `wrangler secret put <NAME>`. Local values live in .dev.vars.

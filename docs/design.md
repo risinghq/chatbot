@@ -47,9 +47,9 @@ A solid status colour (`bg-danger`) is for a button. A badge or banner uses the
 ### Type
 
 Inter is the sans font. Geist Mono is for identifiers a person copies or
-compares: ids, order numbers, slugs, usernames, phone numbers, DNIs and JSON.
-Money, counts and dates are sans with `tabular-nums`. Phase names and other
-labels are sans.
+compares: ids, order numbers, emails, phone numbers, DNIs and JSON. Money,
+counts and dates are sans with `tabular-nums`. Phase names and other labels are
+sans.
 
 | Size   | Use                                         |
 | ------ | ------------------------------------------- |

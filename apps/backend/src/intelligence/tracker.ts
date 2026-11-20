@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import { tenantPredicate } from "../db/query.ts";
 import type { Binding } from "../db/index.ts";
 import type { ConversationRef } from "@vendeya/types";
@@ -34,7 +35,7 @@ export function trackLLMCall(data: LLMCallData): void {
 }
 
 async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
-  const id = crypto.randomUUID();
+  const id = newId();
   const contextJson = data.contextMetadata
     ? JSON.stringify(data.contextMetadata)
     : null;

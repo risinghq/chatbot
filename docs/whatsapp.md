@@ -49,7 +49,7 @@ A platform operator registers the number from the command line, with no deploy.
 The command reads the access token and the app secret from hidden prompts:
 
 ```sh
-SECRETS_KEY=<the deployed key> bun run account channel create --tenant <slug> \
+SECRETS_KEY=<the deployed key> bun run account channel create --tenant <tenant id> \
   --phone-number-id <phone number id> --waba-id <whatsapp business account id> \
   --display-phone-number "+51 999 999 999" --label Ventas --remote
 ```
@@ -94,11 +94,10 @@ curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
 `status` accepts `active`, `pending` and `disabled`. An account with no access
 token cannot be made `active`.
 
-The seed registers one number for the default tenant from `.dev.vars`:
-`WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN` and `WHATSAPP_APP_SECRET`
-([`db/seeds/tenants.ts`](../apps/backend/src/db/seeds/tenants.ts)). It imports a
-credential only when the account does not have one yet, so a token replaced
-through the API survives the next seed.
+The local seed registers a `pending` placeholder number for the demo business,
+with no Meta credentials
+([`db/seeds/demo.ts`](../apps/backend/src/db/seeds/demo.ts)). A real number is
+registered as above.
 
 ## The callback URL
 

@@ -7,6 +7,7 @@ import { getOne, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   insertConversation,
+  insertUser,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -316,12 +317,7 @@ describe("date ranges over millisecond columns", () => {
     });
 
     it("is an integer after an agent takes the conversation over", async () => {
-      const agent = `u-${crypto.randomUUID()}`;
-      await run(
-        `INSERT INTO users (id, username, password_hash, role, name)
-         VALUES (?, ?, 'x', 'sales_agent', 'Agent')`,
-        [agent, `agent-${agent.slice(2, 10)}`],
-      );
+      const agent = await insertUser({ name: "Agent" });
 
       const before = Date.now();
       await takeoverConversation(tenant.ref(CUSTOMER), agent);

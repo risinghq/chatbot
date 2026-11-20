@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import { tenantPredicate } from "../../db/query.ts";
 import type { Asset, AssetKind, AssetVisibility } from "@vendeya/types";
 import { getAll, getOne, run } from "../../db/index.ts";
@@ -13,7 +14,7 @@ export const AssetService = {
     createdBy?: string | null;
     id?: string;
   }): Promise<Asset> => {
-    const id = data.id ?? crypto.randomUUID();
+    const id = data.id ?? newId();
 
     await run(
       `INSERT INTO assets (id, tenant_id, kind, visibility, storage_key, content_type, byte_size, created_by)

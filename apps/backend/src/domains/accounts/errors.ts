@@ -1,7 +1,9 @@
 export type AccountErrorReason =
-  | "invalid_username"
+  | "invalid_email"
+  | "invalid_name"
   | "password_too_short"
-  | "username_taken"
+  | "wrong_password"
+  | "email_taken"
   | "conflicting_scope"
   | "no_tenant"
   | "tenant_required"
@@ -20,7 +22,7 @@ export class AccountError extends Error {
 }
 
 export type NewAccount = {
-  username: string;
+  email: string;
   name?: string;
   platformOperator?: boolean;
   tenantId?: string;
@@ -28,14 +30,21 @@ export type NewAccount = {
 
 export type CreatedAccount = {
   id: string;
-  username: string;
+  email: string;
   name: string;
   isPlatformOperator: boolean;
-  tenant: { id: string; slug: string } | null;
+  tenant: { id: string; name: string } | null;
 };
 
 export type PromotedAccount = {
   id: string;
-  username: string;
+  email: string;
   changed: boolean;
+};
+
+export type SignUp = {
+  email: string;
+  password: string;
+  name: string;
+  businessName: string;
 };

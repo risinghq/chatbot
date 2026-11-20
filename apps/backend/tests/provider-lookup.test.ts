@@ -5,10 +5,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
-import { run } from "../src/db/index.ts";
 import {
   createMember,
   createTenantFixture,
+  insertUser,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -44,13 +44,7 @@ async function login(
 }
 
 async function createPlatformOperator(): Promise<string> {
-  const userId = `u-${crypto.randomUUID()}`;
-  await run(
-    `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
-     VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-    [userId, `operator-${userId.slice(2, 10)}`],
-  );
-  return userId;
+  return insertUser({ name: "Operator", isPlatformOperator: true });
 }
 
 describe("provider lookup", () => {

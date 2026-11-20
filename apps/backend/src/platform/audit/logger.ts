@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import { tenantOrPlatformPredicate } from "../../db/query.ts";
 import type { AuditLog } from "@vendeya/types";
 import { type Binding, getAll, stmt } from "../../db/index.ts";
@@ -46,7 +47,7 @@ function insert(
     `INSERT INTO audit_log (id, tenant_id, user_id, actor, action, resource_type, resource_id, metadata)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      crypto.randomUUID(),
+      newId(),
       tenantId,
       userId,
       actor,

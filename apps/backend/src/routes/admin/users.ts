@@ -6,6 +6,7 @@ import {
   MembershipService,
   isTenantRole,
 } from "../../domains/tenants/index.ts";
+import { meetsPasswordMinimum } from "../../domains/accounts/index.ts";
 import { activeTenantId, requireActiveTenant } from "../../middleware/auth.ts";
 import { MIN_PASSWORD_LENGTH, type TenantRole } from "@vendeya/types";
 import { batch, getAll, getOne, stmt } from "../../db/index.ts";
@@ -14,7 +15,7 @@ const users = new Hono();
 
 type UserRow = {
   id: string;
-  username: string;
+  email: string;
   name: string;
   is_active: number;
   is_platform_operator: number;
@@ -25,7 +26,9 @@ type UserRow = {
  * User management is per tenant. An admin sees and edits the members of the
  * tenant they are acting in, and the role returned is the membership role.
  * A platform operator appears only if they hold a membership there, as a
- * promoted member account does.
+ * promoted member account does. People join by invitation
+ * (routes/admin/invitations.ts), so no admin picks another person's password
+ * when they join.
  */
 users.use("/*", requireActiveTenant);
 
@@ -34,7 +37,7 @@ users.get("/", async (c) => {
   const tenantId = activeTenantId(c);
 
   const rows = await getAll<UserRow & { role: TenantRole }>(
-    `SELECT u.id, u.username, u.name, u.is_active, u.is_platform_operator,
+    `SELECT u.id, u.email, u.name, u.is_active, u.is_platform_operator,
             u.created_at, m.role as role
      FROM tenant_memberships m
      JOIN users u ON u.id = m.user_id
@@ -46,85 +49,9 @@ users.get("/", async (c) => {
   return c.json({ users: rows });
 });
 
-/**
- * Usernames are one namespace across the platform, because login takes a
- * username and password with no business to pick first. A tenant admin
- * necessarily learns whether a name is free. The answer must not say more, so a
- * name held by another business gets the same sentence as one held here.
- */
-const USERNAME_UNAVAILABLE = {
-  error:
-    "That username is not available. Usernames are shared across every business on VendeYa, so please choose another.",
-} as const;
-
 const PASSWORD_TOO_SHORT = {
   error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
 } as const;
-
-function meetsPasswordMinimum(password: unknown): password is string {
-  return typeof password === "string" && password.length >= MIN_PASSWORD_LENGTH;
-}
-
-async function usernameIsTaken(username: string): Promise<boolean> {
-  return (
-    (await getOne<{ id: string }>("SELECT id FROM users WHERE username = ?", [
-      username,
-    ])) !== undefined
-  );
-}
-
-// Create a user and add them to the active tenant
-users.post("/", async (c) => {
-  const { username, password, role, name, phoneNumber } = await c.req.json();
-  const creator = c.get("user");
-  const tenantId = activeTenantId(c);
-
-  if (!username || !password || !role || !name) {
-    return c.json({ error: "Missing required fields" }, 400);
-  }
-
-  if (!isTenantRole(role)) {
-    return c.json({ error: "Invalid role" }, 400);
-  }
-
-  if (!meetsPasswordMinimum(password)) {
-    return c.json(PASSWORD_TOO_SHORT, 400);
-  }
-
-  if (await usernameIsTaken(username)) {
-    return c.json(USERNAME_UNAVAILABLE, 409);
-  }
-
-  const id = crypto.randomUUID();
-  const hash = await hashPassword(password);
-
-  await batch([
-    stmt(
-      `INSERT INTO users (id, username, password_hash, role, name, phone_number, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, username, hash, role, name, phoneNumber || null, creator.id],
-    ),
-    ...MembershipService.upsertStatements({
-      tenantId,
-      userId: id,
-      role,
-      createdBy: creator.id,
-    }),
-    auditStatement(
-      { userId: creator.id, tenantId },
-      "create_user",
-      "user",
-      id,
-      {
-        username,
-        role,
-        name,
-      },
-    ),
-  ]);
-
-  return c.json({ id, username, role, name });
-});
 
 async function memberOfActiveTenant(
   tenantId: string,

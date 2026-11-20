@@ -401,8 +401,8 @@ Escalating sets the phase to `escalated`, `conversations.status` to
 holding message. The others send nothing.
 
 The alert goes to the conversation's assigned agent if it has one, else to the
-tenant's sales target: the `whatsapp_group_sales` tenant setting, else
-`WHATSAPP_GROUP_AGENT`
+tenant's sales target, the `whatsapp_group_sales` tenant setting. A tenant
+without it gets no group alert; there is no platform fallback
 ([`notifications/resolver.ts`](../apps/backend/src/domains/notifications/resolver.ts)).
 The turn that escalates a conversation also assigns it before the alert goes
 out, so the alert reaches the assigned agent. The round-robin in

@@ -143,12 +143,16 @@ const activeTenantName = $derived(
 			</button>
 		{/if}
 		<div class="flex items-center gap-2 px-2">
-			<div class="min-w-0 flex-1">
-				<p class="truncate text-base text-fg">{auth.user?.name || auth.user?.username}</p>
+			<a
+				href="/dashboard/cuenta"
+				title="Mi cuenta"
+				class="-mx-1 min-w-0 flex-1 rounded-sm px-1 py-0.5 transition-colors hover:bg-hover"
+			>
+				<p class="truncate text-base text-fg">{auth.user?.name || auth.user?.email}</p>
 				<p class="truncate text-xs text-fg-muted">
 					{auth.isPlatformOperator ? "Operador de plataforma" : roleLabel(auth.user?.role)}
 				</p>
-			</div>
+			</a>
 			<button
 				type="button"
 				onclick={() => auth.logout()}

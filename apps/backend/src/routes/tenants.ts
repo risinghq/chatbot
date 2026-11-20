@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import { Hono } from "hono";
 import { pathParam } from "../lib/http.ts";
 import {
@@ -9,6 +10,7 @@ import { setSessionTenant } from "../platform/auth/session.ts";
 import { auditStatement, logAction } from "../platform/audit/logger.ts";
 import { requirePlatformOperator } from "../middleware/auth.ts";
 import { hasOpenAiApiKey } from "../domains/settings/openai.ts";
+import { normalizeEmail } from "../domains/accounts/index.ts";
 import { batch, getOne } from "../db/index.ts";
 
 const tenants = new Hono();
@@ -98,22 +100,18 @@ tenants.post("/active", async (c) => {
 
 tenants.post("/", requirePlatformOperator, async (c) => {
   const scope = c.get("scope");
-  const { slug, name } = await c.req.json();
+  const checked = TenantService.checkName((await c.req.json()).name);
+  if ("problem" in checked) return c.json({ error: checked.problem }, 400);
 
-  const problem = await TenantService.newTenantProblem(slug, name);
-  if (problem) {
-    return c.json({ error: problem.message }, problem.taken ? 409 : 400);
-  }
-
-  const id = crypto.randomUUID();
+  const id = newId();
   await batch([
-    TenantService.createStatement({ id, slug, name }),
+    TenantService.createStatement({ id, name: checked.name }),
     auditStatement(
       { userId: scope.userId, tenantId: id },
       "create_tenant",
       "tenant",
       id,
-      { slug, name },
+      { name: checked.name },
     ),
   ]);
 
@@ -123,11 +121,12 @@ tenants.post("/", requirePlatformOperator, async (c) => {
 tenants.post("/:id/members", requirePlatformOperator, async (c) => {
   const scope = c.get("scope");
   const tenantId = pathParam(c, "id");
-  const { userId, username, role } = await c.req.json();
+  const { userId, email, role } = await c.req.json();
+  const address = normalizeEmail(email);
 
-  if ((!userId && !username) || !isTenantRole(role)) {
+  if ((!userId && !address) || !isTenantRole(role)) {
     return c.json(
-      { error: "userId or username, and a valid role, are required" },
+      { error: "userId or email, and a valid role, are required" },
       400,
     );
   }
@@ -136,15 +135,14 @@ tenants.post("/:id/members", requirePlatformOperator, async (c) => {
     return c.json({ error: "Tenant not found" }, 404);
   }
 
-  // The dashboard names a person by the username they log in with; the API's
-  // original caller (account tooling) names the id. Either resolves to the
-  // same global user.
+  // The dashboard names a person by the email they log in with; account
+  // tooling names the id. Either resolves to the same global user.
   const user = userId
     ? await getOne<{ id: string }>("SELECT id FROM users WHERE id = ?", [
         userId,
       ])
-    : await getOne<{ id: string }>("SELECT id FROM users WHERE username = ?", [
-        username,
+    : await getOne<{ id: string }>("SELECT id FROM users WHERE email = ?", [
+        address,
       ]);
 
   if (!user) {

@@ -15,6 +15,8 @@ import {
   addChannelAccount,
   createTenantFixture,
   insertConversation,
+  insertTenant,
+  insertUser,
   type TenantFixture,
   setCaliddaLogin,
   setChannelStatus,
@@ -40,6 +42,7 @@ import assetRoutes from "../src/routes/assets.ts";
 import tenantRoutes from "../src/routes/tenants.ts";
 import authRoutes from "../src/routes/auth.ts";
 import adminUserRoutes from "../src/routes/admin/users.ts";
+import adminInvitationRoutes from "../src/routes/admin/invitations.ts";
 import adminSystemRoutes from "../src/routes/admin/system.ts";
 import adminChannelRoutes from "../src/routes/admin/channels.ts";
 import {
@@ -82,6 +85,7 @@ function buildApp() {
   // Mounted the way index.ts mounts them, admin gate included.
   app.use("/api/admin/*", requireRole("admin"));
   app.route("/api/admin/users", adminUserRoutes);
+  app.route("/api/admin/invitations", adminInvitationRoutes);
   app.route("/api/admin/channels", adminChannelRoutes);
   app.route("/api/admin", adminSystemRoutes);
   return app;
@@ -102,19 +106,10 @@ async function createUser(options: {
   role?: "admin" | "developer" | "supervisor" | "sales_agent";
   isPlatformOperator?: boolean;
 }): Promise<string> {
-  const userId = `u-${crypto.randomUUID()}`;
   const role = options.role ?? "admin";
-
-  await run(
-    `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
-     VALUES (?, ?, 'x', ?, 'Test User', ?)`,
-    [
-      userId,
-      `user-${userId.slice(2, 12)}`,
-      role,
-      options.isPlatformOperator ? 1 : 0,
-    ],
-  );
+  const userId = await insertUser({
+    isPlatformOperator: options.isPlatformOperator,
+  });
 
   if (options.tenantId) {
     await run(
@@ -480,60 +475,43 @@ describe("HTTP authorization", () => {
   });
 
   /**
-   * `users.username` is one namespace across the platform, so a tenant admin
-   * learns whether a name is free. They must learn nothing more. A name taken
-   * in another tenant answers exactly like a name taken in this one.
+   * An email is one account across the platform. Inviting it must not tell a
+   * tenant admin whether another business already has that person.
    */
-  describe("taking a username already used in another tenant", () => {
-    function createMember(auth: { cookie: string }, username: string) {
-      return app.request("/api/admin/users", {
+  describe("inviting an email another business already has", () => {
+    function invite(auth: { cookie: string }, email: string) {
+      return app.request("/api/admin/invitations", {
         method: "POST",
         headers: { Cookie: auth.cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username,
-          password: "a-long-enough-password",
-          role: "sales_agent",
-          name: "Nuevo",
-        }),
+        body: JSON.stringify({ email, role: "sales_agent" }),
       });
     }
 
-    it("answers the same whether the name is taken here or elsewhere", async () => {
-      const mine = `mine-${crypto.randomUUID().slice(0, 8)}`;
-      const theirs = `theirs-${crypto.randomUUID().slice(0, 8)}`;
+    it("answers like an invitation to a new address", async () => {
+      const betaMember = await createUser({ tenantId: beta.tenantId });
+      const { email: theirs } = (await getOne(
+        "SELECT email FROM users WHERE id = ?",
+        [betaMember],
+      )) as { email: string };
+      const fresh = `${crypto.randomUUID()}@test.invalid`;
 
-      expect((await createMember(alphaAdmin, mine)).status).toBe(200);
-      expect((await createMember(betaAdmin, theirs)).status).toBe(200);
+      const elsewhere = await invite(alphaAdmin, theirs);
+      const unknown = await invite(alphaAdmin, fresh);
 
-      // Alpha's admin can see `mine` in their own member list, so refusing it
-      // tells them nothing they did not already know.
-      const taken = await createMember(alphaAdmin, mine);
-      // `theirs` belongs to a tenant alpha cannot see at all.
-      const elsewhere = await createMember(alphaAdmin, theirs);
-
-      expect(taken.status).toBe(409);
-      expect(elsewhere.status).toBe(409);
-
-      const takenBody = await taken.json();
-      const elsewhereBody = await elsewhere.json();
-
-      // Identical bodies: the response is not an oracle for cross-tenant
-      // existence, only for availability, which the constraint forces anyway.
-      expect(elsewhereBody).toEqual(takenBody);
-      expect(JSON.stringify(elsewhereBody)).not.toContain("already exists");
+      expect(elsewhere.status).toBe(201);
+      expect(unknown.status).toBe(201);
+      expect(Object.keys(await elsewhere.json()).sort()).toEqual(
+        Object.keys(await unknown.json()).sort(),
+      );
     });
 
-    it("still refuses to create the duplicate", async () => {
-      const username = `dup-${crypto.randomUUID().slice(0, 8)}`;
+    it("refuses an email that is already in this business", async () => {
+      const alphaMember = await createUser({ tenantId: alpha.tenantId });
+      const { email } = (await getOne("SELECT email FROM users WHERE id = ?", [
+        alphaMember,
+      ])) as { email: string };
 
-      await createMember(betaAdmin, username);
-      await createMember(alphaAdmin, username);
-
-      expect(
-        await getOne("SELECT COUNT(*) as c FROM users WHERE username = ?", [
-          username,
-        ]),
-      ).toEqual({ c: 1 });
+      expect((await invite(alphaAdmin, email)).status).toBe(409);
     });
   });
 
@@ -2147,15 +2125,14 @@ describe("HTTP authorization", () => {
     }
 
     async function logIn(userId: string, password = PASSWORD) {
-      const { username } = (await getOne(
-        "SELECT username FROM users WHERE id = ?",
-        [userId],
-      )) as { username: string };
+      const { email } = (await getOne("SELECT email FROM users WHERE id = ?", [
+        userId,
+      ])) as { email: string };
 
       return app.request("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ email, password }),
       });
     }
 
@@ -2228,10 +2205,10 @@ describe("HTTP authorization", () => {
    * flag alone must be enough to create a tenant.
    */
   describe("creating the second tenant", () => {
-    const slug = "second-business";
+    const name = "Second Business";
 
     afterEach(async () => {
-      await run("DELETE FROM tenants WHERE slug = ?", [slug]);
+      await run("DELETE FROM tenants WHERE name = ?", [name]);
     });
 
     it("is what the platform operator flag buys a migrated admin", async () => {
@@ -2243,17 +2220,10 @@ describe("HTTP authorization", () => {
         alpha.tenantId,
       );
 
-      const response = await post("/api/tenants", operator, {
-        slug,
-        name: "Second Business",
-      });
+      const response = await post("/api/tenants", operator, { name });
 
       expect(response.status).toBe(201);
-      expect(await response.json()).toMatchObject({
-        slug,
-        name: "Second Business",
-        status: "active",
-      });
+      expect(await response.json()).toMatchObject({ name, status: "active" });
     });
 
     it("is closed to the same admin without it", async () => {
@@ -2262,10 +2232,7 @@ describe("HTTP authorization", () => {
         alpha.tenantId,
       );
 
-      const response = await post("/api/tenants", admin, {
-        slug,
-        name: "Second Business",
-      });
+      const response = await post("/api/tenants", admin, { name });
 
       expect(response.status).toBe(403);
     });
@@ -2278,15 +2245,6 @@ describe("HTTP authorization", () => {
    * pending to complete by writing the data each step reads.
    */
   describe("business setup status", () => {
-    async function bareTenant(slug: string): Promise<string> {
-      const tenantId = `tn-${crypto.randomUUID()}`;
-      await run(
-        "INSERT INTO tenants (id, slug, name, status) VALUES (?, ?, ?, 'active')",
-        [tenantId, `${slug}-${tenantId.slice(3, 11)}`, slug],
-      );
-      return tenantId;
-    }
-
     it("refuses a caller with no business active", async () => {
       const unpinnedOperator = await login(
         await createUser({ isPlatformOperator: true }),
@@ -2298,7 +2256,7 @@ describe("HTTP authorization", () => {
     });
 
     it("reports every step pending, then done as its data lands", async () => {
-      const tenantId = await bareTenant("setup-status");
+      const tenantId = await insertTenant("setup-status");
       const operator = await login(
         await createUser({ isPlatformOperator: true }),
         tenantId,
@@ -2349,25 +2307,24 @@ describe("HTTP authorization", () => {
       expect(done.complete).toBe(true);
     });
 
-    it("grants a membership named by username or user id", async () => {
+    it("grants a membership named by email or user id", async () => {
       const operator = await login(
         await createUser({ isPlatformOperator: true }),
         null,
       );
       const memberId = await createUser({});
-      const username = (
-        (await getOne<{ username: string }>(
-          "SELECT username FROM users WHERE id = ?",
-          [memberId],
-        )) as { username: string }
-      ).username;
+      const { email } = (await getOne<{ email: string }>(
+        "SELECT email FROM users WHERE id = ?",
+        [memberId],
+      )) as { email: string };
 
-      const byName = await post(
+      // Emails are matched as the account stores them: trimmed, any case.
+      const byEmail = await post(
         `/api/tenants/${alpha.tenantId}/members`,
         operator,
-        { username, role: "supervisor" },
+        { email: ` ${email.toUpperCase()} `, role: "supervisor" },
       );
-      expect(byName.status).toBe(201);
+      expect(byEmail.status).toBe(201);
       expect(await MembershipService.get(alpha.tenantId, memberId)).toEqual(
         expect.objectContaining({ role: "supervisor" }),
       );
@@ -2375,7 +2332,7 @@ describe("HTTP authorization", () => {
       const unknown = await post(
         `/api/tenants/${alpha.tenantId}/members`,
         operator,
-        { username: `ghost-${crypto.randomUUID().slice(0, 8)}`, role: "admin" },
+        { email: `${crypto.randomUUID()}@test.invalid`, role: "admin" },
       );
       expect(unknown.status).toBe(404);
 

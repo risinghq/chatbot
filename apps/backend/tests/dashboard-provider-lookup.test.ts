@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
-import { run } from "../src/db/index.ts";
+import { insertUser } from "./helpers/tenancy.ts";
 
 import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
@@ -50,12 +50,10 @@ describe("the provider lookup page", () => {
   }
 
   beforeEach(async () => {
-    const userId = `u-${crypto.randomUUID()}`;
-    await run(
-      `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
-       VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-      [userId, `operator-${userId.slice(2, 10)}`],
-    );
+    const userId = await insertUser({
+      name: "Operator",
+      isPlatformOperator: true,
+    });
     const token = generateSessionToken();
     await createSession(token, userId, null);
     cookie = `session=${token}`;

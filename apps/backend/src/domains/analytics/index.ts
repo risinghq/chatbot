@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import { limaRangeEdge, tenantPredicate } from "../../db/query.ts";
 import type { Binding } from "../../db/index.ts";
 import type { AnalyticsEvent, ConversationRef } from "@vendeya/types";
@@ -16,7 +17,7 @@ export function trackEventStatement(
        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
      ), 0))`,
     [
-      crypto.randomUUID(),
+      newId(),
       ref.tenantId,
       ref.channelAccountId,
       ref.phoneNumber,

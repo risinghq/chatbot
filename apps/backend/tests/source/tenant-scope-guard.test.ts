@@ -86,6 +86,14 @@ const RULE_2_EXEMPT: Array<{ file: string; sql: string; reason: string }> = [
       "activeChannelAccountsOnly() is a filter on channel accounts, spliced " +
       "into a query that carries its own tenant predicate",
   },
+  {
+    file: join("domains", "invitations", "index.ts"),
+    sql: "FROM invitations i JOIN tenants t ON t.id = i.tenant_id WHERE i.token_hash = ?",
+    reason:
+      "findOpen() serves a person with no session holding an invitation " +
+      "link. The token hash is unique and is how the tenant is found; the " +
+      "join excludes a suspended tenant",
+  },
 ];
 
 function sourceFiles(dir: string): string[] {

@@ -97,8 +97,8 @@ system.get("/audit", async (c) => {
     ...new Set(logs.flatMap((l) => (l.user_id === null ? [] : [l.user_id]))),
   ];
   const dbUsers = userIds.length
-    ? await getAll<{ id: string; username: string; name: string }>(
-        `SELECT id, username, name FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`,
+    ? await getAll<{ id: string; email: string; name: string }>(
+        `SELECT id, email, name FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`,
         userIds,
       )
     : [];
@@ -111,7 +111,7 @@ system.get("/audit", async (c) => {
     return {
       ...log,
       user_name: auditActorLabel(user?.name, log.actor),
-      user_username: user?.username || null,
+      user_email: user?.email || null,
     };
   });
 

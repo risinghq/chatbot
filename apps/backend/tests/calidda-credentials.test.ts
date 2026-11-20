@@ -16,6 +16,7 @@ import { fakeJwt } from "./helpers/jwt.ts";
 import {
   createMember,
   createTenantFixture,
+  insertUser,
   setCaliddaLogin,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -25,7 +26,6 @@ import {
   createSession,
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
-import { run } from "../src/db/index.ts";
 import adminSystemRoutes from "../src/routes/admin/system.ts";
 import providerRoutes from "../src/routes/providers.ts";
 import { markBlocked } from "../src/adapters/providers/health.ts";
@@ -226,12 +226,7 @@ describe("the operator's DNI lookup", () => {
     app.route("/api/providers", providerRoutes);
     app.onError(errorHandler);
 
-    const userId = `u-${crypto.randomUUID()}`;
-    await run(
-      `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
-       VALUES (?, ?, 'x', 'admin', 'Op', 1)`,
-      [userId, `op-${userId.slice(2, 10)}`],
-    );
+    const userId = await insertUser({ name: "Op", isPlatformOperator: true });
     const token = generateSessionToken();
     await createSession(token, userId, null);
     cookie = `session=${token}`;
@@ -244,15 +239,13 @@ describe("the operator's DNI lookup", () => {
   it("answers FNB through the tenant named in the query", async () => {
     const tenant = await createTenantFixture("lookup");
     await setCaliddaLogin(tenant.tenantId, { username: "lookup-user" });
-    const { slug } = (await getOne<{ slug: string }>(
-      "SELECT slug FROM tenants WHERE id = ?",
-      [tenant.tenantId],
-    ))!;
 
     const logins: string[] = [];
     globalThis.fetch = fakeCalidda(logins);
 
-    const response = await lookup(`/api/providers/${DNI}?tenant=${slug}`);
+    const response = await lookup(
+      `/api/providers/${DNI}?tenant=${tenant.tenantId}`,
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -273,14 +266,12 @@ describe("the operator's DNI lookup", () => {
   it("drops FNB from providersChecked when the named tenant is blocked", async () => {
     const tenant = await createTenantFixture("blocked-lookup");
     await setCaliddaLogin(tenant.tenantId);
-    const { slug } = (await getOne<{ slug: string }>(
-      "SELECT slug FROM tenants WHERE id = ?",
-      [tenant.tenantId],
-    ))!;
     await markBlocked("fnb", "bloqueado", tenant.tenantId);
 
     globalThis.fetch = fakeCalidda([]);
-    const response = await lookup(`/api/providers/${DNI}?tenant=${slug}`);
+    const response = await lookup(
+      `/api/providers/${DNI}?tenant=${tenant.tenantId}`,
+    );
     const body = (await response.json()) as { providersChecked: string[] };
 
     expect(response.status).toBe(200);
