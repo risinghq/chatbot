@@ -142,6 +142,7 @@ export const StockService = {
         "p.id as product_id",
         "p.name as product_name",
         "v.price_cents",
+        "v.is_active",
         eb.fn.coalesce(eb.fn.sum<number>("l.on_hand"), eb.lit(0)).as("on_hand"),
         eb.fn
           .coalesce(eb.fn.sum<number>("l.reserved"), eb.lit(0))

@@ -14,6 +14,7 @@ import type {
   PaymentMethod,
   Product,
   ProductVariant,
+  ShipmentSummary,
   StockRow,
 } from "@vendeya/types";
 
@@ -381,6 +382,66 @@ describe("an order", () => {
       expect(
         (await pay(admin, { method_name: "Yape", amount_cents: 100 })).status,
       ).toBe(409);
+    });
+  });
+
+  describe("the shipments list", () => {
+    it("lists orders that ship in the statuses asked for, not pickups", async () => {
+      const shipped = await json<OrderDetail>(
+        await take(admin, 1, {
+          shipment: { address_line: "Av. Arequipa 123", district: "Lince" },
+        }),
+        201,
+      );
+      await json(await take(admin, 1), 201);
+      const later = await json<OrderDetail>(
+        await take(admin, 1, { shipment: { address_line: "Jr. Puno 4" } }),
+        201,
+      );
+      await json(await move(admin, later, "confirmed"), 200);
+
+      const pending = await json<ShipmentSummary[]>(
+        await admin("GET", "/api/orders/shipments?status=pending"),
+        200,
+      );
+      expect(pending).toEqual([
+        expect.objectContaining({
+          order_id: shipped.id,
+          order_number: shipped.number,
+          order_status: "pending",
+          customer_name: CUSTOMER.name,
+          address_line: "Av. Arequipa 123",
+          district: "Lince",
+          payment_state: "unpaid",
+        }),
+      ]);
+
+      const both = await json<ShipmentSummary[]>(
+        await admin("GET", "/api/orders/shipments?status=pending,confirmed"),
+        200,
+      );
+      expect(both.map((s) => s.order_id)).toEqual([later.id, shipped.id]);
+    });
+
+    it("refuses a missing or unknown status with 400", async () => {
+      for (const query of ["", "?status=", "?status=pending,lost"]) {
+        expect(
+          (await admin("GET", `/api/orders/shipments${query}`)).status,
+        ).toBe(400);
+      }
+    });
+
+    it("shows a sales agent only their own orders", async () => {
+      const agent = await callerAs(tenantId, "sales_agent");
+      const address = { shipment: { address_line: "Av. Brasil 9" } };
+      await json(await take(admin, 1, address), 201);
+      const mine = await json<OrderDetail>(await take(agent, 1, address), 201);
+
+      const listed = await json<ShipmentSummary[]>(
+        await agent("GET", "/api/orders/shipments?status=pending"),
+        200,
+      );
+      expect(listed.map((s) => s.order_id)).toEqual([mine.id]);
     });
   });
 

@@ -178,6 +178,17 @@ export type Shipment = {
   created_at: number;
 };
 
+/** A shipment in the Envíos list, with its order and buyer. */
+export type ShipmentSummary = Shipment & {
+  order_number: number;
+  order_status: OrderStatus;
+  customer_name: string;
+  customer_phone: string | null;
+  total_cents: number;
+  paid_cents: number;
+  payment_state: PaymentState;
+};
+
 /** One order as its page shows it. */
 export type OrderDetail = OrderSummary & {
   customer: Customer;
