@@ -11,6 +11,7 @@ const tabs = [
   { href: "/dashboard/admin/periods", label: "Periodos" },
   { href: "/dashboard/admin/audit", label: "Auditoría" },
   { href: "/dashboard/admin/channels", label: "Números" },
+  { href: "/dashboard/admin/orders", label: "Entregas y pagos" },
   { href: "/dashboard/admin/settings", label: "Configuración" },
 ];
 
@@ -23,7 +24,7 @@ function isActive(path: string) {
 <PageTitle title="Administración" />
 
 <Page>
-	<PageHeader title="Administración" subtitle="Equipo, números y claves del negocio." />
+	<PageHeader title="Administración" subtitle="Equipo, números, entregas y claves del negocio." />
 
 	<nav class="-mx-4 mb-6 flex gap-1 overflow-x-auto border-b border-border-subtle px-4 md:mx-0 md:px-0" aria-label="Secciones">
 		{#each tabs as tab (tab.href)}
