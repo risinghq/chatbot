@@ -20,6 +20,7 @@ import {
   type TenantFixture,
   setCaliddaLogin,
   setChannelStatus,
+  simulatorRef,
 } from "./helpers/tenancy.ts";
 
 import {
@@ -2265,17 +2266,45 @@ describe("HTTP authorization", () => {
 
       expect(await status()).toEqual({
         openai_configured: false,
+        has_catalog: false,
+        tried_simulator: false,
         whatsapp_configured: false,
-        calidda_configured: false,
         has_members: false,
+        calidda_configured: false,
         complete: false,
       });
 
       await TenantSecrets.set(tenantId, "openai_api_key", "sk-test");
       expect((await status()).openai_configured).toBe(true);
 
-      await setCaliddaLogin(tenantId);
-      expect((await status()).calidda_configured).toBe(true);
+      // The assistant quotes only active offers in the active period, so an
+      // offer in a draft period stays pending.
+      const period = await PeriodService.create({
+        tenantId,
+        name: "Septiembre",
+        year_month: "2026-09",
+        created_by: null,
+      });
+      await BundleService.create({
+        id: `bundle-${crypto.randomUUID()}`,
+        tenantId,
+        period_id: period.id,
+        segment: "gaso",
+        name: "Cocina",
+        price: 1000,
+        primary_category: "cocinas",
+        categories_json: JSON.stringify(["cocinas"]),
+        image_id: `img-${crypto.randomUUID()}`,
+        composition_json: JSON.stringify([]),
+        installments_json: JSON.stringify([]),
+        created_by: null,
+      });
+      expect((await status()).has_catalog).toBe(false);
+      await PeriodService.updateStatus(tenantId, period.id, "active");
+      expect((await status()).has_catalog).toBe(true);
+
+      await insertConversation(await simulatorRef(tenantId, "51900000001"));
+      expect((await status()).tried_simulator).toBe(true);
 
       // A number must be able to receive (app secret) and answer (access
       // token) to count, so a row missing either stays pending.
@@ -2302,9 +2331,14 @@ describe("HTTP authorization", () => {
         [crypto.randomUUID(), tenantId, await createUser({})],
       );
 
+      // Cálidda is optional: setup completes without its login.
       const done = await status();
       expect(done.has_members).toBe(true);
+      expect(done.calidda_configured).toBe(false);
       expect(done.complete).toBe(true);
+
+      await setCaliddaLogin(tenantId);
+      expect((await status()).calidda_configured).toBe(true);
     });
 
     it("grants a membership named by email or user id", async () => {

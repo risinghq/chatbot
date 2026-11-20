@@ -8,6 +8,7 @@ import Button from "#lib/components/ui/button.svelte";
 import DataTable from "#lib/components/ui/data-table.svelte";
 import Sheet from "#lib/components/ui/sheet.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 
 let { data } = $props();
@@ -51,7 +52,7 @@ const columns = [
 
 <PageTitle title="Actividad" />
 
-<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+<Page>
 	<PageHeader
 		title="Actividad"
 		subtitle="Llamadas a la IA y acciones del equipo, en orden de llegada. Elige una fila para ver el detalle."
@@ -78,7 +79,7 @@ const columns = [
 			emptyMessage="Todavía no hay actividad."
 		/>
 	</div>
-</div>
+</Page>
 
 <Sheet
 	open={sheetOpen}

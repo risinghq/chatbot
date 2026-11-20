@@ -1,44 +1,61 @@
 <script lang="ts">
 import { onMount } from "svelte";
+import Button from "#lib/components/ui/button.svelte";
 import Icon from "#lib/components/ui/icon.svelte";
 import { fetchApi } from "#lib/utils/api.js";
 
 type SetupStatus = {
   openai_configured: boolean;
+  has_catalog: boolean;
+  tried_simulator: boolean;
   whatsapp_configured: boolean;
-  calidda_configured: boolean;
   has_members: boolean;
+  calidda_configured: boolean;
   complete: boolean;
 };
 
 let status = $state<SetupStatus | null>(null);
 let loading = $state(true);
 
+// The order is the path a new business takes: the assistant needs a key to
+// think and a catalog to quote, the simulator proves both before a customer
+// sees them, and only then does a number go live.
 const steps = $derived(
   status
     ? [
         {
           done: status.openai_configured,
-          label: "Clave de OpenAI del negocio",
-          hint: "El bot la usa para entender mensajes.",
+          label: "Clave de OpenAI",
+          hint: "El asistente la usa para entender y responder.",
+          action: "Agregar clave",
           href: "/dashboard/admin/settings",
+        },
+        {
+          done: status.has_catalog,
+          label: "Catálogo publicado",
+          hint: "Al menos una oferta activa en el período activo. Es lo que el asistente cotiza.",
+          action: "Abrir catálogo",
+          href: "/dashboard/catalog",
+        },
+        {
+          done: status.tried_simulator,
+          label: "Prueba el asistente",
+          hint: "Conversa con él en el simulador. No envía nada a nadie.",
+          action: "Abrir simulador",
+          href: "/dashboard/simulator",
         },
         {
           done: status.whatsapp_configured,
-          label: "Número de WhatsApp conectado",
+          label: "Número de WhatsApp",
           hint: "Token de acceso y app secret de Meta, y la URL del webhook.",
+          action: "Conectar número",
           href: "/dashboard/admin/channels",
         },
         {
-          done: status.calidda_configured,
-          label: "Cuenta de Cálidda",
-          hint: "Usuario y contraseña para verificar crédito.",
-          href: "/dashboard/admin/settings",
-        },
-        {
           done: status.has_members,
-          label: "Al menos un miembro del equipo",
-          hint: "Quien atiende las conversaciones del negocio.",
+          label: "Equipo",
+          hint: "Quien atiende las conversaciones que el asistente deriva.",
+          action: "Invitar",
           href: "/dashboard/admin/users",
         },
       ]
@@ -46,6 +63,7 @@ const steps = $derived(
 );
 
 const doneCount = $derived(steps.filter((s) => s.done).length);
+const next = $derived(steps.find((s) => !s.done));
 
 async function load() {
   loading = true;
@@ -64,31 +82,43 @@ onMount(load);
 {#if !loading && status && !status.complete}
 	<section class="rounded-md border border-border bg-surface">
 		<header class="flex items-center justify-between border-b border-border-subtle px-4 py-3">
-			<h2 class="text-md text-fg">Configura el negocio</h2>
+			<h2 class="text-md text-fg">Pon a vender tu negocio</h2>
 			<span class="text-sm text-fg-muted tabular-nums">{doneCount} de {steps.length}</span>
 		</header>
-		<ul class="divide-y divide-border-subtle">
-			{#each steps as step (step.label)}
-				<li>
-					<a href={step.href} class="flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-hover">
-						<span
-							class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full {step.done
-								? 'bg-success text-on-solid'
-								: 'border border-border-strong'}"
-						>
-							{#if step.done}<Icon name="check" class="size-3" />{/if}
+		<ol class="divide-y divide-border-subtle">
+			{#each steps as step, i (step.label)}
+				{@const current = step === next}
+				<li class="flex items-center gap-3 px-4 py-2.5 {current ? 'bg-sunken' : ''}">
+					<span
+						class="flex size-5 shrink-0 items-center justify-center rounded-full text-xs tabular-nums {step.done
+							? 'bg-success text-on-solid'
+							: current
+								? 'bg-accent text-on-solid'
+								: 'border border-border-strong text-fg-muted'}"
+					>
+						{#if step.done}<Icon name="check" class="size-3" />{:else}{i + 1}{/if}
+					</span>
+					<span class="min-w-0 flex-1">
+						<span class="block text-base {step.done ? 'text-fg-muted line-through' : 'text-fg'}">
+							{step.label}
 						</span>
-						<span class="min-w-0">
-							<span class="block text-base {step.done ? 'text-fg-muted line-through' : 'text-fg'}">
-								{step.label}
-							</span>
-							{#if !step.done}
-								<span class="block text-sm text-fg-muted">{step.hint}</span>
-							{/if}
-						</span>
-					</a>
+						{#if current}
+							<span class="block text-sm text-fg-muted">{step.hint}</span>
+						{/if}
+					</span>
+					{#if current}
+						<Button href={step.href} size="sm">{step.action}</Button>
+					{:else if !step.done}
+						<Button href={step.href} size="sm" variant="ghost">{step.action}</Button>
+					{/if}
 				</li>
 			{/each}
-		</ul>
+		</ol>
+		{#if !status.calidda_configured}
+			<footer class="border-t border-border-subtle px-4 py-2.5 text-sm text-fg-muted">
+				Opcional: si vendes con crédito Cálidda, agrega tu usuario en
+				<a href="/dashboard/admin/settings" class="text-fg underline underline-offset-2">Configuración</a>.
+			</footer>
+		{/if}
 	</section>
 {/if}

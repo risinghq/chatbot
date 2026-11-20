@@ -10,6 +10,7 @@ import {
 } from "#lib/utils/validation.js";
 import Button from "#lib/components/ui/button.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
@@ -112,7 +113,7 @@ async function handleSave() {
 
 <PageTitle title={product ? "Editar producto base" : "Nuevo producto base"} />
 
-<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+<Page width="narrow">
     <PageHeader
         title={product ? product.name : "Nuevo producto base"}
         subtitle="La plantilla que los paquetes del catálogo reutilizan."
@@ -154,4 +155,4 @@ async function handleSave() {
              <Button onclick={handleSave} disabled={isSaving}>{isSaving ? "Guardando…" : "Guardar"}</Button>
         </div>
     </div>
-</div>
+</Page>

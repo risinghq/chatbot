@@ -4,6 +4,7 @@ import type { OrderStatus } from "@vendeya/types";
 import { fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import { auth } from "#lib/state/auth.svelte.js";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
@@ -84,7 +85,7 @@ function parseProducts(productsJson: string) {
 	</div>
 {/snippet}
 
-<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+<Page>
 	<a href="/dashboard/orders" class="mb-3 inline-flex items-center gap-1.5 text-sm text-fg-muted hover:text-fg">
 		<Icon name="arrow" class="size-3.5 rotate-180" />
 		Órdenes
@@ -237,4 +238,4 @@ function parseProducts(productsJson: string) {
 			</div>
 		</div>
 	{/if}
-</div>
+</Page>

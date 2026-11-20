@@ -73,16 +73,15 @@ that enter. `prefers-reduced-motion` turns them off globally.
 ## Layout
 
 The dashboard layout draws the sidebar at `md` and up, and a top bar with a
-drawer below it. A page sits in one container:
+drawer below it. Every page renders inside the `Page` component, which owns the
+one container (`max-w-6xl`) and its padding. A page never sets its own max-width
+or page padding, so the heading sits at the same place on every page.
 
-```text
-mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8
-```
-
-The home page narrows it to `max-w-5xl` and reports to `max-w-3xl`, because
-their content is a single column. Conversations and the simulator are full-bleed
-panes with no container. A page under `admin/` renders inside the admin layout,
-which already draws the container, the heading and the tabs, so it adds neither.
+A single-column page (a form, a record, the account page) passes
+`width="narrow"`. That caps the content at `max-w-3xl` on the same left edge; it
+does not centre a narrower column. Conversations and the simulator are
+full-bleed panes with no container. A page under `admin/` renders inside the
+admin layout, which already draws the `Page`, the heading and the tabs.
 
 Touch targets grow to 44 px on a coarse pointer (`pointer-coarse:min-h-11`).
 Pages must not scroll sideways at 390 px; a wide table scrolls inside its card.
@@ -105,6 +104,7 @@ for these before writing classes.
 | `DataTable`                                | A table from a column list. It scrolls sideways inside its card when narrow.                                                                                            |
 | `Modal`, `Sheet`                           | A confirm or short form; a side panel for a record.                                                                                                                     |
 | `EmptyState`                               | What an empty list shows, with the next step.                                                                                                                           |
+| `Page`                                     | The page container. `width="narrow"` for a single column.                                                                                                               |
 | `PageHeader`, `PageTitle`                  | The visible heading with actions; the browser tab title.                                                                                                                |
 | `NeedsTenant`                              | What a business-scoped page shows when no business is active.                                                                                                           |
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
@@ -125,7 +126,7 @@ async function generateOrders(e: Event) {
 
 <PageTitle title="Reportes" />
 
-<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+<Page width="narrow">
 	<PageHeader title="Reportes" subtitle="Descarga los datos en Excel." />
 
 	<div class="flex flex-col gap-6">
@@ -198,7 +199,7 @@ async function generateOrders(e: Event) {
 			</SectionShell>
 		</form>
 	</div>
-</div>
+</Page>
 
 {#snippet dateRange(
 	id: string,

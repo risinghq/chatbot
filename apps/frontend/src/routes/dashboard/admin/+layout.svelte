@@ -1,6 +1,7 @@
 <script lang="ts">
 import { page } from "$app/state";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 
 let { children } = $props();
@@ -21,7 +22,7 @@ function isActive(path: string) {
 
 <PageTitle title="Administración" />
 
-<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+<Page>
 	<PageHeader title="Administración" subtitle="Equipo, números y claves del negocio." />
 
 	<nav class="-mx-4 mb-6 flex gap-1 overflow-x-auto border-b border-border-subtle px-4 md:mx-0 md:px-0" aria-label="Secciones">
@@ -40,4 +41,4 @@ function isActive(path: string) {
 	</nav>
 
 	{@render children()}
-</div>
+</Page>

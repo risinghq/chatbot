@@ -9,6 +9,7 @@ import Input from "#lib/components/ui/input.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import LookupResultCard from "#lib/components/providers/lookup-result.svelte";
@@ -68,7 +69,7 @@ async function handleQuery() {
 
 <PageTitle title="Proveedores" />
 
-<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+<Page width="narrow">
 	<PageHeader title="Historial crediticio" subtitle="Consulta si un cliente califica para crédito en Cálidda.">
 		{#snippet actions()}
 			{#if providersChecked}
@@ -108,7 +109,7 @@ async function handleQuery() {
 	{#if result}
 		<LookupResultCard {result} />
 	{/if}
-</div>
+</Page>
 
 {#snippet provider(key: string, label: string)}
 	{@const up = providersChecked?.includes(key)}

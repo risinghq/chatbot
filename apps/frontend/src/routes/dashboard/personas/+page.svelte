@@ -7,6 +7,7 @@ import DataTable from "#lib/components/ui/data-table.svelte";
 import EmptyState from "#lib/components/ui/empty-state.svelte";
 import Icon from "#lib/components/ui/icon.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import type { TestPersona } from "@vendeya/types";
 
@@ -60,7 +61,7 @@ const columns = [
 
 <PageTitle title="Perfiles de cliente" />
 
-<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+<Page>
 	<PageHeader title="Perfiles de cliente de prueba" subtitle="Los clientes que el simulador usa para conversar con el bot.">
 		{#snippet actions()}
 			<Button href="/dashboard/personas/create">Nueva persona</Button>
@@ -78,7 +79,7 @@ const columns = [
 			<DataTable data={personas} {columns} loading={loading && personas.length === 0} />
 		{/if}
 	</div>
-</div>
+</Page>
 
 {#snippet nameCell(p: TestPersona)}
 	<div class="text-fg">{p.name}</div>

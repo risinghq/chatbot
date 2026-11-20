@@ -8,6 +8,7 @@ import Select from "#lib/components/ui/select.svelte";
 import Textarea from "#lib/components/ui/textarea.svelte";
 import { fieldStyles } from "#lib/components/ui/field-styles.js";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 
 const segments = [
@@ -56,7 +57,7 @@ async function createPersona() {
 
 <PageTitle title="Crear persona" />
 
-<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+<Page width="narrow">
 	<PageHeader title="Nueva persona de prueba" subtitle="Un perfil de cliente para usar en el simulador." />
 
 	<div class="rounded-md border border-border bg-surface">
@@ -132,4 +133,4 @@ async function createPersona() {
 			</Button>
 		</div>
 	</div>
-</div>
+</Page>
