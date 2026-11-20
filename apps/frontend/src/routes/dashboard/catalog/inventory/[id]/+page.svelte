@@ -17,6 +17,7 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import Textarea from "#lib/components/ui/textarea.svelte";
+import ProductImages from "#lib/components/catalog/product-images.svelte";
 import VariantList from "#lib/components/catalog/variant-list.svelte";
 import type { PageData } from "./$types";
 
@@ -192,6 +193,7 @@ async function handleSave() {
 
         {#if product}
             {#key product.id}
+                <ProductImages productId={product.id} images={data.images} {canEdit} />
                 <VariantList productId={product.id} variants={data.variants} {canEdit} />
             {/key}
         {/if}

@@ -28,7 +28,12 @@ export function isCatalogImageKey(key: string): boolean {
 
 /** The path, under the public origin, that serves a catalog image. */
 export function catalogImagePath(tenantId: string, imageId: string): string {
-  return `/media/${catalogImageKey(tenantId, imageId)}`;
+  return mediaPath(catalogImageKey(tenantId, imageId));
+}
+
+/** The public path of a catalog image key already recorded on an asset row. */
+export function mediaPath(catalogKey: string): string {
+  return `/media/${catalogKey}`;
 }
 
 /**

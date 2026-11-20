@@ -27,14 +27,19 @@ export async function callApi(
   body?: unknown,
   fetcher: Fetch = fetch,
 ): Promise<unknown> {
+  // fetch writes a multipart body's Content-Type, boundary included.
+  const multipart = body instanceof FormData;
   const response = await fetcher(`${credentials.url}${apiPath}`, {
     method,
     headers: {
       Authorization: `Bearer ${credentials.token}`,
       Accept: "application/json",
-      ...(body !== undefined && { "Content-Type": "application/json" }),
+      ...(body !== undefined &&
+        !multipart && { "Content-Type": "application/json" }),
     },
-    ...(body !== undefined && { body: JSON.stringify(body) }),
+    ...(body !== undefined && {
+      body: multipart ? body : JSON.stringify(body),
+    }),
   });
 
   const text = await response.text();

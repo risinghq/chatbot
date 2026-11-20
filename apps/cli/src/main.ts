@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { basename } from "node:path";
 import { parseArgs } from "node:util";
 import { ApiError, callApi, type Fetch } from "./client.ts";
 import { COMMANDS, findCommand, UsageError } from "./commands.ts";
@@ -14,8 +15,19 @@ export type Io = {
   stdout(text: string): void;
   stderr(text: string): void;
   readStdin(): Promise<string>;
+  readFile?(path: string): Promise<File>;
   fetcher?: Fetch;
 };
+
+async function readLocalFile(filePath: string): Promise<File> {
+  const file = Bun.file(filePath);
+  if (!(await file.exists())) {
+    throw new UsageError(`No such file: ${filePath}`);
+  }
+  return new File([await file.arrayBuffer()], basename(filePath), {
+    type: file.type,
+  });
+}
 
 const OPTIONS = {
   name: { type: "string" },
@@ -102,6 +114,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         call: (method, path, body) =>
           callApi(credentials, method, path, body, io.fetcher),
         readStdin: io.readStdin,
+        readFile: io.readFile ?? readLocalFile,
       });
       io.stdout(json(result));
       return 0;

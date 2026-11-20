@@ -38,7 +38,12 @@ function harness(options: {
         url,
         method: init?.method ?? "GET",
         headers: init?.headers as Record<string, string>,
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        body:
+          init?.body instanceof FormData
+            ? init.body
+            : init?.body
+              ? JSON.parse(String(init.body))
+              : undefined,
       };
       sent.push(request);
       const { status = 200, body } = options.reply?.(request) ?? {
@@ -221,6 +226,52 @@ describe("vendeya", () => {
     const h = harness({ env: AUTHED, reply: () => ({ body: [] }) });
     expect(await main(["stock", "receive", "NOPE", "3"], h.io)).toBe(2);
     expect(h.sent.map((s) => s.method)).toEqual(["GET"]);
+  });
+
+  test("images add uploads each file as multipart, without a JSON type", async () => {
+    const h = harness({ env: AUTHED });
+    const dir = await mkdtemp(path.join(configDir, "img-"));
+    const photo = path.join(dir, "polo.jpg");
+    await Bun.write(photo, new Uint8Array([0xff, 0xd8, 0xff]));
+
+    expect(await main(["images", "add", "p1", photo, photo], h.io)).toBe(0);
+
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[0]?.url).toBe("http://local/api/catalog/products/p1/images");
+    expect(h.sent[0]?.headers["Content-Type"]).toBeUndefined();
+    const body = h.sent[0]?.body;
+    if (!(body instanceof FormData))
+      throw new Error("expected a FormData body");
+    const image = body.get("image") as File;
+    expect(image.name).toBe("polo.jpg");
+    expect(image.size).toBe(3);
+  });
+
+  test("images add refuses a missing file before uploading", async () => {
+    const h = harness({ env: AUTHED });
+    expect(
+      await main(
+        ["images", "add", "p1", path.join(configDir, "nope.jpg")],
+        h.io,
+      ),
+    ).toBe(2);
+    expect(h.sent).toEqual([]);
+  });
+
+  test("images cover sends the full order with the cover first", async () => {
+    const h = harness({
+      env: AUTHED,
+      reply: (sent) => ({
+        body:
+          sent.method === "GET" ? [{ id: "a" }, { id: "b" }, { id: "c" }] : [],
+      }),
+    });
+    expect(await main(["images", "cover", "p1", "c"], h.io)).toBe(0);
+    expect(h.sent[1]).toMatchObject({
+      method: "PUT",
+      url: "http://local/api/catalog/products/p1/images/order",
+      body: { ids: ["c", "a", "b"] },
+    });
   });
 
   test("variants add sends amounts in cents", async () => {

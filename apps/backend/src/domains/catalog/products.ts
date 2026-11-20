@@ -1,6 +1,7 @@
 import { tenantPredicate } from "../../db/query.ts";
 import type { Product, ProductStatus } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
+import { mediaPath } from "../../lib/storage-paths.ts";
 import type { Binding } from "../../db/index.ts";
 import { getAll, getOne, run } from "../../db/index.ts";
 
@@ -9,15 +10,25 @@ import { getAll, getOne, run } from "../../db/index.ts";
  * take a concrete tenant.
  */
 export const ProductService = {
-  getAll: async (tenantId: string | null): Promise<Product[]> =>
-    await getAll<Product>(
+  getAll: async (tenantId: string | null): Promise<Product[]> => {
+    const rows = await getAll<Product & { cover_key: string | null }>(
       `SELECT p.*,
               (SELECT COUNT(*) FROM product_variants v
-               WHERE v.product_id = p.id AND v.tenant_id = p.tenant_id) AS variant_count
+               WHERE v.product_id = p.id AND v.tenant_id = p.tenant_id) AS variant_count,
+              (SELECT a.storage_key
+               FROM product_images i JOIN assets a
+                 ON a.id = i.asset_id AND a.tenant_id = i.tenant_id
+               WHERE i.product_id = p.id AND i.tenant_id = p.tenant_id
+               ORDER BY i.position, i.id LIMIT 1) AS cover_key
        FROM products p WHERE ${tenantPredicate(tenantId, "p.tenant_id")}
        ORDER BY p.category, p.name`,
       tenantId ? [tenantId] : [],
-    ),
+    );
+    return rows.map(({ cover_key, ...product }) => ({
+      ...product,
+      cover_url: cover_key ? mediaPath(cover_key) : null,
+    }));
+  },
 
   getByCategory: async (
     tenantId: string | null,

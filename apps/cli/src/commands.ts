@@ -20,6 +20,8 @@ export type CommandContext = {
   call(method: string, path: string, body?: unknown): Promise<unknown>;
   /** All of stdin, trimmed. Secrets arrive here, never in arguments. */
   readStdin(): Promise<string>;
+  /** A local file's bytes. Throws UsageError when it does not exist. */
+  readFile(path: string): Promise<File>;
 };
 
 export type Command = {
@@ -48,6 +50,10 @@ function noMoreArgs(ctx: CommandContext, count: number) {
 /** A destructive command runs only with --yes, so an agent states its intent. */
 function confirmed(ctx: CommandContext, action: string) {
   if (!ctx.options.yes) throw new UsageError(`${action} needs --yes.`);
+}
+
+function imagesPath(productId: string): string {
+  return `/api/catalog/products/${encodeURIComponent(productId)}/images`;
 }
 
 function cents(text: string | undefined, what: string): number {
@@ -297,6 +303,64 @@ export const COMMANDS: Command[] = [
               : cents(ctx.options.cost, "--cost"),
           name: ctx.options.name ?? null,
         },
+      );
+    },
+  },
+  {
+    words: "images list",
+    usage: "images list <product id>",
+    summary: "A product's photos in order; the first is the cover.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 1);
+      return ctx.call("GET", imagesPath(need(ctx.args[0], "product id")));
+    },
+  },
+  {
+    words: "images add",
+    usage: "images add <product id> <file>...",
+    summary: "Upload photos after the existing ones; each is fit to 1024 px.",
+    run: async (ctx) => {
+      const path = imagesPath(need(ctx.args[0], "product id"));
+      const files = ctx.args.slice(1);
+      if (files.length === 0) throw new UsageError("Missing file.");
+      const added = [];
+      for (const file of files) {
+        const form = new FormData();
+        form.append("image", await ctx.readFile(file));
+        added.push(await ctx.call("POST", path, form));
+      }
+      return added;
+    },
+  },
+  {
+    words: "images cover",
+    usage: "images cover <product id> <image id>",
+    summary: "Make a photo the cover, keeping the others in order.",
+    run: async (ctx) => {
+      noMoreArgs(ctx, 2);
+      const path = imagesPath(need(ctx.args[0], "product id"));
+      const cover = need(ctx.args[1], "image id");
+      const images = (await ctx.call("GET", path)) as { id: string }[];
+      if (!images.some((image) => image.id === cover)) {
+        throw new UsageError(`The product has no image ${cover}.`);
+      }
+      const rest = images.filter((image) => image.id !== cover);
+      return ctx.call("PUT", `${path}/order`, {
+        ids: [cover, ...rest.map((image) => image.id)],
+      });
+    },
+  },
+  {
+    words: "images delete",
+    usage: "images delete <image id> --yes",
+    summary: "Delete a photo and its file.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 1);
+      const id = need(ctx.args[0], "image id");
+      confirmed(ctx, "Deleting an image");
+      return ctx.call(
+        "DELETE",
+        `/api/catalog/images/${encodeURIComponent(id)}`,
       );
     },
   },

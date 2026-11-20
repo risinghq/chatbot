@@ -93,6 +93,7 @@ export type {
   CategoryKey,
   CategoryGroup,
   CatalogSnapshot,
+  ProductImage,
 } from "./catalog.ts";
 export { CATEGORIES, CATEGORY_GROUPS } from "./catalog.ts";
 export type {
