@@ -91,6 +91,10 @@ function createAuthState() {
     get canDecideMoney() {
       return this.isAdmin || this.isSupervisor;
     },
+    /** Deleting a customer erases their record, so it is not a sales task. */
+    get canDeleteCustomers() {
+      return this.isAdmin || this.isSupervisor;
+    },
     get canAccessReports() {
       return this.isAdmin || this.isDeveloper || this.isSupervisor;
     },

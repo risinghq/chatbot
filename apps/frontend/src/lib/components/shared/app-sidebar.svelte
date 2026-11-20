@@ -12,6 +12,7 @@ const sections = $derived.by(() => {
     { href: "/dashboard", label: "Inicio", icon: "home" },
     { href: "/dashboard/conversations", label: "Conversaciones", icon: "chat" },
     { href: "/dashboard/orders", label: "Pedidos", icon: "bag" },
+    { href: "/dashboard/clientes", label: "Clientes", icon: "user" },
     { href: "/dashboard/catalog", label: "Catálogo", icon: "box" },
     { href: "/dashboard/inventario", label: "Inventario", icon: "warehouse" },
   ];

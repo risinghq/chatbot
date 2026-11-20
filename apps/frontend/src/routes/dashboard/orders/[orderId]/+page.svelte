@@ -161,7 +161,7 @@ function decide(paymentId: string, action: "confirm" | "reject") {
 		<header class="mb-6 flex flex-wrap items-start justify-between gap-3">
 			<div class="min-w-0">
 				<h1 class="font-mono text-xl text-fg">{orderLabel(order.number)}</h1>
-				<p class="mt-1 text-base text-fg-muted">{order.customer.name}</p>
+				<a href="/dashboard/clientes/{order.customer.id}" class="mt-1 block text-base text-fg-muted hover:text-fg hover:underline">{order.customer.name}</a>
 			</div>
 			<div class="flex gap-2">
 				<Badge variant={paymentStateVariant(order.payment_state)}>{paymentStateLabels[order.payment_state]}</Badge>
