@@ -300,12 +300,12 @@ deployment.
 
 ## Tests that enforce structure
 
-| Test                                                   | Holds                                                                                                                           |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/backend/tests/created-at-contract.test.ts`       | INTEGER `*_at` fields reach clients as milliseconds.                                                                            |
-| `apps/backend/tests/foreign-keys.test.ts`              | The schema's foreign keys and cascades hold in D1.                                                                              |
-| `apps/backend/tests/source/tenant-scope-guard.test.ts` | No backend query reads tenant rows without the scope helpers in `db/query.ts`.                                                  |
-| `apps/backend/src/db/tenant-scope.ts`                  | At run time, a Kysely query that reads, updates or deletes a tenant table with no tenant predicate throws before it reaches D1. |
-| `apps/backend/tests/source/db-schema.test.ts`          | `db/schema.ts` matches the migrations.                                                                                          |
+| Test                                                 | Holds                                                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/backend/tests/created-at-contract.test.ts`     | INTEGER `*_at` fields reach clients as milliseconds.                                                                            |
+| `apps/backend/tests/foreign-keys.test.ts`            | The schema's foreign keys and cascades hold in D1.                                                                              |
+| `apps/backend/tests/unit/tenant-scope-guard.test.ts` | No backend query reads tenant rows without the scope helpers in `db/query.ts`.                                                  |
+| `apps/backend/src/db/tenant-scope.ts`                | At run time, a Kysely query that reads, updates or deletes a tenant table with no tenant predicate throws before it reaches D1. |
+| `apps/backend/tests/unit/db-schema.test.ts`          | `db/schema.ts` matches the migrations.                                                                                          |
 
 The commands and CI jobs are in [Development](./development.md).

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { ProviderCheckResult } from "@vendeya/types";
 
-import { evaluateResults } from "../src/domains/eligibility/strategy/eligibility-strategy.ts";
-import { ProviderError } from "../src/domains/eligibility/providers/provider.ts";
-import { Err, Ok } from "../src/shared/result/index.ts";
+import { evaluateResults } from "../../src/domains/eligibility/strategy/eligibility-strategy.ts";
+import { ProviderError } from "../../src/domains/eligibility/providers/provider.ts";
+import { Err, Ok } from "../../src/shared/result/index.ts";
 
 const fnbApproved: ProviderCheckResult = {
   eligible: true,

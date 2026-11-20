@@ -1,7 +1,7 @@
 /** The operator a row names: the name the environment gives, and the uid it cannot. */
 
 import { describe, it, expect } from "vitest";
-import { operatorFrom } from "../src/cli/os-user.ts";
+import { operatorFrom } from "../../src/cli/os-user.ts";
 
 describe("operatorFrom", () => {
   it("keeps the name and the uid", async () => {
