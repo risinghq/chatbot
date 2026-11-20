@@ -6,6 +6,7 @@
     "dev": "wrangler dev --port 8787",
     "db:migrate": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "db:types": "bun scripts/db-types.ts",
     "seed": "bun src/db/seed.ts",
     "account": "bun src/cli/account.ts",
     "clean": "bun x shx rm -rf .wrangler/state",
@@ -23,6 +24,7 @@
     "@vendeya/types": "workspace:*",
     "@vendeya/utils": "workspace:*",
     "hono": "^4.13.19",
+    "kysely": "^0.29.9",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {

@@ -1,7 +1,6 @@
 import type { ProductVariant } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
-import type { Binding } from "../../db/index.ts";
-import { getAll, getOne, run } from "../../db/index.ts";
+import { db } from "../../db/index.ts";
 import { isConstraintError } from "../../db/constraints.ts";
 
 export type VariantFields = {
@@ -70,30 +69,35 @@ export const VariantService = {
     tenantId: string,
     productId: string,
   ): Promise<ProductVariant[]> =>
-    await getAll<ProductVariant>(
-      `SELECT * FROM product_variants
-       WHERE tenant_id = ? AND product_id = ?
-       ORDER BY id`,
-      [tenantId, productId],
-    ),
+    await db
+      .selectFrom("product_variants")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .where("product_id", "=", productId)
+      .orderBy("id")
+      .execute(),
 
   getById: async (
     tenantId: string,
     id: string,
   ): Promise<ProductVariant | null> =>
-    (await getOne<ProductVariant>(
-      `SELECT * FROM product_variants WHERE id = ? AND tenant_id = ?`,
-      [id, tenantId],
-    )) ?? null,
+    (await db
+      .selectFrom("product_variants")
+      .selectAll()
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .executeTakeFirst()) ?? null,
 
   getBySku: async (
     tenantId: string,
     sku: string,
   ): Promise<ProductVariant | null> =>
-    (await getOne<ProductVariant>(
-      `SELECT * FROM product_variants WHERE sku = ? AND tenant_id = ?`,
-      [sku, tenantId],
-    )) ?? null,
+    (await db
+      .selectFrom("product_variants")
+      .selectAll()
+      .where("sku", "=", sku)
+      .where("tenant_id", "=", tenantId)
+      .executeTakeFirst()) ?? null,
 
   /** Throws `DuplicateSkuError` when the SKU is taken. */
   create: async (
@@ -103,21 +107,10 @@ export const VariantService = {
   ): Promise<ProductVariant> => {
     const id = newId();
     await withSkuCheck(fields.sku, () =>
-      run(
-        `INSERT INTO product_variants
-           (id, tenant_id, product_id, name, sku, price_cents, cost_cents, is_active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          tenantId,
-          productId,
-          fields.name,
-          fields.sku,
-          fields.price_cents,
-          fields.cost_cents,
-          fields.is_active,
-        ],
-      ),
+      db
+        .insertInto("product_variants")
+        .values({ id, tenant_id: tenantId, product_id: productId, ...fields })
+        .execute(),
     );
     return (await VariantService.getById(tenantId, id))!;
   },
@@ -128,15 +121,14 @@ export const VariantService = {
     id: string,
     fields: Partial<VariantFields>,
   ): Promise<ProductVariant | null> => {
-    const entries = Object.entries(fields) as [keyof VariantFields, Binding][];
-    if (entries.length > 0) {
+    if (Object.keys(fields).length > 0) {
       await withSkuCheck(fields.sku ?? "", () =>
-        run(
-          `UPDATE product_variants
-           SET ${entries.map(([column]) => `${column} = ?`).join(", ")}
-           WHERE id = ? AND tenant_id = ?`,
-          [...entries.map(([, value]) => value), id, tenantId],
-        ),
+        db
+          .updateTable("product_variants")
+          .set(fields)
+          .where("id", "=", id)
+          .where("tenant_id", "=", tenantId)
+          .execute(),
       );
     }
     return await VariantService.getById(tenantId, id);

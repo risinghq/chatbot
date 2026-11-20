@@ -5,7 +5,7 @@ import type {
   StockRow,
 } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
-import { batch, getAll, getOne, run, stmt } from "../../db/index.ts";
+import { batch, db } from "../../db/index.ts";
 import { isConstraintError } from "../../db/constraints.ts";
 
 /** The location a business gets when it records stock without naming one. */
@@ -46,19 +46,23 @@ export function quantityError(
 
 export const StockService = {
   listLocations: async (tenantId: string): Promise<StockLocation[]> =>
-    await getAll<StockLocation>(
-      `SELECT * FROM stock_locations WHERE tenant_id = ? ORDER BY id`,
-      [tenantId],
-    ),
+    await db
+      .selectFrom("stock_locations")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .orderBy("id")
+      .execute(),
 
   getLocation: async (
     tenantId: string,
     id: string,
   ): Promise<StockLocation | null> =>
-    (await getOne<StockLocation>(
-      `SELECT * FROM stock_locations WHERE id = ? AND tenant_id = ?`,
-      [id, tenantId],
-    )) ?? null,
+    (await db
+      .selectFrom("stock_locations")
+      .selectAll()
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .executeTakeFirst()) ?? null,
 
   /** Returns null when the business already has a location with this name. */
   createLocation: async (
@@ -67,10 +71,10 @@ export const StockService = {
   ): Promise<StockLocation | null> => {
     const id = newId();
     try {
-      await run(
-        `INSERT INTO stock_locations (id, tenant_id, name) VALUES (?, ?, ?)`,
-        [id, tenantId, name],
-      );
+      await db
+        .insertInto("stock_locations")
+        .values({ id, tenant_id: tenantId, name })
+        .execute();
     } catch (error) {
       if (isConstraintError(error, "UNIQUE")) return null;
       throw error;
@@ -85,12 +89,27 @@ export const StockService = {
    * inserts, so two first movements cannot create two locations.
    */
   defaultLocation: async (tenantId: string): Promise<StockLocation | null> => {
-    await run(
-      `INSERT INTO stock_locations (id, tenant_id, name)
-       SELECT ?, ?, ?
-       WHERE NOT EXISTS (SELECT 1 FROM stock_locations WHERE tenant_id = ?)`,
-      [newId(), tenantId, DEFAULT_LOCATION_NAME, tenantId],
-    );
+    await db
+      .insertInto("stock_locations")
+      .columns(["id", "tenant_id", "name"])
+      .expression(
+        db
+          .selectNoFrom((eb) => [
+            eb.val(newId()).as("id"),
+            eb.val(tenantId).as("tenant_id"),
+            eb.val(DEFAULT_LOCATION_NAME).as("name"),
+          ])
+          .where(({ not, exists, selectFrom, lit }) =>
+            not(
+              exists(
+                selectFrom("stock_locations")
+                  .select(lit(1).as("one"))
+                  .where("tenant_id", "=", tenantId),
+              ),
+            ),
+          ),
+      )
+      .execute();
     const locations = await StockService.listLocations(tenantId);
     return locations.length === 1 ? locations[0]! : null;
   },
@@ -100,34 +119,58 @@ export const StockService = {
    * over the one given. A variant with no movement shows zeros.
    */
   levels: async (tenantId: string, locationId?: string): Promise<StockRow[]> =>
-    await getAll<StockRow>(
-      `SELECT v.id AS variant_id, v.sku, v.name AS variant_name,
-              p.id AS product_id, p.name AS product_name, v.price_cents,
-              COALESCE(SUM(l.on_hand), 0) AS on_hand,
-              COALESCE(SUM(l.reserved), 0) AS reserved,
-              COALESCE(SUM(l.on_hand - l.reserved), 0) AS available
-       FROM product_variants v
-       JOIN products p ON p.id = v.product_id AND p.tenant_id = v.tenant_id
-       LEFT JOIN stock_levels l ON l.variant_id = v.id AND l.tenant_id = v.tenant_id
-         ${locationId ? "AND l.location_id = ?" : ""}
-       WHERE v.tenant_id = ?
-       GROUP BY v.id
-       ORDER BY p.name, v.name, v.sku`,
-      locationId ? [locationId, tenantId] : [tenantId],
-    ),
+    await db
+      .selectFrom("product_variants as v")
+      .innerJoin("products as p", (join) =>
+        join
+          .onRef("p.id", "=", "v.product_id")
+          .onRef("p.tenant_id", "=", "v.tenant_id"),
+      )
+      .leftJoin("stock_levels as l", (join) => {
+        const level = join
+          .onRef("l.variant_id", "=", "v.id")
+          .onRef("l.tenant_id", "=", "v.tenant_id");
+        return locationId ? level.on("l.location_id", "=", locationId) : level;
+      })
+      .select((eb) => [
+        "v.id as variant_id",
+        "v.sku",
+        "v.name as variant_name",
+        "p.id as product_id",
+        "p.name as product_name",
+        "v.price_cents",
+        eb.fn.coalesce(eb.fn.sum<number>("l.on_hand"), eb.lit(0)).as("on_hand"),
+        eb.fn
+          .coalesce(eb.fn.sum<number>("l.reserved"), eb.lit(0))
+          .as("reserved"),
+        eb.fn
+          .coalesce(
+            eb.fn.sum<number>(eb("l.on_hand", "-", eb.ref("l.reserved"))),
+            eb.lit(0),
+          )
+          .as("available"),
+      ])
+      .where("v.tenant_id", "=", tenantId)
+      .groupBy("v.id")
+      .orderBy("p.name")
+      .orderBy("v.name")
+      .orderBy("v.sku")
+      .execute(),
 
   movements: async (
     tenantId: string,
     options: { variantId?: string; limit: number },
   ): Promise<StockMovement[]> =>
-    await getAll<StockMovement>(
-      `SELECT * FROM stock_movements
-       WHERE tenant_id = ? ${options.variantId ? "AND variant_id = ?" : ""}
-       ORDER BY id DESC LIMIT ?`,
-      options.variantId
-        ? [tenantId, options.variantId, options.limit]
-        : [tenantId, options.limit],
-    ),
+    await db
+      .selectFrom("stock_movements")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .$if(options.variantId !== undefined, (q) =>
+        q.where("variant_id", "=", options.variantId!),
+      )
+      .orderBy("id", "desc")
+      .limit(options.limit)
+      .execute(),
 
   /**
    * Writes the movement and moves the level in one batch. The level's CHECKs
@@ -151,41 +194,41 @@ export const StockService = {
 
     try {
       await batch([
-        stmt(
-          `INSERT OR IGNORE INTO stock_levels (tenant_id, variant_id, location_id)
-           VALUES (?, ?, ?)`,
-          [tenantId, variantId, locationId],
-        ),
-        stmt(
-          `UPDATE stock_levels
-           SET on_hand = on_hand + ?, reserved = reserved + ?
-           WHERE variant_id = ? AND location_id = ? AND tenant_id = ?`,
-          [delta.onHand, delta.reserved, variantId, locationId, tenantId],
-        ),
-        stmt(
-          `INSERT INTO stock_movements
-             (id, tenant_id, variant_id, location_id, kind, quantity, note, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            id,
-            tenantId,
-            variantId,
-            locationId,
-            kind,
-            quantity,
-            movement.note || null,
-            movement.createdBy,
-          ],
-        ),
+        db.insertInto("stock_levels").orIgnore().values({
+          tenant_id: tenantId,
+          variant_id: variantId,
+          location_id: locationId,
+        }),
+        db
+          .updateTable("stock_levels")
+          .set((eb) => ({
+            on_hand: eb("on_hand", "+", delta.onHand),
+            reserved: eb("reserved", "+", delta.reserved),
+          }))
+          .where("variant_id", "=", variantId)
+          .where("location_id", "=", locationId)
+          .where("tenant_id", "=", tenantId),
+        db.insertInto("stock_movements").values({
+          id,
+          tenant_id: tenantId,
+          variant_id: variantId,
+          location_id: locationId,
+          kind,
+          quantity,
+          note: movement.note || null,
+          created_by: movement.createdBy,
+        }),
       ]);
     } catch (error) {
       if (isConstraintError(error, "CHECK")) throw new InsufficientStockError();
       throw error;
     }
 
-    return (await getOne<StockMovement>(
-      `SELECT * FROM stock_movements WHERE tenant_id = ? AND id = ?`,
-      [tenantId, id],
-    ))!;
+    return await db
+      .selectFrom("stock_movements")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
   },
 };

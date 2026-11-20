@@ -114,12 +114,13 @@ The tests that hold the architecture's boundaries are listed in
 
 These are what the code does today.
 
+- **Queries.** New code uses the Kysely `db` from
+  [`db/index.ts`](../apps/backend/src/db/index.ts), not raw SQL strings.
 - **Tenant scope.** A read function takes `tenantId: string | null` and filters
-  with `tenantPredicate`, not a hand-built `if (tenantId)` branch, from
-  [`db/query.ts`](../apps/backend/src/db/query.ts). A write takes the tenant
-  from `activeTenantId(c)`. A row fetched by id is checked with
-  `canAccessTenant` and answers 404 when out of scope. See
-  [Tenancy](./tenancy.md#how-a-read-is-scoped).
+  with `tenantScope` (Kysely) or `tenantPredicate` (raw SQL), not a hand-built
+  `if (tenantId)` branch. A write takes the tenant from `activeTenantId(c)`. A
+  row fetched by id is checked with `canAccessTenant` and answers 404 when out
+  of scope. See [Tenancy](./tenancy.md#how-a-read-is-scoped).
 - **File keys** come from
   [`lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts), and each
   starts with the tenant's id.
@@ -146,6 +147,7 @@ These are what the code does today.
   [`apps/backend/migrations`](../apps/backend/migrations). A change is a new
   file, made with `bunx wrangler d1 migrations create DB <name>` from
   `apps/backend`, never an edit to a migration that has run. Apply it locally
-  with `bun run db:migrate`.
+  with `bun run db:migrate`, then run `bun run db:types` to regenerate
+  `src/db/schema.ts`. A test fails while that file is stale.
 - **Commits.** A lower-case imperative subject with no prefix, then a body that
   explains why, usually starting with `Why:`. Commits to `master` are signed.
