@@ -80,6 +80,8 @@ export type Asset = {
 // Catalog types
 export type {
   Product,
+  ProductStatus,
+  ProductVariant,
   ProductSpecs,
   SnapshotProduct,
   BundleChoice,
@@ -93,6 +95,14 @@ export type {
   CatalogSnapshot,
 } from "./catalog.ts";
 export { CATEGORIES, CATEGORY_GROUPS } from "./catalog.ts";
+export type {
+  StockLocation,
+  StockMovement,
+  StockMovementKind,
+  StockRow,
+} from "./stock.ts";
+export { STOCK_MOVEMENT_KINDS } from "./stock.ts";
+export { parseCents } from "./money.ts";
 export { MIN_PASSWORD_LENGTH } from "./accounts.ts";
 export {
   isTenantSecretSettingKey,

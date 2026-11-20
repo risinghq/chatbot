@@ -1,4 +1,4 @@
-import type { Product } from "@vendeya/types";
+import type { Product, ProductVariant } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 import { error } from "@sveltejs/kit";
 
@@ -10,16 +10,22 @@ export const load: PageServerLoad = async ({ cookies, params, fetch }) => {
 
   const { id } = params;
   if (id === "new") {
-    return { product: null };
+    return { product: null, variants: [] };
   }
 
   const headers = { cookie: `session=${sessionToken}` };
-  const getRes = await fetch(`/api/catalog/products/${id}`, { headers });
+  const [productRes, variantsRes] = await Promise.all([
+    fetch(`/api/catalog/products/${id}`, { headers }),
+    fetch(`/api/catalog/products/${id}/variants`, { headers }),
+  ]);
 
-  if (!getRes.ok) {
-    throw error(getRes.status, "Product not found");
+  if (!productRes.ok) {
+    throw error(productRes.status, "Product not found");
   }
 
-  const product = await getRes.json<Product>();
-  return { product };
+  const product = await productRes.json<Product>();
+  const variants = variantsRes.ok
+    ? await variantsRes.json<ProductVariant[]>()
+    : [];
+  return { product, variants };
 };

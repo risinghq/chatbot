@@ -1,4 +1,8 @@
-import { isTenantSecretSettingKey } from "@vendeya/types";
+import {
+  isTenantSecretSettingKey,
+  parseCents,
+  type StockRow,
+} from "@vendeya/types";
 
 /** What a command may use. `call` already carries the token. */
 export type CommandContext = {
@@ -7,6 +11,10 @@ export type CommandContext = {
     name?: string;
     role?: string;
     data?: string;
+    category?: string;
+    cost?: string;
+    location?: string;
+    note?: string;
     yes?: boolean;
   };
   call(method: string, path: string, body?: unknown): Promise<unknown>;
@@ -40,6 +48,40 @@ function noMoreArgs(ctx: CommandContext, count: number) {
 /** A destructive command runs only with --yes, so an agent states its intent. */
 function confirmed(ctx: CommandContext, action: string) {
   if (!ctx.options.yes) throw new UsageError(`${action} needs --yes.`);
+}
+
+function cents(text: string | undefined, what: string): number {
+  const value = parseCents(need(text, what));
+  if (value === null)
+    throw new UsageError(`${what} is an amount such as 49.90.`);
+  return value;
+}
+
+function wholeNumber(text: string | undefined, what: string): number {
+  const value = Number(need(text, what));
+  if (!Number.isInteger(value))
+    throw new UsageError(`${what} is a whole number.`);
+  return value;
+}
+
+/** Records one stock movement for the variant with `sku`. */
+async function moveStock(
+  ctx: CommandContext,
+  kind: "receive" | "adjust",
+): Promise<unknown> {
+  noMoreArgs(ctx, 2);
+  const sku = need(ctx.args[0], "SKU");
+  const quantity = wholeNumber(ctx.args[1], "quantity");
+  const rows = (await ctx.call("GET", "/api/stock")) as StockRow[];
+  const row = rows.find((r) => r.sku === sku);
+  if (!row) throw new UsageError(`No variant has SKU ${sku}.`);
+  return ctx.call("POST", "/api/stock/movements", {
+    variant_id: row.variant_id,
+    location_id: ctx.options.location,
+    kind,
+    quantity,
+    note: ctx.options.note ?? null,
+  });
 }
 
 type SimulatedMessage = {
@@ -203,6 +245,94 @@ export const COMMANDS: Command[] = [
     usage: "channels list",
     summary: "WhatsApp numbers of the active business.",
     run: (ctx) => ctx.call("GET", "/api/admin/channels"),
+  },
+  {
+    words: "products list",
+    usage: "products list",
+    summary: "Products of the active business, with their variant count.",
+    run: (ctx) => ctx.call("GET", "/api/catalog/products"),
+  },
+  {
+    words: "products create",
+    usage: "products create --name <name> --category <category>",
+    summary: "Create a product; then add its variants.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 0);
+      return ctx.call("POST", "/api/catalog/products", {
+        name: need(ctx.options.name, "--name"),
+        category: need(ctx.options.category, "--category"),
+      });
+    },
+  },
+  {
+    words: "variants list",
+    usage: "variants list <product id>",
+    summary: "A product's variants: SKU, price and cost in cents.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 1);
+      const id = need(ctx.args[0], "product id");
+      return ctx.call(
+        "GET",
+        `/api/catalog/products/${encodeURIComponent(id)}/variants`,
+      );
+    },
+  },
+  {
+    words: "variants add",
+    usage:
+      "variants add <product id> <sku> <price> [--name <option>] [--cost <amount>]",
+    summary: "Add a sellable variant. Amounts are units, such as 49.90.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 3);
+      const id = need(ctx.args[0], "product id");
+      return ctx.call(
+        "POST",
+        `/api/catalog/products/${encodeURIComponent(id)}/variants`,
+        {
+          sku: need(ctx.args[1], "SKU"),
+          price_cents: cents(ctx.args[2], "price"),
+          cost_cents:
+            ctx.options.cost === undefined
+              ? null
+              : cents(ctx.options.cost, "--cost"),
+          name: ctx.options.name ?? null,
+        },
+      );
+    },
+  },
+  {
+    words: "stock list",
+    usage: "stock list [--location <location id>]",
+    summary: "On hand, reserved and available per variant.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 0);
+      const location = ctx.options.location;
+      return ctx.call(
+        "GET",
+        location
+          ? `/api/stock?location_id=${encodeURIComponent(location)}`
+          : "/api/stock",
+      );
+    },
+  },
+  {
+    words: "stock locations",
+    usage: "stock locations",
+    summary: "Where the business keeps stock.",
+    run: (ctx) => ctx.call("GET", "/api/stock/locations"),
+  },
+  {
+    words: "stock receive",
+    usage: "stock receive <sku> <quantity> [--location <id>] [--note <text>]",
+    summary: "Add units that arrived.",
+    run: (ctx) => moveStock(ctx, "receive"),
+  },
+  {
+    words: "stock adjust",
+    usage: "stock adjust <sku> [--location <id>] -- <signed quantity>",
+    summary:
+      "Correct stock after a count. Options go before `--`, which lets the quantity be negative.",
+    run: (ctx) => moveStock(ctx, "adjust"),
   },
   {
     words: "simulate list",

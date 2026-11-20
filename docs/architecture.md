@@ -117,7 +117,8 @@ writer out.
 | --------------------- | --------------------------------------------------------------------------------------- |
 | Tenancy and auth      | `tenants`, `users`, `tenant_memberships`, `session`                                     |
 | Channel credentials   | `channel_accounts`, encrypted `channel_secrets`                                         |
-| Catalog and simulator | `catalog_periods`, `products`, `catalog_bundles`, `test_personas`                       |
+| Catalog and simulator | `catalog_periods`, `products`, `product_variants`, `catalog_bundles`, `test_personas`   |
+| Stock                 | `stock_locations`, `stock_levels`, `stock_movements`                                    |
 | Conversations         | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`                 |
 | Sales and records     | `orders`, `assets`, `analytics_events`, `llm_calls`, `notification_traces`, `audit_log` |
 | Settings              | `system_settings`, `tenant_settings`                                                    |
@@ -282,6 +283,7 @@ deployment.
 | API endpoint                          | [`apps/backend/src/routes/`](../apps/backend/src/routes/)                                                                                                                                             |
 | Dashboard page                        | [`apps/frontend/src/routes/dashboard/`](../apps/frontend/src/routes/dashboard/)                                                                                                                       |
 | Catalog data or rules                 | [`apps/backend/src/domains/catalog/`](../apps/backend/src/domains/catalog/)                                                                                                                           |
+| Stock levels, locations or movements  | [`apps/backend/src/domains/stock/`](../apps/backend/src/domains/stock/)                                                                                                                               |
 | New table or column                   | A new file in [`apps/backend/migrations/`](../apps/backend/migrations/)                                                                                                                               |
 | Binding, variable, route or cron      | [`apps/backend/wrangler.jsonc`](../apps/backend/wrangler.jsonc), then `bun run --cwd apps/backend types`                                                                                              |
 | Notification recipient or text        | [`apps/backend/src/domains/notifications/`](../apps/backend/src/domains/notifications/)                                                                                                               |

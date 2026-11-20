@@ -1,5 +1,6 @@
 import { tenantPredicate } from "../../db/query.ts";
-import type { Product } from "@vendeya/types";
+import type { Product, ProductStatus } from "@vendeya/types";
+import { newId } from "@vendeya/utils";
 import type { Binding } from "../../db/index.ts";
 import { getAll, getOne, run } from "../../db/index.ts";
 
@@ -10,8 +11,11 @@ import { getAll, getOne, run } from "../../db/index.ts";
 export const ProductService = {
   getAll: async (tenantId: string | null): Promise<Product[]> =>
     await getAll<Product>(
-      `SELECT * FROM products WHERE ${tenantPredicate(tenantId)}
-       ORDER BY category, name`,
+      `SELECT p.*,
+              (SELECT COUNT(*) FROM product_variants v
+               WHERE v.product_id = p.id AND v.tenant_id = p.tenant_id) AS variant_count
+       FROM products p WHERE ${tenantPredicate(tenantId, "p.tenant_id")}
+       ORDER BY p.category, p.name`,
       tenantId ? [tenantId] : [],
     ),
 
@@ -35,28 +39,33 @@ export const ProductService = {
     )) ?? null,
 
   create: async (data: {
-    id: string;
     tenantId: string;
     name: string;
     category: string;
+    description?: string;
+    status?: ProductStatus;
     brand?: string;
     model?: string;
     specs_json?: string;
   }): Promise<Product> => {
+    const id = newId();
     await run(
-      `INSERT INTO products (id, tenant_id, name, category, brand, model, specs_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO products
+         (id, tenant_id, name, description, status, category, brand, model, specs_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        data.id,
+        id,
         data.tenantId,
         data.name,
+        data.description || null,
+        data.status ?? "active",
         data.category,
         data.brand || null,
         data.model || null,
         data.specs_json || null,
       ],
     );
-    return (await ProductService.getById(data.tenantId, data.id))!;
+    return (await ProductService.getById(data.tenantId, id))!;
   },
 
   update: async (
@@ -70,6 +79,14 @@ export const ProductService = {
     if (data.name !== undefined) {
       fields.push("name = ?");
       values.push(data.name);
+    }
+    if (data.description !== undefined) {
+      fields.push("description = ?");
+      values.push(data.description);
+    }
+    if (data.status !== undefined) {
+      fields.push("status = ?");
+      values.push(data.status);
     }
     if (data.category !== undefined) {
       fields.push("category = ?");
