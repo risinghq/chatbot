@@ -15,6 +15,10 @@ import {
   TENANT_VISIBLE_PLATFORM_KEYS,
 } from "../../domains/settings/system.ts";
 import { TenantSecrets } from "../../domains/settings/tenant-secrets.ts";
+import {
+  OPENAI_API_KEY_SETTING,
+  openAiRejectsKey,
+} from "../../domains/settings/openai.ts";
 import { tenantSetupStatus } from "../../domains/tenants/setup.ts";
 import { clearFnbState } from "../../adapters/providers/fnb-client.ts";
 import { getRecentLLMCalls } from "../../intelligence/tracker.ts";
@@ -217,6 +221,19 @@ system.post("/settings", async (c) => {
     );
 
     return c.json({ success: true, updates, rejected, scope: "platform" });
+  }
+
+  // Checked before anything is written, so a wrong key fails the whole save
+  // and the business hears it now, not in a customer's conversation.
+  const openAiKey = settings[OPENAI_API_KEY_SETTING];
+  if (openAiKey && (await openAiRejectsKey(String(openAiKey)))) {
+    return c.json(
+      {
+        error: "OpenAI rechazó la clave. Revisa que esté completa y activa.",
+        reason: "invalid_openai_key",
+      },
+      400,
+    );
   }
 
   for (const [key, value] of Object.entries(settings)) {
