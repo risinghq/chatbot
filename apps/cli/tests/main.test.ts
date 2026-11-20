@@ -334,6 +334,25 @@ describe("vendeya", () => {
     });
   });
 
+  test("assistant set takes long text on stdin and a location of none as null", async () => {
+    const h = harness({ env: AUTHED, stdin: "Trata de usted." });
+    expect(await main(["assistant", "set", "instructions"], h.io)).toBe(0);
+    expect(await main(["assistant", "set", "location", "none"], h.io)).toBe(0);
+    expect(h.sent.map((s) => [s.method, s.url, s.body])).toEqual([
+      [
+        "PUT",
+        "http://local/api/assistant/settings",
+        { instructions: "Trata de usted." },
+      ],
+      [
+        "PUT",
+        "http://local/api/assistant/settings",
+        { stock_location_id: null },
+      ],
+    ]);
+    expect(await main(["assistant", "set", "tone", "x"], h.io)).toBe(2);
+  });
+
   test("zones add sends its fee in cents", async () => {
     const h = harness({ env: AUTHED });
     expect(
