@@ -30,7 +30,8 @@ export type TenantMembership = {
 };
 
 // Channel accounts
-export type ChannelType = "whatsapp";
+/** Each business has one `simulator` channel, where the dashboard's simulator talks. */
+export type ChannelType = "whatsapp" | "simulator";
 export type ChannelAccountStatus = "active" | "pending" | "disabled";
 
 export type ChannelAccount = {

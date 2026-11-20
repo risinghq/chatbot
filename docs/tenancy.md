@@ -211,9 +211,8 @@ one (`PATCH /api/admin/channels/:id`). Both are API-only; the dashboard has no
 page for them. How to get the values from Meta is in
 [Connecting WhatsApp](./whatsapp.md).
 
-When a tenant has several numbers and the caller names none (the simulator, an
-alert), the tenant's default is its oldest active account, then its oldest
-pending one.
+When a tenant has several numbers and the caller names none (such as an alert),
+the tenant's default is its oldest active account, then its oldest pending one.
 
 ## Encrypted credentials
 

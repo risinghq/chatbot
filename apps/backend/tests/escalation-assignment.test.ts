@@ -15,6 +15,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  simulatorRef,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -93,7 +94,6 @@ describe("escalating a conversation", () => {
         phase: SECOND_OBJECTION,
         metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
       },
-      isSimulation: true,
     });
     alerts = [];
     assignments = [];
@@ -199,5 +199,36 @@ describe("escalating a conversation", () => {
       expect(after.notifiedAt).toBeGreaterThan(Date.now() - 60 * 1000);
       expect(assignments).toHaveLength(2);
     });
+  });
+
+  it("reaches nobody from a simulation", async () => {
+    await agentWithPhone("51911111111");
+    const simulated = await simulatorRef(tenant.tenantId, "51900000001");
+    await insertConversation(simulated, {
+      contextData: {
+        phase: SECOND_OBJECTION,
+        metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
+      },
+      isSimulation: true,
+    });
+
+    await answerMessage({
+      ref: simulated,
+      content: "no",
+      timestamp: Date.now() - 11 * 60 * 1000,
+      messageId: `wamid-${crypto.randomUUID()}`,
+    });
+
+    const row = (await getOne(
+      `SELECT assigned_agent, context_data FROM conversations
+         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
+      [simulated.tenantId, simulated.channelAccountId, simulated.phoneNumber],
+    )) as { assigned_agent: string | null; context_data: string };
+    expect(JSON.parse(row.context_data).phase).toMatchObject({
+      phase: "escalated",
+    });
+    expect(row.assigned_agent).toBeNull();
+    expect(alerts).toHaveLength(0);
+    expect(assignments).toHaveLength(0);
   });
 });

@@ -1,7 +1,8 @@
 /**
  * Loading a real conversation into the simulator. A business with two WhatsApp
  * numbers has two separate threads with the same contact, so the source is
- * resolved on the number it came in on, not through the default account.
+ * resolved on the number it came in on, not through the default account. The
+ * replay itself lands on the business's simulator channel.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -11,6 +12,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  simulatorRef,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -34,7 +36,6 @@ describe("replaying a conversation from a second WhatsApp number", () => {
   let beta: TenantFixture;
   let cookie: string;
 
-  /** The account the simulator itself runs on, and the one it is not. */
   let defaultAccountId: string;
   let sourceRef: ConversationRef;
 
@@ -107,19 +108,17 @@ describe("replaying a conversation from a second WhatsApp number", () => {
     });
   });
 
-  it("puts the replay on the number the simulator reads from", async () => {
+  it("puts the replay on the simulator channel, with the source's client", async () => {
     await load({
       sourcePhone: CUSTOMER,
       sourceChannel: sourceRef.channelAccountId,
     });
 
-    // The simulator's own endpoints look the conversation up through the
-    // tenant's default account, so the replay has to land there. It carries the
-    // source conversation's client, not the source's number.
+    const target = await simulatorRef(alpha.tenantId, SIMULATOR_PHONE);
     const loaded = (await getOne(
       `SELECT client_name, is_simulation FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      [alpha.tenantId, defaultAccountId, SIMULATOR_PHONE],
+      [target.tenantId, target.channelAccountId, target.phoneNumber],
     )) as {
       client_name: string;
       is_simulation: number;
@@ -158,17 +157,14 @@ describe("replaying a conversation from a second WhatsApp number", () => {
 });
 
 /**
- * Which simulations the simulator lists. Every action on a listed conversation
- * resolves its phone number through the tenant's default channel account, and
- * the frontend keys rows by phone number alone. The listing must show only what the actions can
- * reach, or a row on the other number opens an empty thread or answers 404.
+ * Which simulations the simulator lists. Every action resolves its phone
+ * number on the simulator channel, and the frontend keys rows by phone number
+ * alone, so the listing shows that channel only.
  */
 describe("listing simulated conversations", () => {
   let app: Hono;
   let tenant: TenantFixture;
   let cookie: string;
-  let defaultAccountId: string;
-  let otherAccountId: string;
 
   const SIMULATED = "51900000001";
 
@@ -179,27 +175,11 @@ describe("listing simulated conversations", () => {
 
     tenant = await createTenantFixture("alpha-sim-list");
 
-    const secondId = `ch-${crypto.randomUUID()}`;
-    await run(
-      `INSERT INTO channel_accounts (id, tenant_id, channel_type, phone_number_id, status)
-       VALUES (?, ?, 'whatsapp', ?, 'active')`,
-      [secondId, tenant.tenantId, `pnid-${crypto.randomUUID().slice(0, 8)}`],
-    );
-
-    defaultAccountId = (await ChannelAccountService.getDefaultForTenant(
-      tenant.tenantId,
-    ))!.id;
-    otherAccountId = [tenant.channelAccountId, secondId].find(
-      (id) => id !== defaultAccountId,
-    )!;
-
-    // The same contact simulated on both of the business's numbers.
-    for (const channelAccountId of [defaultAccountId, otherAccountId]) {
-      await insertConversation(
-        { tenantId: tenant.tenantId, channelAccountId, phoneNumber: SIMULATED },
-        { isSimulation: true },
-      );
-    }
+    // The same contact on the simulator channel and on a WhatsApp number.
+    await insertConversation(await simulatorRef(tenant.tenantId, SIMULATED), {
+      isSimulation: true,
+    });
+    await insertConversation(tenant.ref(SIMULATED), { isSimulation: true });
 
     const userId = (await createMember(tenant, "admin")).userId;
     const token = generateSessionToken();
@@ -213,20 +193,21 @@ describe("listing simulated conversations", () => {
     });
   }
 
-  it("shows one row per contact, not one per number", async () => {
+  it("shows the simulator channel's row only", async () => {
     const rows = (await (await list()).json()) as Array<{
       phone_number: string;
       channel_account_id: string;
     }>;
+    const simulator = await ChannelAccountService.simulatorFor(tenant.tenantId);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       phone_number: SIMULATED,
-      channel_account_id: defaultAccountId,
+      channel_account_id: simulator.id,
     });
   });
 
-  it("lists the row the actions act on", async () => {
+  it("deletes the listed row and leaves the WhatsApp thread", async () => {
     const deleted = await app.request(
       `/api/simulator/conversations/${SIMULATED}`,
       { method: "DELETE", headers: { Cookie: cookie } },
@@ -234,13 +215,11 @@ describe("listing simulated conversations", () => {
 
     expect(deleted.status).toBe(200);
     expect(await (await list()).json()).toEqual([]);
-
-    // The other number's thread was never listed and was not touched either.
     expect(
       await getOne(
         `SELECT COUNT(*) as c FROM conversations
            WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        [tenant.tenantId, otherAccountId, SIMULATED],
+        [tenant.tenantId, tenant.channelAccountId, SIMULATED],
       ),
     ).toEqual({ c: 1 });
   });

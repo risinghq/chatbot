@@ -7,7 +7,7 @@ import { newId } from "@vendeya/utils";
 
 import { env } from "cloudflare:workers";
 import type { ChannelAccount, ChannelType } from "@vendeya/types";
-import { batch, getAll, getOne, stmt } from "../../db/index.ts";
+import { batch, getAll, getOne, run, stmt } from "../../db/index.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { decryptSecret, encryptSecret } from "../../platform/crypto/secrets.ts";
 
@@ -138,11 +138,32 @@ export const ChannelAccountService = {
       [id],
     )) ?? null,
 
+  /** The tenant's WhatsApp numbers. The simulator channel is not one. */
   listForTenant: (tenantId: string): Promise<ChannelAccount[]> =>
     getAll<ChannelAccount>(
-      "SELECT * FROM channel_accounts WHERE tenant_id = ? ORDER BY created_at",
+      `SELECT * FROM channel_accounts
+       WHERE tenant_id = ? AND channel_type = 'whatsapp'
+       ORDER BY created_at`,
       [tenantId],
     ),
+
+  /**
+   * The tenant's simulator channel, created on first use. It holds no
+   * credentials and nothing is ever sent on it, so a business can try its
+   * assistant before it connects a number.
+   */
+  simulatorFor: async (tenantId: string): Promise<ChannelAccount> => {
+    await run(
+      `INSERT OR IGNORE INTO channel_accounts
+         (id, tenant_id, channel_type, phone_number_id, label, status)
+       VALUES (?, ?, 'simulator', ?, 'Simulador', 'active')`,
+      [newId(), tenantId, tenantId],
+    );
+    return (await ChannelAccountService.getByPhoneNumberId(
+      tenantId,
+      "simulator",
+    ))!;
+  },
 
   /**
    * An account resolves whatever its status. The webhook logs and rejects
@@ -166,7 +187,7 @@ export const ChannelAccountService = {
   ): Promise<ChannelAccount | null> =>
     (await getOne<ChannelAccount>(
       `SELECT * FROM channel_accounts
-       WHERE tenant_id = ?
+       WHERE tenant_id = ? AND channel_type = 'whatsapp'
        ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, created_at
        LIMIT 1`,
       [tenantId],

@@ -14,6 +14,7 @@ import {
   createTenantFixture,
   insertConversation,
   insertUser,
+  simulatorRef,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
@@ -23,7 +24,6 @@ import {
 } from "../src/platform/auth/session.ts";
 import tenantRoutes from "../src/routes/tenants.ts";
 import simulatorRoutes from "../src/routes/simulator.ts";
-import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { webhookRequest } from "./helpers/turn.ts";
 import { signedWebhookRequest } from "./helpers/webhook.ts";
@@ -325,14 +325,7 @@ describe("foreign key enforcement", () => {
     });
 
     it("lets the simulator delete a conversation that reached checkout", async () => {
-      const account = (await ChannelAccountService.getDefaultForTenant(
-        tenant.tenantId,
-      ))!;
-      const ref = {
-        tenantId: tenant.tenantId,
-        channelAccountId: account.id,
-        phoneNumber: CUSTOMER,
-      };
+      const ref = await simulatorRef(tenant.tenantId, CUSTOMER);
       await insertConversation(ref, { isSimulation: true });
       const orderId = await insertOrder(ref);
 

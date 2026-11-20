@@ -154,7 +154,13 @@ runs one turn for one grouped message:
    emit `customer_message_received` ([Escalation](#escalation)).
 
 The simulator calls the same `answerMessage`, through the conversation's object,
-at once and with no inbox rows.
+at once and with no inbox rows. Its conversations live on the business's
+simulator channel (`channel_type = 'simulator'`), one per business, which
+`ChannelAccountService.simulatorFor` creates on first use. The number listings
+and the default account leave that channel out. A simulated turn marks nothing
+read and skips the events, the escalation's agent assignment and the staff
+alerts, so a test conversation never reaches a person. A failed simulated turn
+answers the simulator with the error instead of retrying.
 
 ## Core's transition
 
@@ -228,7 +234,8 @@ changed, the analytics rows, and marks the turn's inbox rows `processed`. A
 batch commits whole or not at all.
 
 A simulated conversation (`is_simulation = 1`) writes each reply to `messages`
-as `sent` and sends nothing.
+as `sent` and sends nothing. A send that reaches the adapter on the simulator
+channel is refused as `not_whatsapp` without calling Meta.
 
 The phase is written whatever the sends returned. A reply that failed for good
 is logged and the conversation moves on. An image that was neither sent nor

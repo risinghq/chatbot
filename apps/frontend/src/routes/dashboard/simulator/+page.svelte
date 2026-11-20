@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import { fetchApi } from "#lib/utils/api.js";
+import { ApiError, fetchApi } from "#lib/utils/api.js";
+import { toast } from "#lib/state/toast.svelte.js";
 import { phaseLabel } from "#lib/utils/conversation-phase.js";
 import { formatPhone, formatPrice } from "#lib/utils/formatters.js";
 import Button from "#lib/components/ui/button.svelte";
@@ -85,7 +86,7 @@ async function createNewConversation() {
     closePersonaDialog();
   } catch (error) {
     console.error("Failed to create conversation:", error);
-    alert("Error al crear simulación");
+    toast.error("No se pudo crear la simulación.");
   } finally {
     loading = false;
   }
@@ -109,7 +110,7 @@ async function deleteConversation(phone: string) {
     await loadTestConversations();
   } catch (error) {
     console.error("Failed to delete conversation:", error);
-    alert("Error al eliminar simulación");
+    toast.error("No se pudo eliminar la simulación.");
   } finally {
     loading = false;
   }
@@ -153,6 +154,11 @@ async function sendMessage(messageText?: string) {
     }
   } catch (error) {
     console.error("Send error:", error);
+    toast.error(
+      error instanceof ApiError && error.status === 409
+        ? "Agrega la clave de OpenAI en Configuración para probar el asistente."
+        : "El asistente no pudo responder. Intenta de nuevo.",
+    );
   } finally {
     loading = false;
   }
@@ -206,7 +212,7 @@ async function loadReplayConversation(
     await loadConversation(selectedPhone);
   } catch (error) {
     console.error("Failed to load replay:", error);
-    alert("No se pudo cargar la conversación");
+    toast.error("No se pudo cargar la conversación.");
   }
 }
 
@@ -281,7 +287,7 @@ async function applyEdit(index: number) {
     await loadConversation(selectedPhone);
   } catch (error) {
     console.error("Failed to apply edit:", error);
-    alert("Error al aplicar la edición");
+    toast.error("No se pudo aplicar la edición.");
   } finally {
     loading = false;
   }

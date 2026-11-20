@@ -133,7 +133,11 @@ channels.patch("/:id", async (c) => {
   const id = pathParam(c, "id");
 
   const account = await ChannelAccountService.getById(id);
-  if (!account || account.tenant_id !== tenantId) {
+  if (
+    !account ||
+    account.tenant_id !== tenantId ||
+    account.channel_type !== "whatsapp"
+  ) {
     return c.json({ error: "Channel account not found" }, 404);
   }
 
