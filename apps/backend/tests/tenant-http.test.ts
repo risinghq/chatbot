@@ -235,7 +235,6 @@ describe("HTTP authorization", () => {
       created_by: null,
     });
     await ProductService.create({
-      id: `prod-${crypto.randomUUID()}`,
       tenantId: beta.tenantId,
       name: "Beta Product",
       category: "cocinas",

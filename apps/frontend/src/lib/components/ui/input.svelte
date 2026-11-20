@@ -9,6 +9,7 @@ type Props = {
   disabled?: boolean;
   error?: boolean;
   autocomplete?: string;
+  inputmode?: "text" | "decimal" | "numeric";
   name?: string;
   class?: string;
   oninput?: (e: Event & { currentTarget: HTMLInputElement }) => void;
@@ -25,6 +26,7 @@ let {
   disabled = false,
   error = false,
   autocomplete,
+  inputmode,
   name,
   class: className = "",
   oninput,
@@ -39,6 +41,7 @@ let {
 	{disabled}
 	name={name}
 	autocomplete={autocomplete as any}
+	{inputmode}
 	spellcheck={type === "email" || type === "password" ? "false" : undefined}
 	bind:value
 	{oninput}

@@ -13,6 +13,7 @@ const sections = $derived.by(() => {
     { href: "/dashboard/conversations", label: "Conversaciones", icon: "chat" },
     { href: "/dashboard/orders", label: "Órdenes", icon: "bag" },
     { href: "/dashboard/catalog", label: "Catálogo", icon: "box" },
+    { href: "/dashboard/inventario", label: "Inventario", icon: "warehouse" },
   ];
   const tools: NavItem[] = [];
   if (auth.canAccessSimulator)

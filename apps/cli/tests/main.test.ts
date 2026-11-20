@@ -197,6 +197,58 @@ describe("vendeya", () => {
     expect(after.sent[0]?.headers.Authorization).toBe("Bearer vy_new");
   });
 
+  test("stock adjust finds the variant by SKU and takes a negative quantity after --", async () => {
+    const h = harness({
+      env: AUTHED,
+      reply: (sent) =>
+        sent.method === "GET"
+          ? { body: [{ variant_id: "v1", sku: "POLO-M" }] }
+          : { status: 201, body: { id: "m1" } },
+    });
+    const code = await main(
+      ["stock", "adjust", "POLO-M", "--note", "conteo", "--", "-2"],
+      h.io,
+    );
+    expect(code).toBe(0);
+    expect(h.sent[1]).toMatchObject({
+      method: "POST",
+      url: "http://local/api/stock/movements",
+      body: { variant_id: "v1", kind: "adjust", quantity: -2, note: "conteo" },
+    });
+  });
+
+  test("stock receive refuses an unknown SKU before writing", async () => {
+    const h = harness({ env: AUTHED, reply: () => ({ body: [] }) });
+    expect(await main(["stock", "receive", "NOPE", "3"], h.io)).toBe(2);
+    expect(h.sent.map((s) => s.method)).toEqual(["GET"]);
+  });
+
+  test("variants add sends amounts in cents", async () => {
+    const h = harness({ env: AUTHED });
+    const code = await main(
+      [
+        "variants",
+        "add",
+        "p1",
+        "POLO-M",
+        "49,90",
+        "--cost",
+        "21",
+        "--name",
+        "M",
+      ],
+      h.io,
+    );
+    expect(code).toBe(0);
+    expect(h.sent[0]?.body).toEqual({
+      sku: "POLO-M",
+      price_cents: 4990,
+      cost_cents: 2100,
+      name: "M",
+    });
+    expect(await main(["variants", "add", "p1", "X", "4.999"], h.io)).toBe(2);
+  });
+
   test("a rejected token is not stored", async () => {
     const h = harness({
       stdin: "vy_bad",

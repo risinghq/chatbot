@@ -267,7 +267,6 @@ describe("tenant isolation", () => {
       ).toHaveLength(0);
 
       await ProductService.create({
-        id: `prod-${crypto.randomUUID()}`,
         tenantId: beta.tenantId,
         name: "Beta Product",
         category: "cocinas",

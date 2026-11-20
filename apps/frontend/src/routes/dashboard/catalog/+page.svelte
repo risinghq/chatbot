@@ -84,9 +84,7 @@ function handlePeriodChange(period: CatalogPeriod) {
 }
 
 function handleProductClick(product: Product) {
-  if (auth.isAdmin) {
-    goto(`/dashboard/catalog/inventory/${product.id}`);
-  }
+  goto(`/dashboard/catalog/inventory/${product.id}`);
 }
 
 function handleBundleClick(bundle: Bundle) {
@@ -170,10 +168,10 @@ onMount(() => {
           </Button>
         {/if}
       {/if}
-      {#if canEdit || (activeTab === "inventory" && auth.isAdmin)}
+      {#if canEdit || (activeTab === "inventory" && auth.canEditCatalog)}
         <Button size="sm" onclick={openCreatePage}>
           {#if activeTab === "inventory"}
-            Nuevo producto base
+            Nuevo producto
           {:else if activeTab === "gaso"}
             Nuevo paquete GASO
           {:else}
@@ -193,7 +191,7 @@ onMount(() => {
 
   <Tabs bind:value={activeTab}>
     <TabsList>
-      <TabsTrigger value="inventory">Inventario (base)</TabsTrigger>
+      <TabsTrigger value="inventory">Productos</TabsTrigger>
       <TabsTrigger value="gaso">Gasodomésticos (bundles)</TabsTrigger>
       <TabsTrigger value="fnb">Financiera (FNB)</TabsTrigger>
     </TabsList>
@@ -201,7 +199,6 @@ onMount(() => {
     <TabsContent value="inventory">
       <InventoryGrid
         products={baseProducts}
-        canEdit={auth.isAdmin}
         onProductClick={handleProductClick}
       />
     </TabsContent>

@@ -20,6 +20,7 @@ import periods from "./routes/periods.ts";
 import providerRoutes from "./routes/providers.ts";
 import reports from "./routes/reports.ts";
 import simulator from "./routes/simulator.ts";
+import stock from "./routes/stock.ts";
 import systemLogs from "./routes/system-logs.ts";
 import tenants from "./routes/tenants.ts";
 import webhook from "./routes/webhook.ts";
@@ -63,6 +64,7 @@ app.route("/api/assets", assets);
 app.route("/api/simulator", simulator);
 app.route("/api/conversations", conversations);
 app.route("/api/catalog", catalog);
+app.route("/api/stock", stock);
 app.route("/api/periods", periods);
 app.route("/api/orders", orders);
 

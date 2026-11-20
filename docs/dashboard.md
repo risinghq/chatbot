@@ -90,7 +90,8 @@ routes/
     +page.svelte                    home: setup checklist and warnings
     +layout.svelte                  sidebar, a drawer below md
     conversations/  [phone]/        inbox and one conversation
-    catalog/  bundles/[id]/  inventory/[id]/
+    catalog/  bundles/[id]/  inventory/[id]/   products and offers; one product and its variants
+    inventario/                     stock per variant and the movement ledger
     orders/  [orderId]/
     reports/                        admin, developer, supervisor
     activity/                       system activity
@@ -132,7 +133,9 @@ Conventions the pages follow:
 - Dates and money go through
   [`lib/utils/formatters.ts`](../apps/frontend/src/lib/utils/formatters.ts),
   which formats for `es-PE` in `America/Lima`. Prices are written
-  `S/ {formatPrice(x)}`.
+  `S/ {formatPrice(x)}`. A variant's price and cost arrive in cents: show them
+  with `formatCents` and read typed amounts with `parseCents`, both in
+  [`lib/utils/money.ts`](../apps/frontend/src/lib/utils/money.ts).
 - Styling is Tailwind v4 utility classes on the tokens in
   [`lib/styles/tokens.css`](../apps/frontend/src/lib/styles/tokens.css).
   [docs/design.md](./design.md) owns the visual rules.
@@ -169,6 +172,42 @@ array. The bot parses both on every catalog read. The create route holds `name`,
 `POST /api/catalog/bundles/bulk-update` holds `is_active` and `stock_status` to
 them, and answers 400 when `ids` is empty or `updates` is not an object that
 sets one of the two. A value that fails answers 400 and changes nothing.
+
+## Products, variants and stock
+
+A product is what the business sells: name, description, category, brand, model,
+specs and a status (`draft`, `active` or `archived`). A variant is the sellable
+unit: its own SKU, `price_cents` and optional `cost_cents`. A product sold in
+one form has one variant with no name. A SKU is unique inside a business, and a
+second use answers 409.
+
+| Endpoint                                         | Does                                                      |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| `GET`, `POST /api/catalog/products/:id/variants` | A product's variants; add one (201)                       |
+| `PATCH /api/catalog/variants/:id`                | Change name, SKU, price, cost or `is_active`              |
+| `GET /api/stock[?location_id=]`                  | On hand, reserved and available per variant               |
+| `GET`, `POST /api/stock/locations`               | Where stock is kept; a duplicate name is 409              |
+| `GET /api/stock/movements[?variant_id=&limit=]`  | The ledger, newest first                                  |
+| `POST /api/stock/movements`                      | Record `{variant_id, location_id?, kind, quantity, note}` |
+
+Stock changes only through a movement. Each movement and its level change are
+one `batch()`, and the table's CHECK keeps on hand and reserved at zero or more,
+with reserved never above on hand. A movement that would break that answers 409
+and writes nothing. The kinds:
+
+- `receive` adds a positive quantity to on hand.
+- `adjust` adds a signed quantity to on hand, after a count.
+- `reserve` and `release` move a positive quantity into and out of reserved.
+- `ship` takes a positive quantity out of both on hand and reserved.
+
+A business with no location gets "Almacén principal" on its first movement. With
+one location, a movement may leave out `location_id`. With several, it must name
+one, or the API answers 400. Reading stock is open to every role in the
+business. Writing variants, locations and movements needs admin, developer or
+supervisor.
+
+The Inventario page records only `receive` and `adjust`. Orders will reserve,
+release and ship on their own.
 
 ## What has no page
 

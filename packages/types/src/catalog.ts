@@ -143,15 +143,34 @@ export const CATEGORY_GROUPS = {
   },
 } as const;
 
-/** Base product template (segment-agnostic inventory) */
+export type ProductStatus = "draft" | "active" | "archived";
+
+/** What a business sells. Its variants carry the SKU, price and stock. */
 export type Product = {
   id: string;
   tenant_id: string;
   name: string;
+  description: string | null;
+  status: ProductStatus;
   category: string;
   brand: string | null;
   model: string | null;
   specs_json: string | null;
+  created_at: number;
+  /** Present on list reads. */
+  variant_count?: number;
+};
+
+/** One sellable form of a product. Money is in cents. */
+export type ProductVariant = {
+  id: string;
+  tenant_id: string;
+  product_id: string;
+  name: string | null;
+  sku: string;
+  price_cents: number;
+  cost_cents: number | null;
+  is_active: 0 | 1;
   created_at: number;
 };
 

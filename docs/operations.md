@@ -140,6 +140,11 @@ bun run vendeya businesses create --name "Tienda Ejemplo"
 bun run vendeya businesses use <business id>
 printf '%s' "$OPENAI_KEY" | bun run vendeya secrets set openai_api_key
 bun run vendeya setup
+bun run vendeya products create --name "Polo básico" --category ropa
+bun run vendeya variants add <product id> POLO-M 49.90 --name M --cost 21
+bun run vendeya stock receive POLO-M 10 --note "Factura 001-2345"
+bun run vendeya stock adjust POLO-M -- -2
+bun run vendeya stock list
 ```
 
 `bun run vendeya --help` lists every command. Each answer is JSON on stdout and

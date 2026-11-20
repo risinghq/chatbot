@@ -131,7 +131,6 @@ describe("created_at over HTTP", () => {
 
   it("returns Product.created_at as a number", async () => {
     await ProductService.create({
-      id: `prod-${crypto.randomUUID()}`,
       tenantId: tenant.tenantId,
       name: "Cocina",
       category: "cocinas",

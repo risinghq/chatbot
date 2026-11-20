@@ -6,6 +6,11 @@ import {
   bundleFieldsError,
 } from "../domains/catalog/index.ts";
 import { PeriodService } from "../domains/catalog/periods.ts";
+import {
+  parseVariantFields,
+  VariantService,
+  type VariantFields,
+} from "../domains/catalog/variants.ts";
 import { imageStorage, isUnreadableImage } from "../adapters/storage/images.ts";
 import { AssetService } from "../domains/assets/index.ts";
 import { logAction } from "../platform/audit/logger.ts";
@@ -21,6 +26,9 @@ const catalog = new Hono();
 const requireCatalogWrite = requireRole("admin", "developer", "supervisor");
 
 const NOT_AN_OBJECT = "Request body must be a JSON object";
+
+const PRODUCT_STATUSES: unknown[] = ["draft", "active", "archived"];
+const INVALID_STATUS = "status must be draft, active or archived";
 
 async function jsonObject(c: Context): Promise<Record<string, unknown> | null> {
   const body: unknown = await c.req.json().catch(() => null);
@@ -60,18 +68,22 @@ catalog.post(
   async (c) => {
     const user = c.get("user");
     const tenantId = activeTenantId(c);
-    const { name, category, brand, model, specs_json } = await c.req.json();
+    const { name, category, description, status, brand, model, specs_json } =
+      await c.req.json();
 
     if (!name || !category) {
       return c.json({ error: "Name and category required" }, 400);
     }
+    if (status !== undefined && !PRODUCT_STATUSES.includes(status)) {
+      return c.json({ error: INVALID_STATUS }, 400);
+    }
 
-    const id = `prod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const product = await ProductService.create({
-      id,
       tenantId,
       name,
       category,
+      description,
+      status,
       brand,
       model,
       specs_json,
@@ -81,7 +93,7 @@ catalog.post(
       { userId: user.id, tenantId },
       "create_product",
       "product",
-      id,
+      product.id,
       {
         name,
         category,
@@ -100,6 +112,12 @@ catalog.patch(
     const user = c.get("user");
     const tenantId = activeTenantId(c);
     const updates = await c.req.json();
+    if (
+      updates.status !== undefined &&
+      !PRODUCT_STATUSES.includes(updates.status)
+    ) {
+      return c.json({ error: INVALID_STATUS }, 400);
+    }
 
     const product = await ProductService.update(tenantId, id, updates);
     if (!product) return c.json({ error: "Product not found" }, 404);
@@ -112,6 +130,78 @@ catalog.patch(
       updates,
     );
     return c.json(product);
+  },
+);
+
+// ============ VARIANTS ============
+
+catalog.get("/products/:id/variants", requireActiveTenant, async (c) => {
+  const tenantId = activeTenantId(c);
+  const productId = pathParam(c, "id");
+  if (!(await ProductService.getById(tenantId, productId))) {
+    return c.json({ error: "Product not found" }, 404);
+  }
+  return c.json(await VariantService.listByProduct(tenantId, productId));
+});
+
+catalog.post(
+  "/products/:id/variants",
+  requireActiveTenant,
+  requireCatalogWrite,
+  async (c) => {
+    const tenantId = activeTenantId(c);
+    const productId = pathParam(c, "id");
+    const body = await jsonObject(c);
+    if (!body) return c.json({ error: NOT_AN_OBJECT }, 400);
+
+    const fields = parseVariantFields(body, false);
+    if (typeof fields === "string") return c.json({ error: fields }, 400);
+    if (!(await ProductService.getById(tenantId, productId))) {
+      return c.json({ error: "Product not found" }, 404);
+    }
+
+    const variant = await VariantService.create(tenantId, productId, {
+      name: null,
+      cost_cents: null,
+      is_active: 1,
+      ...(fields as Pick<VariantFields, "sku" | "price_cents">),
+    });
+
+    await logAction(
+      { userId: c.get("user").id, tenantId },
+      "create_variant",
+      "product_variant",
+      variant.id,
+      { product_id: productId, sku: variant.sku },
+    );
+    return c.json(variant, 201);
+  },
+);
+
+catalog.patch(
+  "/variants/:id",
+  requireActiveTenant,
+  requireCatalogWrite,
+  async (c) => {
+    const tenantId = activeTenantId(c);
+    const id = pathParam(c, "id");
+    const body = await jsonObject(c);
+    if (!body) return c.json({ error: NOT_AN_OBJECT }, 400);
+
+    const fields = parseVariantFields(body, true);
+    if (typeof fields === "string") return c.json({ error: fields }, 400);
+
+    const variant = await VariantService.update(tenantId, id, fields);
+    if (!variant) return c.json({ error: "Variant not found" }, 404);
+
+    await logAction(
+      { userId: c.get("user").id, tenantId },
+      "update_variant",
+      "product_variant",
+      id,
+      fields,
+    );
+    return c.json(variant);
   },
 );
 
