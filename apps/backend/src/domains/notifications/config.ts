@@ -79,7 +79,7 @@ export const notificationRules: NotificationRule[] = [
           urlSuffix: `/orders/${event.payload.orderId}`,
         },
         event.payload.orderNumber,
-        event.payload.amount,
+        event.payload.amountCents,
         event.payload.productName,
       );
     },

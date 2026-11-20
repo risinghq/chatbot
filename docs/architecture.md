@@ -125,7 +125,9 @@ conversation's object keeps a second writer out.
 | Catalog and simulator | `catalog_periods`, `products`, `product_variants`, `product_images`, `catalog_bundles`, `test_personas` |
 | Stock                 | `stock_locations`, `stock_levels`, `stock_movements`                                                    |
 | Conversations         | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`                                 |
-| Sales and records     | `orders`, `assets`, `analytics_events`, `llm_calls`, `notification_traces`, `audit_log`                 |
+| Customers             | `customers`, `customer_addresses`                                                                       |
+| Orders                | `orders`, `order_lines`, `payments`, `shipments`, `delivery_zones`, `payment_methods`                   |
+| Records               | `assets`, `analytics_events`, `llm_calls`, `notification_traces`, `audit_log`                           |
 | Settings              | `system_settings`, `tenant_settings`                                                                    |
 
 A conversation's phase and metadata are one JSON column,

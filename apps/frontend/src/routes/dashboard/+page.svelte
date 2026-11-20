@@ -42,7 +42,7 @@ onMount(() => {
   fetchApi<Conversation[]>("/api/conversations")
     .then((list) => (conversations = list))
     .catch(() => (conversations = []));
-  // Sales agents cannot read order metrics; the tile hides instead of failing.
+  // The tile hides instead of failing when the metrics cannot load.
   fetchApi<OrderMetrics>("/api/orders/metrics")
     .then((m) => (metrics = m))
     .catch(() => (metrics = null));
@@ -71,7 +71,7 @@ onMount(() => {
 			</section>
 		{:else if !auth.activeTenantId}
 			<Banner tone="info" title="Ningún negocio seleccionado">
-				Elige un negocio en el menú para ver sus conversaciones y órdenes.
+				Elige un negocio en el menú para ver sus conversaciones y pedidos.
 				{#snippet action()}
 					{#if auth.isPlatformOperator}
 						<Button href="/dashboard/negocios" variant="secondary" size="sm">Ir a Negocios</Button>
@@ -113,8 +113,8 @@ onMount(() => {
 						href="/dashboard/orders?status=pending"
 						class="rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-border-strong"
 					>
-						<p class="text-sm text-fg-muted">Órdenes por aprobar</p>
-						<p class="mt-1 text-xl text-fg tabular-nums">{metrics.pendingCount}</p>
+						<p class="text-sm text-fg-muted">Pedidos por confirmar</p>
+						<p class="mt-1 text-xl text-fg tabular-nums">{metrics.byStatus.pending}</p>
 					</a>
 				{/if}
 			</div>

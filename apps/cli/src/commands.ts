@@ -15,6 +15,13 @@ export type CommandContext = {
     cost?: string;
     location?: string;
     note?: string;
+    status?: string;
+    phone?: string;
+    channel?: string;
+    zone?: string;
+    address?: string;
+    method?: string;
+    reference?: string;
     yes?: boolean;
   };
   call(method: string, path: string, body?: unknown): Promise<unknown>;
@@ -88,6 +95,50 @@ async function moveStock(
     quantity,
     note: ctx.options.note ?? null,
   });
+}
+
+function orderPath(id: string, rest = ""): string {
+  return `/api/orders/${encodeURIComponent(id)}${rest}`;
+}
+
+/** `<sku>=<quantity>` arguments as order lines, each SKU resolved to its variant. */
+async function orderLines(
+  ctx: CommandContext,
+  specs: string[],
+): Promise<{ variant_id: string; quantity: number }[]> {
+  if (specs.length === 0) throw new UsageError("Missing <sku>=<quantity>.");
+  const rows = (await ctx.call("GET", "/api/stock")) as StockRow[];
+  return specs.map((spec) => {
+    const at = spec.lastIndexOf("=");
+    if (at <= 0)
+      throw new UsageError(`Expected <sku>=<quantity>, got ${spec}.`);
+    const sku = spec.slice(0, at);
+    const row = rows.find((r) => r.sku === sku);
+    if (!row) throw new UsageError(`No variant has SKU ${sku}.`);
+    return {
+      variant_id: row.variant_id,
+      quantity: wholeNumber(spec.slice(at + 1), `quantity of ${sku}`),
+    };
+  });
+}
+
+/**
+ * A method the business set up, by id or name, or else a name recorded as
+ * given, such as a one-off transfer.
+ */
+async function paymentMethod(
+  ctx: CommandContext,
+  method: string,
+): Promise<{ method_id: string } | { method_name: string }> {
+  const methods = (await ctx.call("GET", "/api/payment-methods")) as {
+    id: string;
+    name: string;
+  }[];
+  const lower = method.toLowerCase();
+  const found = methods.find(
+    (m) => m.id === method || m.name.toLowerCase() === lower,
+  );
+  return found ? { method_id: found.id } : { method_name: method };
 }
 
 type SimulatedMessage = {
@@ -397,6 +448,167 @@ export const COMMANDS: Command[] = [
     summary:
       "Correct stock after a count. Options go before `--`, which lets the quantity be negative.",
     run: (ctx) => moveStock(ctx, "adjust"),
+  },
+  {
+    words: "customers list",
+    usage: "customers list",
+    summary: "Customers of the active business, newest first.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 0);
+      return ctx.call("GET", "/api/customers");
+    },
+  },
+  {
+    words: "customers show",
+    usage: "customers show <customer id>",
+    summary: "A customer with their addresses.",
+    run: async (ctx) => {
+      noMoreArgs(ctx, 1);
+      const id = encodeURIComponent(need(ctx.args[0], "customer id"));
+      const customer = (await ctx.call(
+        "GET",
+        `/api/customers/${id}`,
+      )) as object;
+      const addresses = await ctx.call("GET", `/api/customers/${id}/addresses`);
+      return { ...customer, addresses };
+    },
+  },
+  {
+    words: "orders list",
+    usage: "orders list [--status <status>]",
+    summary: "Orders, newest first, with their payment state.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 0);
+      const status = ctx.options.status;
+      return ctx.call(
+        "GET",
+        status
+          ? `/api/orders?status=${encodeURIComponent(status)}`
+          : "/api/orders",
+      );
+    },
+  },
+  {
+    words: "orders show",
+    usage: "orders show <order id>",
+    summary: "An order with its customer, lines, payments and shipment.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 1);
+      return ctx.call("GET", orderPath(need(ctx.args[0], "order id")));
+    },
+  },
+  {
+    words: "orders create",
+    usage:
+      "orders create --phone <digits> --name <customer> <sku>=<quantity>... [--channel <id>] [--zone <id>] [--address <text>] [--note <text>]",
+    summary:
+      "Take an order and reserve its stock. --address ships it; without it the customer picks up.",
+    run: async (ctx) => {
+      const { options } = ctx;
+      if (options.zone && !options.address) {
+        throw new UsageError("--zone needs --address.");
+      }
+      return ctx.call("POST", "/api/orders", {
+        customer: {
+          phone: need(options.phone, "--phone"),
+          name: need(options.name, "--name"),
+        },
+        channel_account_id: options.channel ?? null,
+        lines: await orderLines(ctx, ctx.args),
+        location_id: options.location ?? null,
+        shipment: options.address
+          ? { address_line: options.address, zone_id: options.zone ?? null }
+          : null,
+        notes: options.note ?? null,
+      });
+    },
+  },
+  {
+    words: "orders status",
+    usage:
+      "orders status <order id> <confirmed|packed|shipped|delivered|cancelled>",
+    summary:
+      "Move an order on. Shipping takes its stock out; cancelling gives it back and needs --yes.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 2);
+      const id = need(ctx.args[0], "order id");
+      const status = need(ctx.args[1], "status");
+      if (status === "cancelled") confirmed(ctx, "Cancelling an order");
+      return ctx.call("POST", orderPath(id, "/transition"), { status });
+    },
+  },
+  {
+    words: "payments add",
+    usage:
+      "payments add <order id> <amount> --method <method id or name> [--reference <operation number>]",
+    summary:
+      "Record a payment, pending until confirmed. An unknown method name is kept as given.",
+    run: async (ctx) => {
+      noMoreArgs(ctx, 2);
+      const id = need(ctx.args[0], "order id");
+      const amount = cents(ctx.args[1], "amount");
+      return ctx.call("POST", orderPath(id, "/payments"), {
+        ...(await paymentMethod(ctx, need(ctx.options.method, "--method"))),
+        amount_cents: amount,
+        reference: ctx.options.reference ?? null,
+      });
+    },
+  },
+  ...(["confirm", "reject"] as const).map(
+    (action): Command => ({
+      words: `payments ${action}`,
+      usage: `payments ${action} <order id> <payment id>`,
+      summary:
+        action === "confirm"
+          ? "Count a payment toward its order (admins and supervisors)."
+          : "Mark a payment as not received (admins and supervisors).",
+      run: (ctx) => {
+        noMoreArgs(ctx, 2);
+        const id = need(ctx.args[0], "order id");
+        const payment = encodeURIComponent(need(ctx.args[1], "payment id"));
+        return ctx.call(
+          "POST",
+          orderPath(id, `/payments/${payment}/${action}`),
+        );
+      },
+    }),
+  ),
+  {
+    words: "zones list",
+    usage: "zones list",
+    summary: "Delivery zones and their fee in cents.",
+    run: (ctx) => ctx.call("GET", "/api/delivery-zones"),
+  },
+  {
+    words: "zones add",
+    usage: "zones add <fee> --name <zone>",
+    summary: "Add a delivery zone. The fee is an amount such as 10.00.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 1);
+      return ctx.call("POST", "/api/delivery-zones", {
+        name: need(ctx.options.name, "--name"),
+        fee_cents: cents(ctx.args[0], "fee"),
+      });
+    },
+  },
+  {
+    words: "methods list",
+    usage: "methods list",
+    summary: "Payment methods the business accepts.",
+    run: (ctx) => ctx.call("GET", "/api/payment-methods"),
+  },
+  {
+    words: "methods add",
+    usage:
+      "methods add --name <method> [--note <instructions for the customer>]",
+    summary: "Add a payment method, such as Yape with its number.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 0);
+      return ctx.call("POST", "/api/payment-methods", {
+        name: need(ctx.options.name, "--name"),
+        instructions: ctx.options.note ?? null,
+      });
+    },
   },
   {
     words: "simulate list",

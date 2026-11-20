@@ -114,8 +114,8 @@ describe("the link an alert carries", () => {
       type: "order_created",
       payload: {
         orderId: "ord-1",
-        orderNumber: "A-001",
-        amount: 1799,
+        orderNumber: "1001",
+        amountCents: 179900,
         clientName: "Ana",
         phoneNumber: CUSTOMER,
         dni: "12345678",

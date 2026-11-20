@@ -114,10 +114,10 @@ async function generateOrders(e: Event) {
   try {
     await download(
       `/api/reports/orders?${params}`,
-      `reporte-ordenes-${range}.xlsx`,
+      `reporte-pedidos-${range}.xlsx`,
     );
   } catch {
-    toast.error("No se pudo generar el reporte de órdenes");
+    toast.error("No se pudo generar el reporte de pedidos");
   } finally {
     generatingOrders = false;
   }
@@ -178,8 +178,8 @@ async function generateOrders(e: Event) {
 
 		<form onsubmit={generateOrders}>
 			<SectionShell
-				title="Órdenes"
-				description="Cada orden con su estado, monto y aprobaciones. Sin fechas, incluye todas."
+				title="Pedidos"
+				description="Cada pedido con su cliente, total, pago y estado. Sin fechas, incluye todos."
 			>
 				<div class="flex flex-col gap-4 p-4">
 					{@render dateRange("orders", orderStartDate, orderEndDate, (v) => (orderStartDate = v), (v) => (orderEndDate = v))}

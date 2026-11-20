@@ -60,12 +60,12 @@ export const templates = {
   newOrder(
     ctx: NotificationContext,
     orderNumber: string,
-    amount: number,
+    amountCents: number,
     productName?: string,
   ): string {
     const ident = b(ctx.clientName || ctx.phoneNumber);
     const dniContext = ctx.dni ? ` (${ctx.dni})` : "";
-    const money = b(`S/ ${amount.toFixed(2)}`);
+    const money = b(`S/ ${(amountCents / 100).toFixed(2)}`);
     const product = productName ? ` Escogió: ${productName}` : "";
 
     return [

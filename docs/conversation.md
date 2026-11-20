@@ -367,10 +367,12 @@ A reply to an objection that the regexes do not recognize costs one LLM call to
 ask whether it is a question. A question is answered or escalated. Anything else
 gets "¿Te gustaría ver alguna otra opción?" and the phase stays.
 
-A confirmed selection emits `purchase_confirmed`, which creates an order with
-quantity 1 and address "Pendiente de coordinación"
-([`bootstrap/event-bus-setup.ts`](../apps/backend/src/bootstrap/event-bus-setup.ts)),
-and tells the customer a colleague will call. The bot does not close the sale.
+A confirmed selection emits `purchase_confirmed`. That finds or creates the
+customer by phone and files a pending order with one free line, the chosen
+product at its price, and no shipment
+([`bootstrap/event-bus-setup.ts`](../apps/backend/src/bootstrap/event-bus-setup.ts)).
+The bot tells the customer a colleague will call. That colleague sets the
+variant, address and payment. The bot does not close the sale.
 
 `escalated` and `waiting_for_recovery` are terminal inside core. While a
 conversation is `escalated`, the bot still runs a turn for each message, marks

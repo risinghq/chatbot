@@ -1,10 +1,10 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import {
   STOCK_MOVEMENT_KINDS,
   type StockLocation,
   type StockMovementKind,
 } from "@vendeya/types";
-import { queryLimit } from "../lib/http.ts";
+import { jsonObject, queryLimit } from "../lib/http.ts";
 import { VariantService } from "../domains/catalog/variants.ts";
 import { quantityError, StockService } from "../domains/stock/index.ts";
 import { logAction } from "../platform/audit/logger.ts";
@@ -21,14 +21,6 @@ const requireStockWrite = requireRole("admin", "developer", "supervisor");
 
 // Stock belongs to one business, so every route reads the pinned tenant.
 stock.use("/*", requireTenantScope, requireActiveTenant);
-
-async function jsonObject(c: Context): Promise<Record<string, unknown> | null> {
-  const body: unknown = await c.req.json().catch(() => null);
-  if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    return null;
-  }
-  return body as Record<string, unknown>;
-}
 
 stock.get("/", async (c) => {
   const tenantId = activeTenantId(c);

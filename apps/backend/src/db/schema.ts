@@ -125,6 +125,39 @@ export interface ConversationsTable {
   assignment_notified_at: number | null;
 }
 
+export interface CustomerAddressesTable {
+  id: string;
+  tenant_id: string;
+  customer_id: string;
+  line: string;
+  district: string | null;
+  city: string | null;
+  reference: string | null;
+  created_at: Generated<number>;
+}
+
+export interface CustomersTable {
+  id: string;
+  tenant_id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  document_type: "dni" | "ce" | "ruc" | "passport" | null;
+  document_number: string | null;
+  notes: string | null;
+  created_at: Generated<number>;
+  updated_at: Generated<number>;
+}
+
+export interface DeliveryZonesTable {
+  id: string;
+  tenant_id: string;
+  name: string;
+  fee_cents: number;
+  is_active: Generated<0 | 1>;
+  created_at: Generated<number>;
+}
+
 export interface InvitationsTable {
   id: string;
   tenant_id: string;
@@ -203,22 +236,32 @@ export interface NotificationTracesTable {
   created_at: Generated<number>;
 }
 
+export interface OrderLinesTable {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  variant_id: string | null;
+  sku: string | null;
+  name: string;
+  unit_price_cents: number;
+  quantity: number;
+  position: number;
+}
+
 export interface OrdersTable {
   id: string;
   tenant_id: string;
-  channel_account_id: string;
-  order_number: string;
-  conversation_phone: string;
-  client_name: string;
-  client_dni: string;
-  products: string;
-  total_amount: number;
-  delivery_address: string;
-  delivery_reference: string | null;
-  status: Generated<"pending" | "supervisor_approved" | "supervisor_rejected" | "calidda_approved" | "calidda_rejected" | "delivered" | null>;
-  assigned_agent: string | null;
-  supervisor_notes: string | null;
-  calidda_notes: string | null;
+  number: number;
+  customer_id: string;
+  channel_account_id: string | null;
+  source: "assistant" | "staff";
+  status: Generated<"pending" | "confirmed" | "packed" | "shipped" | "delivered" | "cancelled">;
+  location_id: string | null;
+  subtotal_cents: number;
+  delivery_fee_cents: Generated<number>;
+  total_cents: number;
+  notes: string | null;
+  created_by: string | null;
   created_at: Generated<number>;
   updated_at: Generated<number>;
 }
@@ -241,6 +284,29 @@ export interface OutboxTable {
   created_at: Generated<number>;
   updated_at: Generated<number>;
   handed_off_at: number | null;
+}
+
+export interface PaymentMethodsTable {
+  id: string;
+  tenant_id: string;
+  name: string;
+  instructions: string | null;
+  is_active: Generated<0 | 1>;
+  created_at: Generated<number>;
+}
+
+export interface PaymentsTable {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  payment_method_id: string | null;
+  method_name: string;
+  amount_cents: number;
+  status: Generated<"pending" | "confirmed" | "rejected">;
+  reference: string | null;
+  created_by: string | null;
+  created_at: Generated<number>;
+  decided_at: number | null;
 }
 
 export interface ProductImagesTable {
@@ -288,6 +354,25 @@ export interface SessionTable {
   last_used_at: number | null;
 }
 
+export interface ShipmentsTable {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  delivery_zone_id: string | null;
+  zone_name: string | null;
+  recipient_name: string;
+  recipient_phone: string | null;
+  address_line: string;
+  district: string | null;
+  city: string | null;
+  reference: string | null;
+  carrier: string | null;
+  tracking_code: string | null;
+  shipped_at: number | null;
+  delivered_at: number | null;
+  created_at: Generated<number>;
+}
+
 export interface StockLevelsTable {
   tenant_id: string;
   variant_id: string;
@@ -313,6 +398,7 @@ export interface StockMovementsTable {
   note: string | null;
   created_by: string | null;
   created_at: Generated<number>;
+  order_id: string | null;
 }
 
 export interface SystemSettingsTable {
@@ -400,17 +486,24 @@ export interface Database {
   channel_accounts: ChannelAccountsTable;
   channel_secrets: ChannelSecretsTable;
   conversations: ConversationsTable;
+  customer_addresses: CustomerAddressesTable;
+  customers: CustomersTable;
+  delivery_zones: DeliveryZonesTable;
   invitations: InvitationsTable;
   llm_calls: LlmCallsTable;
   message_inbox: MessageInboxTable;
   messages: MessagesTable;
   notification_traces: NotificationTracesTable;
+  order_lines: OrderLinesTable;
   orders: OrdersTable;
   outbox: OutboxTable;
+  payment_methods: PaymentMethodsTable;
+  payments: PaymentsTable;
   product_images: ProductImagesTable;
   product_variants: ProductVariantsTable;
   products: ProductsTable;
   session: SessionTable;
+  shipments: ShipmentsTable;
   stock_levels: StockLevelsTable;
   stock_locations: StockLocationsTable;
   stock_movements: StockMovementsTable;
@@ -434,16 +527,23 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "channel_accounts",
   "channel_secrets",
   "conversations",
+  "customer_addresses",
+  "customers",
+  "delivery_zones",
   "invitations",
   "llm_calls",
   "message_inbox",
   "messages",
   "notification_traces",
+  "order_lines",
   "orders",
   "outbox",
+  "payment_methods",
+  "payments",
   "product_images",
   "product_variants",
   "products",
+  "shipments",
   "stock_levels",
   "stock_locations",
   "stock_movements",

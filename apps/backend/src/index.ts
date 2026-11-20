@@ -14,6 +14,8 @@ import assets from "./routes/assets.ts";
 import auth from "./routes/auth.ts";
 import catalog from "./routes/catalog.ts";
 import conversations from "./routes/conversations.ts";
+import customers from "./routes/customers.ts";
+import { deliveryZones, paymentMethods } from "./routes/order-settings.ts";
 import health from "./routes/health.ts";
 import orders from "./routes/orders.ts";
 import periods from "./routes/periods.ts";
@@ -67,6 +69,9 @@ app.route("/api/catalog", catalog);
 app.route("/api/stock", stock);
 app.route("/api/periods", periods);
 app.route("/api/orders", orders);
+app.route("/api/customers", customers);
+app.route("/api/delivery-zones", deliveryZones);
+app.route("/api/payment-methods", paymentMethods);
 
 const requireAnalyticsAccess = requireRole("admin", "developer", "supervisor");
 app.use("/api/analytics/*", requireAnalyticsAccess);

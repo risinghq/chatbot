@@ -65,27 +65,30 @@ const ROUTES: Route[] = [
     path: "/api/orders",
     fallback: 50,
     async seed(tenant, _userId, count) {
-      await batch(
-        Array.from({ length: count }, (_, i) =>
+      const customerId = crypto.randomUUID();
+      await batch([
+        stmt(
+          "INSERT INTO customers (id, tenant_id, name, phone) VALUES (?, ?, 'Ana', ?)",
+          [customerId, tenant.tenantId, CUSTOMER],
+        ),
+        ...Array.from({ length: count }, (_, i) =>
           stmt(
             `INSERT INTO orders
-           (id, tenant_id, channel_account_id, order_number, conversation_phone,
-            client_name, client_dni, products, total_amount, delivery_address,
-            status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'Ana', '12345678', '[]', 10, 'Av. Lima 123',
-                 'pending', ?, ?)`,
+               (id, tenant_id, number, customer_id, channel_account_id, source,
+                subtotal_cents, total_cents, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'assistant', 1000, 1000, ?, ?)`,
             [
               crypto.randomUUID(),
               tenant.tenantId,
+              1001 + i,
+              customerId,
               tenant.channelAccountId,
-              `ORD-TEST-${i}`,
-              CUSTOMER,
               Date.now() + i,
               Date.now() + i,
             ],
           ),
         ),
-      );
+      ]);
     },
     count: (body) => (body as unknown[]).length,
   },

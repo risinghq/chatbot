@@ -12,7 +12,8 @@ import type {
   CatalogPeriod,
   Conversation,
   ConversationMessage,
-  Order,
+  OrderDetail,
+  OrderSummary,
   Product,
   User,
 } from "@vendeya/types";
@@ -20,6 +21,7 @@ import type {
 import {
   createMember,
   createTenantFixture,
+  fileOrder,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -40,7 +42,7 @@ import adminSystemRoutes from "../src/routes/admin/system.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
-import { createOrder, updateOrderStatus } from "../src/domains/orders/write.ts";
+import { OrderWrites } from "../src/domains/orders/index.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { uploadContract } from "../src/domains/conversations/media.ts";
 import { trackEventStatement } from "../src/domains/analytics/index.ts";
@@ -234,37 +236,28 @@ describe("created_at over HTTP", () => {
   });
 
   it("returns Order.created_at as a number", async () => {
-    await createOrder({
-      ref: tenant.ref(PHONE),
-      clientName: "Client",
-      clientDni: "87654321",
-      products: [{ productId: "p1", name: "Terma", price: 200, quantity: 1 }],
-      totalAmount: 200,
-      deliveryAddress: "Callao",
-    });
+    await fileOrder(tenant.ref(PHONE));
 
-    const orders = await getJson<Order[]>("/api/orders");
+    const orders = await getJson<OrderSummary[]>("/api/orders");
 
     expect(orders).toHaveLength(1);
     expectMilliseconds(orders[0]!.created_at);
   });
 
   it("returns Order.updated_at as a number, before and after a status change", async () => {
-    const created = await createOrder({
-      ref: tenant.ref(PHONE),
-      clientName: "Client",
-      clientDni: "87654321",
-      products: [{ productId: "p1", name: "Terma", price: 200, quantity: 1 }],
-      totalAmount: 200,
-      deliveryAddress: "Callao",
-    });
+    const created = await fileOrder(tenant.ref(PHONE));
 
-    const [listed] = await getJson<Order[]>("/api/orders");
+    const [listed] = await getJson<OrderSummary[]>("/api/orders");
     expectMilliseconds(listed!.updated_at);
 
-    await updateOrderStatus(tenant.tenantId, created.id, "supervisor_approved");
+    await OrderWrites.transition(
+      tenant.tenantId,
+      created.id,
+      "confirmed",
+      userId,
+    );
 
-    const changed = await getJson<Order>(`/api/orders/${created.id}`);
+    const changed = await getJson<OrderDetail>(`/api/orders/${created.id}`);
     expectMilliseconds(changed.updated_at);
   });
 

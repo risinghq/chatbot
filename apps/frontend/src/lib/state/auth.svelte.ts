@@ -67,11 +67,17 @@ function createAuthState() {
     get canEditCatalog() {
       return this.isAdmin || this.isDeveloper || this.isSupervisor;
     },
-    get canApproveOrders() {
-      return this.isAdmin || this.isSupervisor;
+    /** Recording an order or a payment. */
+    get canTakeOrders() {
+      return this.canEditCatalog || this.isSalesAgent;
     },
-    get canApproveCaliida() {
-      return this.isAdmin;
+    /** Moving an order forward, which moves its stock. */
+    get canFulfilOrders() {
+      return this.isAdmin || this.isDeveloper || this.isSupervisor;
+    },
+    /** Cancelling an order and deciding payments change what is owed. */
+    get canDecideMoney() {
+      return this.isAdmin || this.isSupervisor;
     },
     get canAccessReports() {
       return this.isAdmin || this.isDeveloper || this.isSupervisor;

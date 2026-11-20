@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import {
   createMember,
   createTenantFixture,
+  fileOrder,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -20,7 +21,6 @@ import {
   createSession,
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
-import { createOrder } from "../src/domains/orders/write.ts";
 import orderRoutes from "../src/routes/orders.ts";
 import { importFrontend } from "./helpers/frontend.ts";
 
@@ -56,16 +56,7 @@ describe("the orders page load", () => {
 
     tenant = await createTenantFixture("orders-load");
     await insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
-    orderId = (
-      await createOrder({
-        ref: tenant.ref(CUSTOMER),
-        clientName: "Ana",
-        clientDni: "12345678",
-        products: [{ productId: "p1", price: 10, quantity: 1 }],
-        totalAmount: 10,
-        deliveryAddress: "Av. Lima 123",
-      })
-    ).id;
+    orderId = (await fileOrder(tenant.ref(CUSTOMER), { name: "Ana" })).id;
 
     const { userId } = await createMember(tenant, "admin");
     token = generateSessionToken();

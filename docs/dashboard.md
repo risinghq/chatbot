@@ -206,8 +206,49 @@ one, or the API answers 400. Reading stock is open to every role in the
 business. Writing variants, locations and movements needs admin, developer or
 supervisor.
 
-The Inventario page records only `receive` and `adjust`. Orders will reserve,
-release and ship on their own.
+The Inventario page records only `receive` and `adjust`. Orders reserve, release
+and ship on their own; [Orders](#orders) says when.
+
+## Orders
+
+An order belongs to a customer, a business-scoped record keyed by phone. Its
+lines name a variant, or are free lines with a name, SKU and price but no stock.
+Numbers start at 1001 in each business. Amounts are integer cents.
+
+The statuses and their moves are `ORDER_TRANSITIONS` in
+[`packages/types/src/orders.ts`](../packages/types/src/orders.ts):
+
+```text
+pending ─▶ confirmed ─▶ packed ─▶ shipped ─▶ delivered
+   │           │           └──────────────────▲  (pickup)
+   └───────────┴───────────┴──▶ cancelled
+```
+
+Stock follows the status. Creating an order reserves its variant lines.
+`shipped`, or `delivered` straight from `packed` for a pickup, ships them.
+Cancelling before `shipped` releases them. A move that short stock or the
+transition table forbids answers 409 and writes nothing.
+
+A payment is recorded as `pending` and counts toward the balance only once
+confirmed. A shipment is optional: an order with a delivery zone carries the
+zone's fee and an address; an order without one is a pickup. Who may do what is
+in [Tenancy](./tenancy.md).
+
+| Endpoint                                                        | Does                                                     |
+| --------------------------------------------------------------- | -------------------------------------------------------- |
+| `GET /api/orders[?status=&startDate=&endDate=]`                 | Summaries with customer, total, paid and payment state   |
+| `GET /api/orders/metrics`                                       | Count per status, outstanding and delivered cents        |
+| `GET /api/orders/:id`                                           | Customer, lines, payments, shipment                      |
+| `POST /api/orders`                                              | Create from a customer id or `{phone, name}`, with lines |
+| `POST /api/orders/:id/transition`                               | Move to `{status}`                                       |
+| `POST /api/orders/:id/payments`                                 | Record a payment                                         |
+| `POST /api/orders/:id/payments/:paymentId/confirm`              | Confirm it; `/reject` rejects it                         |
+| `PATCH /api/orders/:id/shipment`                                | Change the address, carrier or tracking                  |
+| `/api/customers`, `/api/delivery-zones`, `/api/payment-methods` | List, create, update and delete                          |
+
+The Pedidos page lists orders with these filters. One order's page shows its
+lines, shipment and payments, and offers the next moves the caller's role
+allows.
 
 ### Product photos
 

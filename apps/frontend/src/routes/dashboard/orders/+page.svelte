@@ -1,5 +1,6 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
+import { page } from "$app/state";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
@@ -10,15 +11,15 @@ import EmptyState from "#lib/components/ui/empty-state.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import { fieldStyles } from "#lib/components/ui/field-styles.js";
+import { formatPhone, formatDateTime } from "#lib/utils/formatters.js";
+import { formatCents } from "#lib/utils/money.js";
 import {
-  formatPhone,
-  formatPrice,
-  formatDateTime,
-} from "#lib/utils/formatters.js";
-import {
+  orderLabel,
   orderStatusLabels,
   orderStatusLabel,
   orderStatusVariant,
+  paymentStateLabels,
+  paymentStateVariant,
 } from "#lib/utils/order-status.js";
 import type { PageData } from "./$types";
 
@@ -26,9 +27,10 @@ type Order = PageData["orders"][number];
 
 let { data }: { data: PageData } = $props();
 
-let statusFilter = $state("");
-let startDate = $state("");
-let endDate = $state("");
+const query = page.url.searchParams;
+let statusFilter = $state(query.get("status") ?? "");
+let startDate = $state(query.get("startDate") ?? "");
+let endDate = $state(query.get("endDate") ?? "");
 
 const statusItems = [
   { value: "", label: "Todos" },
@@ -39,9 +41,10 @@ const statusItems = [
 ];
 
 const columns = [
-  { header: "Orden", cell: numberCell },
-  { header: "Cliente", cell: clientCell },
-  { header: "Monto", align: "right" as const, cell: amountCell },
+  { header: "Pedido", cell: numberCell },
+  { header: "Cliente", cell: customerCell },
+  { header: "Total", align: "right" as const, cell: totalCell },
+  { header: "Pago", cell: paymentCell },
   { header: "Estado", cell: statusCell },
   { header: "Fecha", cell: dateCell },
 ];
@@ -64,17 +67,18 @@ function clearFilters() {
 }
 </script>
 
-<PageTitle title="Órdenes" />
+<PageTitle title="Pedidos" />
 
 <Page>
-	<PageHeader title="Órdenes" subtitle="Pedidos creados desde las conversaciones, de la aprobación a la entrega." />
+	<PageHeader title="Pedidos" subtitle="Lo que tus clientes compraron, del pago a la entrega." />
 
 	{#if data.metrics}
+		{@const m = data.metrics}
 		<div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-			{@render stat("Pendientes", String(data.metrics.pendingCount), "Requieren aprobación")}
-			{@render stat("Entregadas", String(data.metrics.deliveredCount), `${data.metrics.approvalRate.toFixed(1)}% aprobadas`)}
-			{@render stat("Ingresos", `S/ ${formatPrice(data.metrics.totalRevenue)}`, `Ticket promedio S/ ${formatPrice(data.metrics.avgOrderValue)}`)}
-			{@render stat("Este mes", `S/ ${formatPrice(data.metrics.revenueThisMonth)}`, `${data.metrics.rejectionRate.toFixed(1)}% rechazadas`)}
+			{@render stat("Por confirmar", String(m.byStatus.pending), "Pedidos nuevos")}
+			{@render stat("Por despachar", String(m.byStatus.confirmed + m.byStatus.packed), "Confirmados o empacados")}
+			{@render stat("Por cobrar", `S/ ${formatCents(m.outstandingCents)}`, "Saldo de pedidos activos")}
+			{@render stat("Entregado", `S/ ${formatCents(m.deliveredCentsLast30Days)}`, "Últimos 30 días")}
 		</div>
 	{/if}
 
@@ -97,8 +101,8 @@ function clearFilters() {
 
 		{#if data.orders.length === 0}
 			<EmptyState
-				title="Sin órdenes"
-				description="Las órdenes aparecen aquí cuando un agente las crea desde una conversación."
+				title="Sin pedidos"
+				description="Los pedidos aparecen aquí cuando el asistente o tu equipo los registra."
 			/>
 		{:else}
 			<DataTable data={data.orders} {columns} onRowClick={(o) => goto(`/dashboard/orders/${o.id}`)} />
@@ -115,16 +119,22 @@ function clearFilters() {
 {/snippet}
 
 {#snippet numberCell(o: Order)}
-	<a href="/dashboard/orders/{o.id}" class="font-mono whitespace-nowrap text-fg hover:underline">{o.order_number}</a>
+	<a href="/dashboard/orders/{o.id}" class="font-mono whitespace-nowrap text-fg hover:underline">{orderLabel(o.number)}</a>
 {/snippet}
 
-{#snippet clientCell(o: Order)}
-	<div class="text-fg">{o.client_name}</div>
-	<div class="font-mono text-sm text-fg-muted">{formatPhone(o.conversation_phone)}</div>
+{#snippet customerCell(o: Order)}
+	<div class="text-fg">{o.customer_name}</div>
+	{#if o.customer_phone}
+		<div class="font-mono text-sm text-fg-muted">{formatPhone(o.customer_phone)}</div>
+	{/if}
 {/snippet}
 
-{#snippet amountCell(o: Order)}
-	<span class="whitespace-nowrap text-fg tabular-nums">S/ {formatPrice(o.total_amount)}</span>
+{#snippet totalCell(o: Order)}
+	<span class="whitespace-nowrap text-fg tabular-nums">S/ {formatCents(o.total_cents)}</span>
+{/snippet}
+
+{#snippet paymentCell(o: Order)}
+	<Badge variant={paymentStateVariant(o.payment_state)}>{paymentStateLabels[o.payment_state]}</Badge>
 {/snippet}
 
 {#snippet statusCell(o: Order)}

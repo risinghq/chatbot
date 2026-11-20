@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import {
   createMember,
   createTenantFixture,
+  fileOrder,
   insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
@@ -16,7 +17,6 @@ import {
   createSession,
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
-import { createOrder } from "../src/domains/orders/write.ts";
 import orderRoutes from "../src/routes/orders.ts";
 
 const CUSTOMER = "51900555666";
@@ -33,16 +33,7 @@ describe("orders list date filter", () => {
   async function orderCreatedAt(iso: string): Promise<string> {
     vi.setSystemTime(new Date(iso));
     try {
-      return (
-        await createOrder({
-          ref: tenant.ref(CUSTOMER),
-          clientName: "Ana",
-          clientDni: "12345678",
-          products: [{ productId: "p1", price: 10, quantity: 1 }],
-          totalAmount: 10,
-          deliveryAddress: "Av. Lima 123",
-        })
-      ).id;
+      return (await fileOrder(tenant.ref(CUSTOMER), { name: "Ana" })).id;
     } finally {
       vi.useRealTimers();
     }

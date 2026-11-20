@@ -1,5 +1,5 @@
-import { Hono, type Context } from "hono";
-import { pathParam } from "../lib/http.ts";
+import { Hono } from "hono";
+import { jsonObject, pathParam } from "../lib/http.ts";
 import {
   ProductService,
   BundleService,
@@ -34,14 +34,6 @@ const NOT_AN_OBJECT = "Request body must be a JSON object";
 
 const PRODUCT_STATUSES: unknown[] = ["draft", "active", "archived"];
 const INVALID_STATUS = "status must be draft, active or archived";
-
-async function jsonObject(c: Context): Promise<Record<string, unknown> | null> {
-  const body: unknown = await c.req.json().catch(() => null);
-  if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    return null;
-  }
-  return body as Record<string, unknown>;
-}
 
 // Reads use the pinned tenant, or every open tenant for an unpinned platform
 // operator. Writes additionally need a pinned tenant to write into.

@@ -12,6 +12,7 @@ import { getOne, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   createMember,
+  fileOrder,
   insertConversation,
   TEST_APP_SECRET,
   type TenantFixture,
@@ -24,7 +25,6 @@ import {
 import { conversationStub } from "../src/conversation/stub.ts";
 import { checkAndReassignTimeouts } from "../src/domains/conversations/assignment.ts";
 import { ReportService } from "../src/domains/reports/index.ts";
-import { createOrder } from "../src/domains/orders/write.ts";
 import { WhatsAppService } from "../src/adapters/whatsapp/index.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { CloudApiAdapter } from "../src/adapters/whatsapp/cloud-api.ts";
@@ -281,15 +281,8 @@ describe("a suspended tenant", () => {
     it("out of the order report", async () => {
       for (const fixture of [open, closed]) {
         await insertConversation(fixture.ref(CUSTOMER));
-        await createOrder({
-          ref: fixture.ref(CUSTOMER),
-          clientName: fixture === open ? "Open Buyer" : "Closed Buyer",
-          clientDni: "12345678",
-          products: [
-            { productId: "p1", name: "Terma", price: 200, quantity: 1 },
-          ],
-          totalAmount: 200,
-          deliveryAddress: "Lima",
+        await fileOrder(fixture.ref(CUSTOMER), {
+          name: fixture === open ? "Open Buyer" : "Closed Buyer",
         });
       }
 

@@ -104,6 +104,31 @@ export type {
 } from "./stock.ts";
 export { STOCK_MOVEMENT_KINDS } from "./stock.ts";
 export { parseCents } from "./money.ts";
+export type {
+  Customer,
+  CustomerAddress,
+  CustomerSummary,
+  DeliveryZone,
+  DocumentType,
+  Order,
+  OrderDetail,
+  OrderLine,
+  OrderMetrics,
+  OrderSource,
+  OrderStatus,
+  OrderSummary,
+  Payment,
+  PaymentMethod,
+  PaymentState,
+  PaymentStatus,
+  Shipment,
+} from "./orders.ts";
+export {
+  DOCUMENT_TYPES,
+  ORDER_STATUSES,
+  ORDER_TRANSITIONS,
+  paymentState,
+} from "./orders.ts";
 export { MIN_PASSWORD_LENGTH } from "./accounts.ts";
 export {
   isTenantSecretSettingKey,
@@ -123,14 +148,6 @@ export type ConversationState =
 
 export type ConversationStatus = "active" | "human_takeover" | "closed";
 export type SaleStatus = "pending" | "confirmed" | "rejected" | "no_answer";
-export type OrderStatus =
-  | "pending"
-  | "supervisor_approved"
-  | "supervisor_rejected"
-  | "calidda_approved"
-  | "calidda_rejected"
-  | "delivered";
-
 export type Conversation = {
   tenant_id: string;
   channel_account_id: string;
@@ -223,29 +240,6 @@ export type AuditLog = {
   created_at: number;
 };
 
-export type Order = {
-  id: string;
-  tenant_id: string;
-  channel_account_id: string;
-  order_number: string;
-  conversation_phone: string;
-  client_name: string;
-  client_dni: string;
-  products: string;
-  total_amount: number;
-  delivery_address: string;
-  delivery_reference: string | null;
-  status: OrderStatus;
-  assigned_agent: string | null;
-  supervisor_notes: string | null;
-  calidda_notes: string | null;
-  created_at: number;
-  updated_at: number;
-};
-
-/** One order as its detail page shows it, with the agent's display name. */
-export type OrderDetail = Order & { assigned_agent_name: string | null };
-
 export type SystemLogSource = "llm" | "audit";
 export type SystemLogStatus = "success" | "error" | "info";
 
@@ -260,20 +254,6 @@ export type SystemLogEntry = {
   summary: string;
   metadata?: any;
   original_data: any;
-};
-
-export type OrderMetrics = {
-  totalOrders: number;
-  pendingCount: number;
-  supervisorApprovedCount: number;
-  calidaApprovedCount: number;
-  deliveredCount: number;
-  rejectedCount: number;
-  totalRevenue: number;
-  revenueThisMonth: number;
-  avgOrderValue: number;
-  approvalRate: number;
-  rejectionRate: number;
 };
 
 export type ProviderCheckResult = {

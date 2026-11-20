@@ -7,11 +7,13 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
+import type { OrderMetrics } from "@vendeya/types";
 
 import { getOne, run } from "../src/db/index.ts";
 import {
   createMember,
   createTenantFixture,
+  fileOrder,
   insertConversation,
   insertUser,
   type TenantFixture,
@@ -27,7 +29,6 @@ import conversationRoutes from "../src/routes/conversations.ts";
 import orderRoutes from "../src/routes/orders.ts";
 import adminUserRoutes from "../src/routes/admin/users.ts";
 import adminChannelRoutes from "../src/routes/admin/channels.ts";
-import { createOrder } from "../src/domains/orders/write.ts";
 import { takeoverConversation } from "../src/domains/conversations/write.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 
@@ -181,19 +182,8 @@ describe("membership scope", () => {
 
     // Filed the way the bot files one, with no agent on the order itself.
     // The link to the agent is the conversation the order came from.
-    const fileOrder = async (phone: string) =>
-      (
-        await createOrder({
-          ref: alpha.ref(phone),
-          clientName: "Cliente",
-          clientDni: "12345678",
-          products: [
-            { productId: "p1", name: "Terma", price: 900, quantity: 1 },
-          ],
-          totalAmount: 900,
-          deliveryAddress: "Av. Siempre Viva 123",
-        })
-      ).id;
+    const fileBotOrder = async (phone: string) =>
+      (await fileOrder(alpha.ref(phone))).id;
 
     beforeEach(async () => {
       owner = (await createMember(alpha, "sales_agent")).userId;
@@ -209,8 +199,8 @@ describe("membership scope", () => {
       });
       await insertConversation(alpha.ref(OPEN), { clientName: "Sin asignar" });
 
-      ownedOrderId = await fileOrder(OWNED);
-      openOrderId = await fileOrder(OPEN);
+      ownedOrderId = await fileBotOrder(OWNED);
+      openOrderId = await fileBotOrder(OPEN);
     });
 
     const statusOf = async (phone: string) =>
@@ -278,8 +268,8 @@ describe("membership scope", () => {
           (
             (await (
               await request("GET", "/api/orders/metrics", other)
-            ).json()) as { totalOrders: number }
-          ).totalOrders,
+            ).json()) as OrderMetrics
+          ).byStatus.pending,
         ).toBe(0);
       });
 
@@ -321,14 +311,10 @@ describe("membership scope", () => {
 
       it("sees the order it creates there, and no other agent does", async () => {
         const response = await request("POST", "/api/orders", other, {
-          conversationPhone: OPEN,
-          clientName: "Cliente",
-          clientDni: "12345678",
-          products: [
-            { productId: "p1", name: "Terma", price: 900, quantity: 1 },
-          ],
-          totalAmount: 900,
-          deliveryAddress: "Av. Siempre Viva 123",
+          customer: { name: "Cliente", phone: OPEN },
+          channel_account_id: alpha.channelAccountId,
+          lines: [{ name: "Terma", quantity: 1, unit_price_cents: 90000 }],
+          shipment: null,
         });
         expect(response.status).toBe(201);
         const { id } = (await response.json()) as { id: string };
