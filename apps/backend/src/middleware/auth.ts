@@ -18,17 +18,33 @@ export const NO_ACTIVE_TENANT = {
     "Select a tenant with POST /api/tenants/active before using this endpoint",
 } as const;
 
+/** The token in an `Authorization: Bearer` header, or null without one. */
+function bearerToken(c: Context): string | null {
+  const header = c.req.header("Authorization");
+  const match = header ? /^Bearer\s+(\S+)$/i.exec(header) : null;
+  return match ? match[1]! : null;
+}
+
+/**
+ * Admits a browser session from the `session` cookie or an API token from an
+ * `Authorization: Bearer` header. A request that sends a bearer header is
+ * judged by it alone, so a program never borrows a cookie.
+ */
 export async function requireAuth(c: Context, next: Next) {
-  const token = getCookie(c, "session");
+  const bearer = bearerToken(c);
+  const token = bearer ?? getCookie(c, "session");
 
   if (!token) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  const { session, user, scope, fresh } = await validateSessionToken(token);
+  const { session, user, scope, fresh } = await validateSessionToken(
+    token,
+    bearer ? "token" : "browser",
+  );
 
   if (!session || !user || !scope) {
-    deleteSessionTokenCookie(c);
+    if (!bearer) deleteSessionTokenCookie(c);
     return c.json({ error: "Unauthorized" }, 401);
   }
 
@@ -40,6 +56,21 @@ export async function requireAuth(c: Context, next: Next) {
   // renewed session needs the cookie again. Only then, not on every response.
   if (fresh) setSessionTokenCookie(c, token, session.expiresAt);
 
+  await next();
+}
+
+/**
+ * Gate for acts that only a person at a browser may take: minting tokens and
+ * changing the password. A leaked token cannot extend itself or lock its
+ * owner out.
+ */
+export async function requireBrowserSession(c: Context, next: Next) {
+  if (c.get("session")?.kind !== "browser") {
+    return c.json(
+      { error: "This action needs a browser login, not an API token" },
+      403,
+    );
+  }
   await next();
 }
 

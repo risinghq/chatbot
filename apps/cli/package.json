@@ -1,0 +1,17 @@
+{
+  "name": "@vendeya/cli",
+  "private": true,
+  "bin": {
+    "vendeya": "./src/main.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vendeya/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@vendeya/tsconfig": "workspace:*"
+  }
+}

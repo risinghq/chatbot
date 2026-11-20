@@ -117,6 +117,37 @@ operator.
 Logins are limited to 10 attempts a minute for each client address, counted by
 the `LOGIN_LIMITER` rate-limit binding. One more answers 429.
 
+## The vendeya command line
+
+`vendeya` ([`apps/cli`](../apps/cli/src/main.ts)) runs a business through the
+API, with an API token ([Tenancy](./tenancy.md#api-tokens)). It is how an agent
+works on VendeYa: it can do only what the token's owner can do, and the server
+checks every request. Unlike `account`, it never touches the database.
+
+Make a token on `/dashboard/cuenta`, or for an operator with no browser:
+
+```sh
+bun run account token create <email> --name <name> [--days <1-365>] [--remote]
+```
+
+That prints only the token on stdout. Pipe it straight into the login, which
+checks it and stores it in `~/.config/vendeya/credentials.json`, mode 600:
+
+```sh
+bun run account token create ops@example.com --name agent --remote | bun run vendeya login
+bun run vendeya whoami
+bun run vendeya businesses create --name "Tienda Ejemplo"
+bun run vendeya businesses use <business id>
+printf '%s' "$OPENAI_KEY" | bun run vendeya secrets set openai_api_key
+bun run vendeya setup
+```
+
+`bun run vendeya --help` lists every command. Each answer is JSON on stdout and
+each error is JSON on stderr. The exit code is 0 on success, 1 when the server
+refuses, and 2 on a usage mistake. Secrets are read from stdin only, and
+`settings set` refuses a secret key. Every delete, including `api DELETE`, needs
+`--yes`. `VENDEYA_TOKEN` and `VENDEYA_URL` override the stored login.
+
 ## Files
 
 Files live in the R2 bucket `vendeya-files`. Every key starts with the owning

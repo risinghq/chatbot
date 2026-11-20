@@ -12,6 +12,11 @@ const USAGE = `Usage:
   bun run account tenant create --name <business name>
   bun run account channel create --tenant <tenant id> --phone-number-id <id>
       [--waba-id <id>] [--display-phone-number <number>] [--label <label>]
+  bun run account token create <email> --name <token name> [--days <1-365>]
+
+\`token create\` prints a new API token for the account on stdout, once. It is
+how the first token reaches a program; after that, mint tokens on the
+dashboard (Mi cuenta).
 
 Every command writes to the local D1
 database that \`bun run dev\` uses. Add --remote to write to the deployed one,
@@ -30,6 +35,7 @@ type Options = {
   "waba-id"?: string;
   "display-phone-number"?: string;
   label?: string;
+  days?: string;
   remote?: boolean;
 };
 
@@ -56,6 +62,7 @@ function parse(argv: string[]) {
         "waba-id": { type: "string" },
         "display-phone-number": { type: "string" },
         label: { type: "string" },
+        days: { type: "string" },
         remote: { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
@@ -115,6 +122,13 @@ async function run(argv: string[]): Promise<number> {
         );
       }
       return go(() => createChannel(options, operator));
+    }
+    case "token": {
+      const [verb, email, ...extra] = rest;
+      if (verb !== "create" || !email || extra.length > 0 || !options.name) {
+        return usage("Expected `token create <email> --name <name>`.");
+      }
+      return go(() => createToken(email, options, operator));
     }
     default:
       return usage(command ? "Unknown command." : undefined);
@@ -236,6 +250,50 @@ async function createChannel(options: Options, operator: CliOperator) {
   console.log(
     `Created ${account.status} channel account ${account.id} for tenant ${tenant.name}.`,
   );
+  return 0;
+}
+
+async function createToken(
+  email: string,
+  options: Options,
+  operator: CliOperator,
+) {
+  const { checkTokenRequest, createApiToken } = await import(
+    "../platform/auth/api-tokens.ts"
+  );
+  const { normalizeEmail } = await import("../domains/accounts/index.ts");
+  const { cliAuditStatement } = await import("../platform/audit/logger.ts");
+  const { getOne } = await import("../db/index.ts");
+
+  const checked = checkTokenRequest({
+    name: options.name,
+    days: options.days === undefined ? undefined : Number(options.days),
+  });
+  if ("problem" in checked) return refuse(checked.problem);
+
+  const user = await getOne<{ id: string; is_active: number }>(
+    "SELECT id, is_active FROM users WHERE email = ?",
+    [normalizeEmail(email)],
+  );
+  if (!user || user.is_active === 0) {
+    return refuse(`No active account has the email ${email}.`);
+  }
+
+  const created = await createApiToken(user.id, checked, null);
+  await cliAuditStatement(
+    operator,
+    null,
+    "create_api_token",
+    "api_token",
+    created.id,
+    { userId: user.id, name: created.name, expiresAt: created.expires_at },
+  ).run();
+
+  // The token alone goes to stdout so a caller can pipe it into a file.
+  console.error(
+    `Created token "${created.name}", valid until ${new Date(created.expires_at).toISOString()}.`,
+  );
+  console.log(created.token);
   return 0;
 }
 

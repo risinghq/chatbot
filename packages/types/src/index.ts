@@ -93,6 +93,10 @@ export type {
 } from "./catalog.ts";
 export { CATEGORIES, CATEGORY_GROUPS } from "./catalog.ts";
 export { MIN_PASSWORD_LENGTH } from "./accounts.ts";
+export {
+  isTenantSecretSettingKey,
+  TENANT_SECRET_SETTING_KEYS,
+} from "./settings.ts";
 
 export type ConversationState =
   | "INIT"

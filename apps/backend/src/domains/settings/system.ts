@@ -47,19 +47,10 @@ export function isInternalTenantSettingKey(key: string): boolean {
   return (INTERNAL_TENANT_SETTING_KEYS as readonly string[]).includes(key);
 }
 
-/**
- * Tenant keys whose value is a secret. They are not stored in `tenant_settings`
- * — the settings route encrypts them into `tenant_secrets` — and the settings
- * read never reports one, only whether it is set.
- */
-export const TENANT_SECRET_SETTING_KEYS = [
-  "calidda_password",
-  "openai_api_key",
-] as const;
-
-export function isTenantSecretSettingKey(key: string): boolean {
-  return (TENANT_SECRET_SETTING_KEYS as readonly string[]).includes(key);
-}
+export {
+  isTenantSecretSettingKey,
+  TENANT_SECRET_SETTING_KEYS,
+} from "@vendeya/types";
 
 export const SystemSettings = {
   async get(key: string): Promise<string | null> {

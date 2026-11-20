@@ -33,6 +33,18 @@
         "wrangler": "^4.163.0",
       },
     },
+    "apps/cli": {
+      "name": "@vendeya/cli",
+      "bin": {
+        "vendeya": "./src/main.ts",
+      },
+      "dependencies": {
+        "@vendeya/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@vendeya/tsconfig": "workspace:*",
+      },
+    },
     "apps/frontend": {
       "name": "@vendeya/frontend",
       "version": "0.0.1",
@@ -440,6 +452,8 @@
     "@typescript-native-bridge/win32-x64": ["@typescript-native-bridge/win32-x64@6.0.3-bridge.19.tsgo.7.0.2", "", { "os": "win32", "cpu": "x64" }, "sha512-YR29W2mxNbT0BAeiyPMvIzH3WJHtPzf54/Fr9KCllOO5dnN1g6iHf4OHSaPJRE/genhWXuYefN+S+sSSyQGA3A=="],
 
     "@vendeya/backend": ["@vendeya/backend@workspace:apps/backend"],
+
+    "@vendeya/cli": ["@vendeya/cli@workspace:apps/cli"],
 
     "@vendeya/core": ["@vendeya/core@workspace:packages/core"],
 
