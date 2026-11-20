@@ -160,13 +160,20 @@ const sendProductPhotos: Tool = {
       .where("status", "=", "active")
       .executeTakeFirst();
     if (!product) return answer({ error: "product not found" });
-    const urls = (await ProductImageService.list(ctx.tenantId, id))
-      .slice(0, PHOTO_LIMIT)
-      .map((p) => p.url);
-    if (urls.length === 0)
+    const storageKeys = await ProductImageService.storageKeys(
+      ctx.tenantId,
+      id,
+      PHOTO_LIMIT,
+    );
+    if (storageKeys.length === 0)
       return answer({ error: "the product has no photos" });
-    return answer({ photos_sent: urls.length }, [
-      { kind: "send_photos", productName: product.name, urls },
+    return answer({ photos_sent: storageKeys.length }, [
+      {
+        kind: "send_photos",
+        productId: id,
+        productName: product.name,
+        storageKeys,
+      },
     ]);
   },
 };

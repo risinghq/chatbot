@@ -43,6 +43,12 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import conversationRoutes from "../src/routes/conversations.ts";
+import {
+  DEFAULT_REPLY,
+  type FakeModel,
+  fakeModel,
+  withOpenAiKey,
+} from "./helpers/model.ts";
 
 const CUSTOMER = "51900555001";
 const HOUR = 60 * 60 * 1000;
@@ -63,6 +69,7 @@ describe("a person takes over a conversation", () => {
   let textSends: string[];
   /** Runs before the network answers. A test holds a bot turn here. */
   let beforeNetworkAnswers: () => Promise<void>;
+  let model: FakeModel;
 
   async function insert(
     phase: ConversationPhase,
@@ -233,9 +240,12 @@ describe("a person takes over a conversation", () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }) as unknown as typeof globalThis.fetch;
+    model = fakeModel();
+    await withOpenAiKey(tenant.tenantId);
   });
 
   afterEach(async () => {
+    model.restore();
     globalThis.fetch = originalFetch;
     await run("DELETE FROM audit_log WHERE user_id = ?", [agent]);
   });
@@ -624,7 +634,7 @@ describe("a person takes over a conversation", () => {
 
       await customerWrites("hola");
       const answered = await conversation();
-      expect(answered.phase.phase).toBe("confirming_client");
+      expect(textSends).toEqual([DEFAULT_REPLY]);
 
       await releaseConversation(ref, agent);
 
@@ -764,8 +774,8 @@ describe("a person takes over a conversation", () => {
 
       await customerWrites("hola");
 
-      expect(textSends.length).toBeGreaterThan(0);
-      expect((await conversation()).phase.phase).toBe("confirming_client");
+      expect(textSends).toEqual([DEFAULT_REPLY]);
+      expect((await conversation()).phase).toEqual({ phase: "greeting" });
     });
 
     it("leaves a conversation an agent answered recently with the agent", async () => {

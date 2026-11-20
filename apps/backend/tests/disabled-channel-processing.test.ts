@@ -30,6 +30,7 @@ import {
 } from "../src/adapters/whatsapp/index.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import type { ChannelAccount, ConversationRef } from "@vendeya/types";
+import { fakeModel, withOpenAiKey } from "./helpers/model.ts";
 
 const CUSTOMER = "51900444555";
 
@@ -234,17 +235,23 @@ describe("a channel account that is not active", () => {
       const ref = tenant.ref(CUSTOMER);
       await insertConversation(ref);
       await setStatus(tenant.channelAccountId, "disabled");
+      await withOpenAiKey(tenant.tenantId);
+      const model = fakeModel();
 
       // `answerMessage` absorbs other processing errors after logging them. It
       // must rethrow this one so the turn sees the refusal.
-      await expect(
-        answerMessage({
-          ref,
-          content: "hola",
-          timestamp: Date.now(),
-          messageId: "wamid-race",
-        }),
-      ).rejects.toThrow(ChannelUnavailableError);
+      try {
+        await expect(
+          answerMessage({
+            ref,
+            content: "hola",
+            timestamp: Date.now(),
+            messageId: "wamid-race",
+          }),
+        ).rejects.toThrow(ChannelUnavailableError);
+      } finally {
+        model.restore();
+      }
     });
   });
 });

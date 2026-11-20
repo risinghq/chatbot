@@ -5,6 +5,7 @@ import {
   permanentFailure,
   withAccessToken,
 } from "./helpers/graph.ts";
+import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
 import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 import { backendFetch, deliver, quietWindowPasses } from "./helpers/turn.ts";
 import { inboundText, signedWebhookRequest } from "./helpers/webhook.ts";
@@ -12,18 +13,25 @@ import { inboundText, signedWebhookRequest } from "./helpers/webhook.ts";
 const CUSTOMER = "51987000111";
 
 let graph: ReturnType<typeof fakeGraph>;
+let model: FakeModel;
 let tenantA: TenantFixture;
 let tenantB: TenantFixture;
 
 beforeEach(async () => {
   graph = fakeGraph();
+  model = fakeModel();
   tenantA = await createTenantFixture("tenant-a");
   tenantB = await createTenantFixture("tenant-b");
   await withAccessToken(tenantA);
   await withAccessToken(tenantB);
+  await withOpenAiKey(tenantA.tenantId);
+  await withOpenAiKey(tenantB.tenantId);
 });
 
-afterEach(() => graph.restore());
+afterEach(() => {
+  model.restore();
+  graph.restore();
+});
 
 function inboxOf(tenant: TenantFixture) {
   return getAll<{ message_text: string; status: string }>(

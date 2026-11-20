@@ -8,16 +8,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 
-import type { ConversationPhase } from "@vendeya/core";
-
-import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
-import { TenantSecrets } from "../src/domains/settings/tenant-secrets.ts";
+import { getAll } from "../src/db/index.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import {
   createSession,
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import simulatorRoutes from "../src/routes/simulator.ts";
+import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
 import {
   createMember,
   insertConversation,
@@ -27,18 +25,11 @@ import {
 
 const SIMULATOR_PHONE = "51999999999";
 
-const OBJECTION: ConversationPhase = {
-  phase: "handling_objection",
-  segment: "fnb",
-  credit: 3000,
-  name: "Ana",
-  objectionCount: 1,
-};
-
 describe("a simulated message", () => {
   let app: Hono;
   let tenantId: string;
   let cookie: string;
+  let model: FakeModel;
 
   // The business has no WhatsApp number: the simulator must not need one.
   beforeEach(async () => {
@@ -49,18 +40,6 @@ describe("a simulated message", () => {
     tenantId = await insertTenant("simulator-failed-turn");
     await insertConversation(await simulatorRef(tenantId, SIMULATOR_PHONE), {
       isSimulation: true,
-      contextData: {
-        phase: OBJECTION,
-        metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-      },
-    });
-
-    enrichmentRegistry.clear();
-    enrichmentRegistry.register({
-      type: "detect_question",
-      execute: async () => {
-        throw new Error("the model is down");
-      },
     });
 
     const token = generateSessionToken();
@@ -70,10 +49,11 @@ describe("a simulated message", () => {
       tenantId,
     );
     cookie = `session=${token}`;
+    model = fakeModel();
   });
 
-  afterEach(async () => {
-    enrichmentRegistry.clear();
+  afterEach(() => {
+    model.restore();
   });
 
   function send() {
@@ -92,17 +72,36 @@ describe("a simulated message", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ reason: "no_openai_key" });
+    expect(model.requests).toHaveLength(0);
   });
 
-  it("answers failed with the reason when the turn throws", async () => {
-    await TenantSecrets.set(tenantId, "openai_api_key", "sk-test");
+  it("records the assistant's reply in the conversation", async () => {
+    await withOpenAiKey(tenantId);
+    model.says("Claro, aquí estaré.");
+
+    const response = await send();
+
+    expect(await response.json()).toEqual({ status: "processed" });
+    const messages = await getAll<{ direction: string; content: string }>(
+      "SELECT direction, content FROM messages WHERE tenant_id = ? ORDER BY created_at, id",
+      [tenantId],
+    );
+    expect(messages).toEqual([
+      { direction: "inbound", content: "mmm lo voy a pensar" },
+      { direction: "outbound", content: "Claro, aquí estaré." },
+    ]);
+  });
+
+  it("answers failed with the reason when the model fails", async () => {
+    await withOpenAiKey(tenantId);
+    model.fails();
 
     const response = await send();
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       status: "failed",
-      error: "the model is down",
+      error: "The assistant model did not answer",
     });
   });
 

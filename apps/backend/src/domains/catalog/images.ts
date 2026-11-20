@@ -48,6 +48,21 @@ export const ProductImageService = {
         .execute()
     ).map(toImage),
 
+  /** The storage keys of a product's first `limit` photos, in order. */
+  storageKeys: async (
+    tenantId: string,
+    productId: string,
+    limit: number,
+  ): Promise<string[]> =>
+    (
+      await images(tenantId)
+        .where("i.product_id", "=", productId)
+        .orderBy("i.position")
+        .orderBy("i.id")
+        .limit(limit)
+        .execute()
+    ).map((row) => row.storage_key),
+
   get: async (tenantId: string, id: string): Promise<ProductImage | null> => {
     const row = await images(tenantId)
       .where("i.id", "=", id)

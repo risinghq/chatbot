@@ -15,7 +15,12 @@ export type ToolContext = {
  * sends a message or alerts staff itself.
  */
 export type ToolEffect =
-  | { kind: "send_photos"; productName: string; urls: string[] }
+  | {
+      kind: "send_photos";
+      productId: string;
+      productName: string;
+      storageKeys: string[];
+    }
   | { kind: "hand_off"; reason: string }
   | { kind: "order_created"; order: OrderDetail };
 

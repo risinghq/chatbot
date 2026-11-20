@@ -1,0 +1,51 @@
+import type { AssistantSettings, Customer } from "@vendeya/types";
+
+export type PromptInput = {
+  businessName: string;
+  settings: AssistantSettings;
+  customer: Customer | null;
+  now: Date;
+};
+
+const RULES = `Rules:
+- Prices, stock, delivery fees and payment methods come only from the tools. Never state one you did not read from a tool in this chat.
+- Write in the customer's language, Spanish unless they write in another. Keep each reply short, as people write on WhatsApp: no headings, tables or links. *Bold* is fine.
+- Ask one thing at a time.
+- Before create_order, confirm the products, quantities, delivery or pickup, the address, the payment method and the total, and wait for the customer's yes. After it, give the order number and the payment instructions.
+- Call hand_off when the customer asks for a person, is upset, or asks something the tools and the business's notes do not answer. Never make up an answer.
+- send_product_photos sends the photos after your reply, so do not describe them as already sent.`;
+
+function section(title: string, text: string): string | null {
+  return text.trim() ? `${title}:\n${text.trim()}` : null;
+}
+
+function describeCustomer(customer: Customer | null): string {
+  if (!customer) return "Customer: new, the business has no record of them.";
+  const document = customer.document_number
+    ? `, ${customer.document_type ?? "document"} ${customer.document_number}`
+    : "";
+  return `Customer: ${customer.name}${document}. get_customer has their saved addresses.`;
+}
+
+/**
+ * The system prompt of a turn. The business's texts are its own words and
+ * follow the platform's rules, which they cannot switch off.
+ */
+export function buildSystemPrompt(input: PromptInput): string {
+  const now = input.now.toLocaleString("es-PE", {
+    timeZone: "America/Lima",
+    dateStyle: "full",
+    timeStyle: "short",
+  });
+  return [
+    `You are the sales assistant of ${input.businessName}, answering customers on WhatsApp. You help them find products, answer their questions and take their orders.`,
+    RULES,
+    section("The business's instructions", input.settings.instructions),
+    section("Frequent questions", input.settings.faq),
+    section("Policies", input.settings.policies),
+    describeCustomer(input.customer),
+    `Now: ${now} (Lima).`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
+}

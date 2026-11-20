@@ -1,11 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { GREETING } from "@vendeya/core";
-
 import { getOne, run } from "../src/db/index.ts";
 
-import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
+import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
 import { quietWindowPasses, webhookRequest } from "./helpers/turn.ts";
 import {
   createTenantFixture,
@@ -16,9 +14,10 @@ import { signedWebhookRequest } from "./helpers/webhook.ts";
 
 const CUSTOMER = "51900555001";
 
-describe("messages queued before the greeting is processed", () => {
+describe("messages queued before the first turn runs", () => {
   let tenant: TenantFixture;
   let originalFetch: typeof globalThis.fetch;
+  let model: FakeModel;
   let delivered: string[];
 
   beforeEach(async () => {
@@ -33,6 +32,7 @@ describe("messages queued before the greeting is processed", () => {
       appSecret: TEST_APP_SECRET,
     });
     tenant.channelAccountId = account.id;
+    await withOpenAiKey(tenant.tenantId);
 
     delivered = [];
     originalFetch = globalThis.fetch;
@@ -49,9 +49,11 @@ describe("messages queued before the greeting is processed", () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }) as unknown as typeof globalThis.fetch;
+    model = fakeModel();
   });
 
   afterEach(async () => {
+    model.restore();
     globalThis.fetch = originalFetch;
   });
 
@@ -94,64 +96,46 @@ describe("messages queued before the greeting is processed", () => {
     }
   }
 
-  it("sends one greeting for a burst and interprets the next answer", async () => {
-    await customerSends(["Hola", "Hola", "?"]);
+  function processedCount(): Promise<number> {
+    return getOne<{ count: number }>(
+      "SELECT COUNT(*) as count FROM message_inbox WHERE channel_account_id = ? AND status = 'processed'",
+      [tenant.channelAccountId],
+    ).then((row) => row?.count ?? 0);
+  }
 
-    expect(
-      (
-        (await getOne(
-          "SELECT COUNT(*) as count FROM message_inbox WHERE channel_account_id = ? AND status = 'pending'",
-          [tenant.channelAccountId],
-        )) as { count: number }
-      ).count,
-    ).toBe(3);
-    expect(
-      JSON.parse(
-        (
-          (await getOne(
-            "SELECT context_data FROM conversations WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?",
-            [tenant.tenantId, tenant.channelAccountId, CUSTOMER],
-          )) as {
-            context_data: string;
-          }
-        ).context_data,
-      ).phase,
-    ).toEqual({ phase: "greeting" });
+  it("answers a burst with one reply, and the next turn reads it", async () => {
+    await customerSends(["Hola", "tienen polos?", "?"]);
+    model.says("¡Hola! Sí, tenemos polos. ¿De qué talla?");
 
     await quietWindowPasses(tenant.ref(CUSTOMER));
 
-    expect(delivered).toHaveLength(1);
-    expect(GREETING.flat()).toContain(delivered[0]!);
-    expect(delivered.join(" ")).not.toContain("no te entendí");
+    expect(delivered).toEqual(["¡Hola! Sí, tenemos polos. ¿De qué talla?"]);
+    expect(model.requests).toHaveLength(1);
     expect(
-      (
-        (await getOne(
-          "SELECT COUNT(*) as count FROM message_inbox WHERE channel_account_id = ? AND status = 'processed'",
-          [tenant.channelAccountId],
-        )) as { count: number }
-      ).count,
-    ).toBe(3);
+      model.requests[0]?.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual(["Hola", "tienen polos?", "?"]);
+    expect(await processedCount()).toBe(3);
 
-    await customerSends(["Sí"]);
+    await customerSends(["M"]);
+    model.says("Perfecto, talla M.");
     await quietWindowPasses(tenant.ref(CUSTOMER));
 
+    expect(delivered).toEqual([
+      "¡Hola! Sí, tenemos polos. ¿De qué talla?",
+      "Perfecto, talla M.",
+    ]);
     expect(
-      await MessageStore.getHistory(
-        {
-          tenantId: tenant.tenantId,
-          channelAccountId: tenant.channelAccountId,
-          phoneNumber: CUSTOMER,
-        },
-        20,
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          direction: "outbound",
-          content: expect.stringMatching(/DNI/i),
-          status: "sent",
-        }),
-      ]),
-    );
+      model.requests[1]?.messages
+        .filter((message) => message.role !== "system")
+        .map((message) => [message.role, message.content]),
+    ).toEqual([
+      ["user", "Hola"],
+      ["user", "tienen polos?"],
+      ["user", "?"],
+      ["assistant", "¡Hola! Sí, tenemos polos. ¿De qué talla?"],
+      ["user", "M"],
+    ]);
   });
 });

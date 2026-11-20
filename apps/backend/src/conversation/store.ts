@@ -150,9 +150,13 @@ export async function escalateConversation(
  * returns NULL and would wipe the column.
  */
 export async function refreshLastActivity(ref: ConversationRef): Promise<void> {
-  const now = Date.now();
+  await activityUpdate(ref).run();
+}
 
-  await run(
+/** `refreshLastActivity` as a statement, for a caller's batch. */
+export function activityUpdate(ref: ConversationRef): D1PreparedStatement {
+  const now = Date.now();
+  return stmt(
     `UPDATE conversations
      SET context_data = json_set(context_data, '$.metadata.lastActivityAt', ?),
          last_activity_at = ?
