@@ -2,6 +2,7 @@
 import type { Conversation, OrderMetrics } from "@vendeya/types";
 import { onMount } from "svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import SetupChecklist from "#lib/components/shared/setup-checklist.svelte";
 import Banner from "#lib/components/ui/banner.svelte";
@@ -50,7 +51,7 @@ onMount(() => {
 
 <PageTitle title="Inicio" />
 
-<div class="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
+<Page>
 	<PageHeader
 		title="Hola, {data.user?.name || data.user?.email}"
 		subtitle={activeTenant ? activeTenant.name : undefined}
@@ -78,19 +79,18 @@ onMount(() => {
 				{/snippet}
 			</Banner>
 		{:else}
-			{#if !aiConfigured}
+			{#if auth.isAdmin}
+				<SetupChecklist />
+			{:else if !aiConfigured}
+				<!-- An admin sees the missing key as the checklist's first step. -->
 				<Banner tone="warning" title="Falta la clave de OpenAI">
-					Sin ella el bot no puede interpretar los mensajes de los clientes.
+					Sin ella el asistente no puede interpretar los mensajes de los clientes.
 					{#snippet action()}
-						{#if auth.isAdmin || auth.isPlatformOperator}
+						{#if auth.isPlatformOperator}
 							<Button href="/dashboard/admin/settings" variant="secondary" size="sm">Configurar</Button>
 						{/if}
 					{/snippet}
 				</Banner>
-			{/if}
-
-			{#if auth.isAdmin}
-				<SetupChecklist />
 			{/if}
 
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -158,4 +158,4 @@ onMount(() => {
 			</section>
 		{/if}
 	</div>
-</div>
+</Page>

@@ -192,9 +192,12 @@ in as its admin. Each user's own profile and password are at
 
 While a business is unfinished, the home page and the Negocios page show a setup
 checklist (`lib/components/shared/setup-checklist.svelte`) fed by
-`GET /api/admin/setup-status`: the OpenAI key, a WhatsApp number with its token
-and app secret, the Cálidda login, and at least one member. It hides once every
-step is done.
+`GET /api/admin/setup-status`. Its steps run in the order a new business takes
+them: the OpenAI key, an active offer in the active period, one conversation in
+the simulator, a WhatsApp number with its token and app secret, and at least one
+member. The first pending step carries the primary action. The checklist hides
+once every step is done. The Cálidda login is optional: the status reports it,
+but it does not hold the checklist open.
 
 Pages that work inside one business show a pick-a-business message
 (`lib/components/shared/needs-tenant.svelte`) when the session has no active

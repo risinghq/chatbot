@@ -1,6 +1,7 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
@@ -65,7 +66,7 @@ function clearFilters() {
 
 <PageTitle title="Órdenes" />
 
-<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+<Page>
 	<PageHeader title="Órdenes" subtitle="Pedidos creados desde las conversaciones, de la aprobación a la entrega." />
 
 	{#if data.metrics}
@@ -103,7 +104,7 @@ function clearFilters() {
 			<DataTable data={data.orders} {columns} onRowClick={(o) => goto(`/dashboard/orders/${o.id}`)} />
 		{/if}
 	</div>
-</div>
+</Page>
 
 {#snippet stat(label: string, value: string, hint: string)}
 	<div class="rounded-md border border-border bg-surface px-4 py-3">

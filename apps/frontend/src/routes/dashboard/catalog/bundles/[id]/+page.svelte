@@ -7,6 +7,7 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Icon from "#lib/components/ui/icon.svelte";
 import { toast } from "#lib/state/toast.svelte.js";
@@ -233,7 +234,7 @@ async function handleSave() {
 
 <PageTitle title={bundle ? "Editar bundle" : "Nuevo bundle"} />
 
-<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+<Page width="narrow">
     <PageHeader
         title={segment === "fnb"
             ? bundle ? "Editar oferta FNB" : "Nueva oferta FNB"
@@ -360,4 +361,4 @@ async function handleSave() {
             <Button onclick={handleSave} disabled={isSaving}>{isSaving ? "Guardando…" : "Guardar"}</Button>
         </div>
     </div>
-</div>
+</Page>

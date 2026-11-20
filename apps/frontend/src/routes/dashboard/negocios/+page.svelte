@@ -11,6 +11,7 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import SetupChecklist from "#lib/components/shared/setup-checklist.svelte";
 
@@ -78,7 +79,7 @@ onMount(() => {
 
 <PageTitle title="Negocios" />
 
-<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+<Page>
 	<PageHeader title="Negocios" subtitle="Crea negocios, entra a uno y deja listo su equipo." />
 
 	<div class="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
@@ -157,4 +158,4 @@ onMount(() => {
 			{/if}
 		</div>
 	</div>
-</div>
+</Page>

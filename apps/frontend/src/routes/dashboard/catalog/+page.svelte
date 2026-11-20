@@ -16,6 +16,7 @@ import EmptyState from "#lib/components/ui/empty-state.svelte";
 import InventoryGrid from "#lib/components/catalog/inventory-grid.svelte";
 import BundleGrid from "#lib/components/catalog/bundle-grid.svelte";
 import PeriodSelector from "#lib/components/catalog/period-selector.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Tabs from "#lib/components/ui/tabs.svelte";
 import TabsList from "#lib/components/ui/tabs-list.svelte";
@@ -42,6 +43,8 @@ let fnbBundles = $derived(
 );
 let periods = $derived(localPeriods.length > 0 ? localPeriods : data.periods);
 let currentPeriod = $derived(selectedPeriod || data.activePeriod);
+
+let offersTab = $derived(activeTab !== "inventory");
 
 let canEdit = $derived(
   auth.canEditCatalog && currentPeriod?.status === "draft",
@@ -133,27 +136,39 @@ onMount(() => {
 
 <PageTitle title="Catálogo" />
 
-<div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+{#snippet noPeriod()}
+  <EmptyState
+    title="Todavía no hay períodos"
+    description="Las ofertas viven en un período mensual. El asistente cotiza las del período activo."
+  >
+    {#snippet action()}
+      {#if auth.isAdmin}
+        <Button href="/dashboard/admin/periods">Crear período</Button>
+      {/if}
+    {/snippet}
+  </EmptyState>
+{/snippet}
+
+<Page>
   <PageHeader
     title="Catálogo"
-    subtitle={currentPeriod
+    subtitle={offersTab && currentPeriod
       ? `Período: ${currentPeriod.name}`
-      : "Selecciona un período"}
+      : undefined}
   >
     {#snippet actions()}
-      <PeriodSelector
-        {periods}
-        selected={currentPeriod}
-        onSelect={handlePeriodChange}
-      />
-      {#if auth.isAdmin}
-        <Button
-          variant="ghost"
-          size="sm"
-          onclick={() => goto("/dashboard/admin/periods")}
-        >
-          Gestionar
-        </Button>
+      <!-- Periods hold offers only; base products have none. -->
+      {#if offersTab && periods.length > 0}
+        <PeriodSelector
+          {periods}
+          selected={currentPeriod}
+          onSelect={handlePeriodChange}
+        />
+        {#if auth.isAdmin}
+          <Button variant="ghost" size="sm" href="/dashboard/admin/periods">
+            Períodos
+          </Button>
+        {/if}
       {/if}
       {#if canEdit || (activeTab === "inventory" && auth.isAdmin)}
         <Button size="sm" onclick={openCreatePage}>
@@ -169,9 +184,9 @@ onMount(() => {
     {/snippet}
   </PageHeader>
 
-  {#if currentPeriod?.status !== "draft" && auth.canEditCatalog && activeTab !== "inventory"}
+  {#if offersTab && currentPeriod && currentPeriod.status !== "draft" && auth.canEditCatalog}
     <Banner tone="warning" class="mb-4">
-      Este período está {currentPeriod?.status === "active" ? "activo" : "archivado"}. Sus ofertas
+      Este período está {currentPeriod.status === "active" ? "activo" : "archivado"}. Sus ofertas
       no se pueden modificar.
     </Banner>
   {/if}
@@ -193,7 +208,7 @@ onMount(() => {
 
     <TabsContent value="gaso">
       {#if !currentPeriod}
-        <EmptyState title="Ningún período seleccionado" description="Selecciona un período para ver los paquetes." />
+        {@render noPeriod()}
       {:else if bundles.length === 0}
         <EmptyState title="Sin paquetes" description="Este período no tiene paquetes configurados." />
       {:else}
@@ -208,7 +223,7 @@ onMount(() => {
 
     <TabsContent value="fnb">
       {#if !currentPeriod}
-        <EmptyState title="Ningún período seleccionado" description="Selecciona un período para ver las ofertas." />
+        {@render noPeriod()}
       {:else if fnbBundles.length === 0}
         <EmptyState title="Sin ofertas FNB" description="Este período no tiene ofertas FNB configuradas." />
       {:else}
@@ -221,4 +236,4 @@ onMount(() => {
       {/if}
     </TabsContent>
   </Tabs>
-</div>
+</Page>

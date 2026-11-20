@@ -6,6 +6,7 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import { auth } from "#lib/state/auth.svelte.js";
 import { toast } from "#lib/state/toast.svelte.js";
@@ -146,7 +147,7 @@ async function changePassword(e: Event) {
 
 <PageTitle title="Mi cuenta" />
 
-<div class="mx-auto max-w-2xl px-4 py-6 md:px-8 md:py-8">
+<Page width="narrow">
 	<PageHeader title="Mi cuenta" subtitle={email} />
 
 	<div class="flex flex-col gap-6">
@@ -230,4 +231,4 @@ async function changePassword(e: Event) {
 			{/if}
 		</SectionShell>
 	</div>
-</div>
+</Page>

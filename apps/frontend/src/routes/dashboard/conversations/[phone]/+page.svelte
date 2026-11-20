@@ -20,6 +20,7 @@ import {
 } from "#lib/utils/formatters.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import { auth } from "#lib/state/auth.svelte.js";
+import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
@@ -286,7 +287,7 @@ function goBack() {
 {/snippet}
 
 {#if !conversation}
-	<div class="mx-auto max-w-3xl px-4 py-6 md:px-8 md:py-8">
+	<Page width="narrow">
 		<EmptyState
 			title="Conversación no encontrada"
 			description="Puede que el cliente haya escrito a otro número del negocio."
@@ -295,7 +296,7 @@ function goBack() {
 				<Button variant="secondary" size="sm" onclick={goBack}>Volver a conversaciones</Button>
 			{/snippet}
 		</EmptyState>
-	</div>
+	</Page>
 {:else}
 	<!-- From lg up the thread and the side panel scroll on their own; below lg the page scrolls. -->
 	<div class="flex flex-col lg:h-dvh lg:overflow-hidden">

@@ -114,7 +114,7 @@ onMount(() => {
 {#if !data.user?.activeTenantId}
 <NeedsTenant />
 {:else}
-<div class="flex max-w-2xl flex-col gap-6">
+<div class="flex max-w-3xl flex-col gap-6">
 	<a href="/dashboard/admin/users" class="self-start text-sm text-fg-muted hover:text-fg">← Usuarios</a>
 
 	{#if user}
