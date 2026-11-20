@@ -90,7 +90,8 @@ packages/intelligence/tests/   the mock LLM provider, under bun test
 The backend's tests run under vitest with `@cloudflare/vitest-plugin`
 ([`vitest.config.ts`](../apps/backend/vitest.config.ts)). Each runs inside
 workerd with the bindings of `wrangler.jsonc`: D1, KV, R2, the rate limit and
-the Durable Objects. Each file builds the schema once. Before each test,
+the Durable Objects. The files share one module graph (`isolate: false`), so
+the source is transformed once, not once per file. Before each test,
 `setup.ts` aborts every Durable Object, deletes every row and empties KV and R2,
 so no test sees another's rows, breaker state or lock. A test that drops a table
 or adds a trigger changes the schema, and `setup.ts` rebuilds it before the next

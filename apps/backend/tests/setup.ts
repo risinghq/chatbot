@@ -25,10 +25,10 @@ let tables: string[] = [];
 /**
  * Every test starts with the migrated schema, no rows, empty KV and R2, and
  * no live Durable Object, so no test sees another's rows, breaker state or
- * lock. The pool gives each file its own storage, so the schema is built once
- * per file and only rows are cleared between tests: replaying the migrations
- * cost about 120 ms a test. A test that drops a table or adds a trigger
- * changes the schema, and the next test rebuilds it.
+ * lock. The schema is built only when the stored one differs from the last
+ * build, and otherwise only rows are cleared: replaying the migrations cost
+ * about 120 ms a test. A test that drops a table or adds a trigger changes
+ * the schema, and the next test rebuilds it.
  */
 beforeEach(async () => {
   if ((await currentSchema()) !== builtSchema) {
