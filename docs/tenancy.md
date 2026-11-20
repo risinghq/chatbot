@@ -253,6 +253,11 @@ key: the turn builds the OpenAI client from the tenant's stored key, and a
 tenant with none takes the same unavailable path as an OpenAI outage. The
 dashboard's system status says the key is missing while it is unset.
 
+The save asks OpenAI for its model list with the new key. When OpenAI answers
+401, the save fails with 400 (`reason: "invalid_openai_key"`) and writes none of
+its settings. When OpenAI does not answer, the key is stored anyway, so an
+outage never blocks a business.
+
 ## How a webhook reaches a tenant
 
 Meta's payload names the receiving number in

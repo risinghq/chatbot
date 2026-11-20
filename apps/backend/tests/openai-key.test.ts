@@ -123,8 +123,21 @@ describe("the key through the settings API", () => {
   let tenant: TenantFixture;
   let other: TenantFixture;
   let cookie: string;
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
 
   beforeEach(async () => {
+    // OpenAI's key check: it knows SECRET and refuses anything else.
+    globalThis.fetch = (async (input: RequestInfo, init?: RequestInit) => {
+      const key = new Request(input, init).headers.get("authorization");
+      return new Response("{}", {
+        status: key === `Bearer ${SECRET}` ? 200 : 401,
+      });
+    }) as typeof fetch;
+
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.use("/api/admin/*", requireRole("admin"));
@@ -160,6 +173,36 @@ describe("the key through the settings API", () => {
     expect(settings._has_openai_api_key).toBe("true");
     expect(JSON.stringify(settings)).not.toContain(SECRET);
     expect(await openAiApiKey(tenant.tenantId)).toBe(SECRET);
+  });
+
+  it("refuses a key OpenAI rejects and saves nothing from that request", async () => {
+    const response = await postSettings({
+      openai_api_key: "sk-revoked",
+      bot_name: "Ana",
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      reason: "invalid_openai_key",
+    });
+    expect(await openAiApiKey(tenant.tenantId)).toBeNull();
+    expect(
+      await getOne(
+        "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = 'bot_name'",
+        [tenant.tenantId],
+      ),
+    ).toBeUndefined();
+  });
+
+  it("stores the key when OpenAI cannot be reached", async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError("network down");
+    }) as typeof fetch;
+
+    expect(
+      (await postSettings({ openai_api_key: "sk-unchecked" })).status,
+    ).toBe(200);
+    expect(await openAiApiKey(tenant.tenantId)).toBe("sk-unchecked");
   });
 
   it("lands in the caller's tenant and nowhere else", async () => {
