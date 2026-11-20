@@ -39,6 +39,7 @@ export default defineConfig(async () => {
       alias: {
         "$app/env": sveltekitApp,
         "$app/navigation": sveltekitApp,
+        "$app/state": sveltekitApp,
       },
     },
     test: {

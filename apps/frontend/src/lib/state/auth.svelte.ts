@@ -1,4 +1,5 @@
 import { browser } from "$app/env";
+import { page } from "$app/state";
 import { fetchApi } from "#lib/utils/api.js";
 import { showTenantSelector } from "#lib/state/tenant-switching.js";
 
@@ -45,9 +46,20 @@ function createAuthState() {
     tenants: [],
   });
 
+  /**
+   * The server shares this module across requests, so it never writes `state`
+   * there. Until `hydrate` runs, the session is the request's own user from
+   * the root layout's data, so the server render and the browser's first
+   * paint show the right role.
+   */
+  function sessionUser(): User | null {
+    if (!state.isLoading) return state.user;
+    return (page.data.user as User | null | undefined) ?? null;
+  }
+
   return {
     get user() {
-      return state.user;
+      return sessionUser();
     },
     get isAuthenticated() {
       return state.isAuthenticated;
@@ -56,13 +68,13 @@ function createAuthState() {
       return state.isLoading;
     },
     get isAdmin() {
-      return state.user?.role === "admin";
+      return sessionUser()?.role === "admin";
     },
     get isDeveloper() {
-      return state.user?.role === "developer";
+      return sessionUser()?.role === "developer";
     },
     get isSupervisor() {
-      return state.user?.role === "supervisor";
+      return sessionUser()?.role === "supervisor";
     },
     get canEditCatalog() {
       return this.isAdmin || this.isDeveloper || this.isSupervisor;
@@ -89,13 +101,13 @@ function createAuthState() {
       return this.isPlatformOperator;
     },
     get isSalesAgent() {
-      return state.user?.role === "sales_agent";
+      return sessionUser()?.role === "sales_agent";
     },
     get isPlatformOperator() {
-      return state.user?.isPlatformOperator === true;
+      return sessionUser()?.isPlatformOperator === true;
     },
     get activeTenantId() {
-      return state.user?.activeTenantId ?? null;
+      return sessionUser()?.activeTenantId ?? null;
     },
     get tenants() {
       return state.tenants;
@@ -108,7 +120,7 @@ function createAuthState() {
       });
     },
     get isAvailable() {
-      return state.user?.isAvailable === true;
+      return sessionUser()?.isAvailable === true;
     },
     hydrate(user: User | null) {
       state.user = user;
