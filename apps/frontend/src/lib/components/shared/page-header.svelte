@@ -18,6 +18,6 @@ let { title, subtitle, actions }: Props = $props();
 		{/if}
 	</div>
 	{#if actions}
-		<div class="flex flex-wrap gap-2">{@render actions()}</div>
+		<div class="flex flex-wrap gap-2 md:shrink-0">{@render actions()}</div>
 	{/if}
 </header>

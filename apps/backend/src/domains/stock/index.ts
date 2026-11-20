@@ -119,10 +119,16 @@ export const StockService = {
 
   /**
    * Every variant of the business with its stock, summed over all locations or
-   * over the one given. A variant with no movement shows zeros.
+   * over the one given. A variant with no movement shows zeros. `productIds`
+   * limits the rows to those products.
    */
-  levels: async (tenantId: string, locationId?: string): Promise<StockRow[]> =>
-    await db
+  levels: async (
+    tenantId: string,
+    locationId?: string,
+    productIds?: readonly string[],
+  ): Promise<StockRow[]> => {
+    if (productIds?.length === 0) return [];
+    let query = db
       .selectFrom("product_variants as v")
       .innerJoin("products as p", (join) =>
         join
@@ -154,12 +160,15 @@ export const StockService = {
           )
           .as("available"),
       ])
-      .where("v.tenant_id", "=", tenantId)
+      .where("v.tenant_id", "=", tenantId);
+    if (productIds) query = query.where("v.product_id", "in", productIds);
+    return await query
       .groupBy("v.id")
       .orderBy("p.name")
       .orderBy("v.name")
       .orderBy("v.sku")
-      .execute(),
+      .execute();
+  },
 
   movements: async (
     tenantId: string,

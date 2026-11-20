@@ -131,6 +131,8 @@ export {
   paymentState,
 } from "./orders.ts";
 export { MIN_PASSWORD_LENGTH } from "./accounts.ts";
+export type { AssistantModel, AssistantSettings } from "./assistant.ts";
+export { ASSISTANT_MODELS, ASSISTANT_TEXT_LIMIT } from "./assistant.ts";
 export {
   isTenantSecretSettingKey,
   TENANT_SECRET_SETTING_KEYS,

@@ -39,6 +39,8 @@ export type Command = {
   run(ctx: CommandContext): Promise<unknown>;
 };
 
+const ASSISTANT_TEXT_FIELDS = ["instructions", "faq", "policies"];
+
 /** A usage mistake. The CLI prints it with the command's usage and exits 2. */
 export class UsageError extends Error {}
 
@@ -608,6 +610,41 @@ export const COMMANDS: Command[] = [
         name: need(ctx.options.name, "--name"),
         instructions: ctx.options.note ?? null,
       });
+    },
+  },
+  {
+    words: "assistant show",
+    usage: "assistant show",
+    summary: "The assistant's instructions, FAQ, policies, model and location.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 0);
+      return ctx.call("GET", "/api/assistant/settings");
+    },
+  },
+  {
+    words: "assistant set",
+    usage: "assistant set <setting> [model | location id | none]",
+    summary:
+      "Change instructions, faq or policies (text on stdin), model, or location.",
+    run: async (ctx) => {
+      const field = need(ctx.args[0], "setting");
+      if (ASSISTANT_TEXT_FIELDS.includes(field)) {
+        noMoreArgs(ctx, 1);
+        return ctx.call("PUT", "/api/assistant/settings", {
+          [field]: await ctx.readStdin(),
+        });
+      }
+      noMoreArgs(ctx, 2);
+      const value = need(ctx.args[1], "value");
+      if (field === "model") {
+        return ctx.call("PUT", "/api/assistant/settings", { model: value });
+      }
+      if (field === "location") {
+        return ctx.call("PUT", "/api/assistant/settings", {
+          stock_location_id: value === "none" ? null : value,
+        });
+      }
+      throw new UsageError(`${field} is not an assistant setting.`);
     },
   },
   {
