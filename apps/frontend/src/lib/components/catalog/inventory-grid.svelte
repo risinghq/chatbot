@@ -20,7 +20,7 @@ const STATUS: Record<
 };
 
 const columns = [
-  { header: "Nombre", key: "name" as const, class: "text-fg" },
+  { header: "Nombre", cell: nameCell },
   { header: "Categoría", cell: categoryCell },
   { header: "Marca / Modelo", cell: brandCell },
   { header: "Variantes", cell: variantsCell, align: "right" as const },
@@ -37,6 +37,17 @@ const columns = [
 		onRowClick={onProductClick}
 	/>
 </div>
+
+{#snippet nameCell(p: Product)}
+	<span class="flex items-center gap-3">
+		{#if p.cover_url}
+			<img src={p.cover_url} alt="" class="size-8 shrink-0 rounded-sm object-cover" loading="lazy" />
+		{:else}
+			<span class="size-8 shrink-0 rounded-sm bg-sunken"></span>
+		{/if}
+		<span class="text-fg">{p.name}</span>
+	</span>
+{/snippet}
 
 {#snippet categoryCell(p: Product)}
 	<Badge>{p.category}</Badge>

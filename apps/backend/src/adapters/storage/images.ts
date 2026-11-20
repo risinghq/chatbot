@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { catalogImageKey } from "../../lib/storage-paths.ts";
+import { catalogImageKey, isCatalogImageKey } from "../../lib/storage-paths.ts";
 
 const MAX_SIZE = 1024;
 const JPEG_QUALITY = 85;
@@ -73,5 +73,13 @@ export const imageStorage = {
 
   async delete(tenantId: string, imageId: string): Promise<void> {
     await env.FILES.delete(catalogImageKey(tenantId, imageId));
+  },
+
+  /** Deletes by the key an asset row recorded. Refuses any non-image key. */
+  async deleteKey(storageKey: string): Promise<void> {
+    if (!isCatalogImageKey(storageKey)) {
+      throw new Error("Not a catalog image key");
+    }
+    await env.FILES.delete(storageKey);
   },
 };

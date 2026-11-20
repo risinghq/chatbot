@@ -159,6 +159,18 @@ export type Product = {
   created_at: number;
   /** Present on list reads. */
   variant_count?: number;
+  /** Present on list reads: the first image's public path, or null. */
+  cover_url?: string | null;
+};
+
+/** A product photo. `position` 0 is the cover. `url` is public. */
+export type ProductImage = {
+  id: string;
+  product_id: string;
+  asset_id: string;
+  position: number;
+  url: string;
+  created_at: number;
 };
 
 /** One sellable form of a product. Money is in cents. */

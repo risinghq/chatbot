@@ -11,6 +11,11 @@ import {
   VariantService,
   type VariantFields,
 } from "../domains/catalog/variants.ts";
+import {
+  MAX_PRODUCT_IMAGES,
+  ProductImageService,
+} from "../domains/catalog/images.ts";
+import { bodyLimit } from "hono/body-limit";
 import { imageStorage, isUnreadableImage } from "../adapters/storage/images.ts";
 import { AssetService } from "../domains/assets/index.ts";
 import { logAction } from "../platform/audit/logger.ts";
@@ -130,6 +135,133 @@ catalog.patch(
       updates,
     );
     return c.json(product);
+  },
+);
+
+// ============ PRODUCT IMAGES ============
+
+const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+const limitImageUpload = bodyLimit({
+  maxSize: MAX_IMAGE_UPLOAD_BYTES,
+  onError: (c) => c.json({ error: "The image is larger than 10 MB" }, 413),
+});
+
+catalog.get("/products/:id/images", requireActiveTenant, async (c) => {
+  const tenantId = activeTenantId(c);
+  const productId = pathParam(c, "id");
+  if (!(await ProductService.getById(tenantId, productId))) {
+    return c.json({ error: "Product not found" }, 404);
+  }
+  return c.json(await ProductImageService.list(tenantId, productId));
+});
+
+catalog.post(
+  "/products/:id/images",
+  requireActiveTenant,
+  requireCatalogWrite,
+  limitImageUpload,
+  async (c) => {
+    const user = c.get("user");
+    const tenantId = activeTenantId(c);
+    const productId = pathParam(c, "id");
+    const file = (await c.req.parseBody()).image;
+    if (!(file instanceof File)) {
+      return c.json(
+        { error: "Send the image as the multipart field image" },
+        400,
+      );
+    }
+
+    if (!(await ProductService.getById(tenantId, productId))) {
+      return c.json({ error: "Product not found" }, 404);
+    }
+    const existing = await ProductImageService.list(tenantId, productId);
+    if (existing.length >= MAX_PRODUCT_IMAGES) {
+      return c.json(
+        { error: `A product holds at most ${MAX_PRODUCT_IMAGES} images` },
+        409,
+      );
+    }
+
+    const stored = await storeImage(tenantId, file);
+    if (!stored) return c.json({ error: NOT_AN_IMAGE }, 400);
+
+    const image = await ProductImageService.add({
+      tenantId,
+      productId,
+      imageId: stored.imageId,
+      byteSize: stored.byteSize,
+      createdBy: user.id,
+    });
+
+    await logAction(
+      { userId: user.id, tenantId },
+      "add_product_image",
+      "product",
+      productId,
+      { imageId: image.id },
+    );
+    return c.json(image);
+  },
+);
+
+catalog.put(
+  "/products/:id/images/order",
+  requireActiveTenant,
+  requireCatalogWrite,
+  async (c) => {
+    const user = c.get("user");
+    const tenantId = activeTenantId(c);
+    const productId = pathParam(c, "id");
+    const body = await jsonObject(c);
+    const ids = body?.ids;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) {
+      return c.json({ error: "ids must be a list of image ids" }, 400);
+    }
+
+    if (!(await ProductService.getById(tenantId, productId))) {
+      return c.json({ error: "Product not found" }, 404);
+    }
+    const images = await ProductImageService.reorder(tenantId, productId, ids);
+    if (!images) {
+      return c.json(
+        { error: "ids must name each of the product's images once" },
+        400,
+      );
+    }
+
+    await logAction(
+      { userId: user.id, tenantId },
+      "reorder_product_images",
+      "product",
+      productId,
+      { ids },
+    );
+    return c.json(images);
+  },
+);
+
+catalog.delete(
+  "/images/:id",
+  requireActiveTenant,
+  requireCatalogWrite,
+  async (c) => {
+    const user = c.get("user");
+    const tenantId = activeTenantId(c);
+    const id = pathParam(c, "id");
+    const image = await ProductImageService.get(tenantId, id);
+    if (!image) return c.json({ error: "Image not found" }, 404);
+
+    await ProductImageService.remove(tenantId, id);
+    await logAction(
+      { userId: user.id, tenantId },
+      "delete_product_image",
+      "product",
+      image.product_id,
+      { imageId: id },
+    );
+    return c.json({ success: true });
   },
 );
 

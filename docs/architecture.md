@@ -113,15 +113,15 @@ Queries are plain prepared statements through
 multi-step write is one `batch()`, and the conversation's object keeps a second
 writer out.
 
-| Area                  | Tables                                                                                  |
-| --------------------- | --------------------------------------------------------------------------------------- |
-| Tenancy and auth      | `tenants`, `users`, `tenant_memberships`, `session`                                     |
-| Channel credentials   | `channel_accounts`, encrypted `channel_secrets`                                         |
-| Catalog and simulator | `catalog_periods`, `products`, `product_variants`, `catalog_bundles`, `test_personas`   |
-| Stock                 | `stock_locations`, `stock_levels`, `stock_movements`                                    |
-| Conversations         | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`                 |
-| Sales and records     | `orders`, `assets`, `analytics_events`, `llm_calls`, `notification_traces`, `audit_log` |
-| Settings              | `system_settings`, `tenant_settings`                                                    |
+| Area                  | Tables                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| Tenancy and auth      | `tenants`, `users`, `tenant_memberships`, `session`                                                     |
+| Channel credentials   | `channel_accounts`, encrypted `channel_secrets`                                                         |
+| Catalog and simulator | `catalog_periods`, `products`, `product_variants`, `product_images`, `catalog_bundles`, `test_personas` |
+| Stock                 | `stock_locations`, `stock_levels`, `stock_movements`                                                    |
+| Conversations         | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`                                 |
+| Sales and records     | `orders`, `assets`, `analytics_events`, `llm_calls`, `notification_traces`, `audit_log`                 |
+| Settings              | `system_settings`, `tenant_settings`                                                                    |
 
 A conversation's phase and metadata are one JSON column,
 `conversations.context_data`, shaped `{ phase, metadata }`.

@@ -209,6 +209,27 @@ supervisor.
 The Inventario page records only `receive` and `adjust`. Orders will reserve,
 release and ship on their own.
 
+### Product photos
+
+A product holds up to 10 photos in order, and the first is its cover. The
+product list returns the cover as `cover_url`, and the Productos grid shows it
+next to the name. The product editor's Fotos section uploads, deletes and picks
+the cover.
+
+| Endpoint                                     | Does                                                         |
+| -------------------------------------------- | ------------------------------------------------------------ |
+| `GET /api/catalog/products/:id/images`       | The photos in order, each with its public `url`              |
+| `POST /api/catalog/products/:id/images`      | Upload the multipart field `image`; it goes last             |
+| `PUT /api/catalog/products/:id/images/order` | `{ids}` naming every photo once; the first becomes the cover |
+| `DELETE /api/catalog/images/:id`             | Delete the photo, its asset row and its file                 |
+
+An upload is fit inside 1024 × 1024 and stored as JPEG, like a bundle image, and
+is served without a session at `/media/...` because Meta fetches it with no
+credentials. Over 10 MB answers 413, an eleventh photo 409, and a file the
+Images binding cannot read 400. There is no upload from a URL, so the server
+never fetches an address a user chose. Writing needs admin, developer or
+supervisor.
+
 ## What has no page
 
 The API has endpoints the dashboard does not reach: registering channel
