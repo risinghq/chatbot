@@ -107,11 +107,16 @@ The schema is the wrangler migrations in
 `wrangler d1 migrations apply`. A schema change is a new numbered file. Never
 edit a migration that has run remotely.
 
-Queries are plain prepared statements through
-[`db/index.ts`](../apps/backend/src/db/index.ts): `getOne`, `getAll`, `run`, and
-`batch` for steps that must land together. D1 has no interactive transaction. A
-multi-step write is one `batch()`, and the conversation's object keeps a second
-writer out.
+Queries go through [`db/index.ts`](../apps/backend/src/db/index.ts). `db` is a
+Kysely builder typed by [`db/schema.ts`](../apps/backend/src/db/schema.ts),
+which `bun run db:types` generates from the migrations. A wrong table, column or
+value type fails the typecheck. The catalog and stock domains use it. The other
+domains still use the raw helpers `getOne`, `getAll` and `run`, and move to `db`
+one domain at a time.
+
+D1 has no interactive transaction, so `db.transaction()` throws. A multi-step
+write is one `batch()`, which takes Kysely queries and raw statements. The
+conversation's object keeps a second writer out.
 
 | Area                  | Tables                                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -261,9 +266,11 @@ deployment.
   outcome for most failures. An inactive account throws
   `ChannelUnavailableError` so its outbox can wait. Alerts to staff use
   `sendDirect`, which skips the suspension check.
-- Tenant scope comes from [`db/query.ts`](../apps/backend/src/db/query.ts). Read
-  functions use `tenantPredicate`. Cross-tenant work, such as the sweep, uses
-  `openTenantsOnly` and `activeChannelAccountsOnly`.
+- Tenant scope. A Kysely read takes `tenantScope(tenantId)` from
+  [`db/index.ts`](../apps/backend/src/db/index.ts), and raw SQL takes
+  `tenantPredicate` from [`db/query.ts`](../apps/backend/src/db/query.ts).
+  Cross-tenant work, such as the sweep, uses `openTenantsOnly` and
+  `activeChannelAccountsOnly`.
 - Logs are one JSON object per line on `console`, which Workers Logs indexes.
   `LOG_LEVEL` sets the level, and `LOG_LEVEL_<MODULE>` overrides it for one
   module ([`lib/logger.ts`](../apps/backend/src/lib/logger.ts)).
@@ -291,10 +298,12 @@ deployment.
 
 ## Tests that enforce structure
 
-| Test                                                   | Holds                                                                          |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `apps/backend/tests/created-at-contract.test.ts`       | INTEGER `*_at` fields reach clients as milliseconds.                           |
-| `apps/backend/tests/foreign-keys.test.ts`              | The schema's foreign keys and cascades hold in D1.                             |
-| `apps/backend/tests/source/tenant-scope-guard.test.ts` | No backend query reads tenant rows without the scope helpers in `db/query.ts`. |
+| Test                                                   | Holds                                                                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/backend/tests/created-at-contract.test.ts`       | INTEGER `*_at` fields reach clients as milliseconds.                                                                            |
+| `apps/backend/tests/foreign-keys.test.ts`              | The schema's foreign keys and cascades hold in D1.                                                                              |
+| `apps/backend/tests/source/tenant-scope-guard.test.ts` | No backend query reads tenant rows without the scope helpers in `db/query.ts`.                                                  |
+| `apps/backend/src/db/tenant-scope.ts`                  | At run time, a Kysely query that reads, updates or deletes a tenant table with no tenant predicate throws before it reaches D1. |
+| `apps/backend/tests/source/db-schema.test.ts`          | `db/schema.ts` matches the migrations.                                                                                          |
 
 The commands and CI jobs are in [Development](./development.md).

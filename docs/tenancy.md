@@ -179,11 +179,22 @@ name the owner (`user:<id>`), not the token.
 
 An unpinned member reads nothing until selecting a tenant.
 
-Read functions take `tenantId: string | null` and filter with
+Read functions take `tenantId: string | null`. A Kysely read filters with
+`.where(tenantScope(tenantId))` from
+[`db/index.ts`](../apps/backend/src/db/index.ts), and raw SQL with
 `tenantPredicate(tenantId)` from
 [`db/query.ts`](../apps/backend/src/db/query.ts). A concrete id filters to that
 tenant. `null` means every open tenant, never every row. A row fetched by id is
 checked with `canAccessTenant`, and another tenant's row answers 404, not 403.
+
+The Kysely builder checks every query as it is built
+([`db/tenant-scope.ts`](../apps/backend/src/db/tenant-scope.ts)). Each
+tenant-owned table in a SELECT, UPDATE or DELETE, subqueries included, needs an
+AND-ed `tenant_id` predicate. The predicate compares the column with a value or
+a subquery, or with the `tenant_id` of a table already tied to a tenant. A
+predicate inside an OR does not count. A query that fails the check throws
+`UnscopedQueryError`. A read keyed by something globally unique before the
+tenant is known, such as a session token, uses `withoutTenantScope(reason)`.
 
 The minute sweep and the conversation objects read across tenants with
 `openTenantsOnly()` and `activeChannelAccountsOnly()`, so a suspended business

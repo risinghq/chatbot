@@ -1,21 +1,36 @@
 import type { ProductImage } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
 import { imageStorage } from "../../adapters/storage/images.ts";
-import { batch, getAll, getOne, stmt } from "../../db/index.ts";
+import { batch, db } from "../../db/index.ts";
 import { mediaPath } from "../../lib/storage-paths.ts";
 
 /** How many photos one product may hold. */
 export const MAX_PRODUCT_IMAGES = 10;
 
-type ImageRow = Omit<ProductImage, "url"> & { storage_key: string };
+/** A tenant's photos with the storage key of each one's asset. */
+function images(tenantId: string) {
+  return db
+    .selectFrom("product_images as i")
+    .innerJoin("assets as a", (join) =>
+      join
+        .onRef("a.id", "=", "i.asset_id")
+        .onRef("a.tenant_id", "=", "i.tenant_id"),
+    )
+    .select([
+      "i.id",
+      "i.product_id",
+      "i.asset_id",
+      "i.position",
+      "i.created_at",
+      "a.storage_key",
+    ])
+    .where("i.tenant_id", "=", tenantId);
+}
 
-const SELECT_IMAGES = `SELECT i.id, i.product_id, i.asset_id, i.position, i.created_at,
-       a.storage_key
-  FROM product_images i
-  JOIN assets a ON a.id = i.asset_id AND a.tenant_id = i.tenant_id
- WHERE i.tenant_id = ?`;
-
-function toImage({ storage_key, ...row }: ImageRow): ProductImage {
+function toImage({
+  storage_key,
+  ...row
+}: Omit<ProductImage, "url"> & { storage_key: string }): ProductImage {
   return { ...row, url: mediaPath(storage_key) };
 }
 
@@ -26,19 +41,17 @@ function toImage({ storage_key, ...row }: ImageRow): ProductImage {
 export const ProductImageService = {
   list: async (tenantId: string, productId: string): Promise<ProductImage[]> =>
     (
-      await getAll<ImageRow>(
-        `${SELECT_IMAGES}
-           AND i.product_id = ?
-         ORDER BY i.position, i.id`,
-        [tenantId, productId],
-      )
+      await images(tenantId)
+        .where("i.product_id", "=", productId)
+        .orderBy("i.position")
+        .orderBy("i.id")
+        .execute()
     ).map(toImage),
 
   get: async (tenantId: string, id: string): Promise<ProductImage | null> => {
-    const row = await getOne<ImageRow>(`${SELECT_IMAGES} AND i.id = ?`, [
-      tenantId,
-      id,
-    ]);
+    const row = await images(tenantId)
+      .where("i.id", "=", id)
+      .executeTakeFirst();
     return row ? toImage(row) : null;
   },
 
@@ -58,24 +71,34 @@ export const ProductImageService = {
     const id = newId();
     const assetId = newId();
     await batch([
-      stmt(
-        `INSERT INTO assets
-           (id, tenant_id, kind, visibility, storage_key, content_type, byte_size, created_by)
-         VALUES (?, ?, 'catalog_image', 'public', ?, 'image/jpeg', ?, ?)`,
-        [
-          assetId,
-          tenantId,
-          imageStorage.storageKey(tenantId, image.imageId),
-          image.byteSize,
-          image.createdBy,
-        ],
-      ),
-      stmt(
-        `INSERT INTO product_images (id, tenant_id, product_id, asset_id, position)
-         SELECT ?, ?, ?, ?, COALESCE(MAX(position) + 1, 0)
-         FROM product_images WHERE tenant_id = ? AND product_id = ?`,
-        [id, tenantId, productId, assetId, tenantId, productId],
-      ),
+      db.insertInto("assets").values({
+        id: assetId,
+        tenant_id: tenantId,
+        kind: "catalog_image",
+        visibility: "public",
+        storage_key: imageStorage.storageKey(tenantId, image.imageId),
+        content_type: "image/jpeg",
+        byte_size: image.byteSize,
+        created_by: image.createdBy,
+      }),
+      db
+        .insertInto("product_images")
+        .columns(["id", "tenant_id", "product_id", "asset_id", "position"])
+        .expression((eb) =>
+          eb
+            .selectFrom("product_images")
+            .select([
+              eb.val(id).as("id"),
+              eb.val(tenantId).as("tenant_id"),
+              eb.val(productId).as("product_id"),
+              eb.val(assetId).as("asset_id"),
+              eb.fn
+                .coalesce(eb(eb.fn.max("position"), "+", 1), eb.lit(0))
+                .as("position"),
+            ])
+            .where("tenant_id", "=", tenantId)
+            .where("product_id", "=", productId),
+        ),
     ]);
     return (await ProductImageService.get(tenantId, id))!;
   },
@@ -86,23 +109,19 @@ export const ProductImageService = {
    * points at nothing. False when the image is not the tenant's.
    */
   remove: async (tenantId: string, id: string): Promise<boolean> => {
-    const row = await getOne<{ asset_id: string; storage_key: string }>(
-      `SELECT i.asset_id, a.storage_key
-       FROM product_images i
-       JOIN assets a ON a.id = i.asset_id AND a.tenant_id = i.tenant_id
-       WHERE i.tenant_id = ? AND i.id = ?`,
-      [tenantId, id],
-    );
+    const row = await images(tenantId)
+      .where("i.id", "=", id)
+      .executeTakeFirst();
     if (!row) return false;
     await batch([
-      stmt(`DELETE FROM product_images WHERE id = ? AND tenant_id = ?`, [
-        id,
-        tenantId,
-      ]),
-      stmt(`DELETE FROM assets WHERE id = ? AND tenant_id = ?`, [
-        row.asset_id,
-        tenantId,
-      ]),
+      db
+        .deleteFrom("product_images")
+        .where("id", "=", id)
+        .where("tenant_id", "=", tenantId),
+      db
+        .deleteFrom("assets")
+        .where("id", "=", row.asset_id)
+        .where("tenant_id", "=", tenantId),
     ]);
     await imageStorage.deleteKey(row.storage_key);
     return true;
@@ -125,17 +144,16 @@ export const ProductImageService = {
       )
     )
       return null;
-    if (ids.length > 0) {
-      await batch(
-        ids.map((id, position) =>
-          stmt(
-            `UPDATE product_images SET position = ?
-             WHERE id = ? AND tenant_id = ? AND product_id = ?`,
-            [position, id, tenantId, productId],
-          ),
-        ),
-      );
-    }
+    await batch(
+      ids.map((id, position) =>
+        db
+          .updateTable("product_images")
+          .set({ position })
+          .where("id", "=", id)
+          .where("tenant_id", "=", tenantId)
+          .where("product_id", "=", productId),
+      ),
+    );
     return await ProductImageService.list(tenantId, productId);
   },
 };
