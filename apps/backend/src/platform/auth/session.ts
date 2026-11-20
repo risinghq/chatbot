@@ -17,8 +17,16 @@ function cookieSecure(): boolean {
   return publicOrigin().startsWith("https:");
 }
 
+/**
+ * A browser login rides the `session` cookie. A token is a program's
+ * credential, sent as `Authorization: Bearer`. Each is refused on the other's
+ * transport, so a stolen cookie value is no bearer token and the reverse.
+ */
+export type SessionKind = "browser" | "token";
+
 export interface Session {
   id: string;
+  kind: SessionKind;
   userId: string;
   activeTenantId: string | null;
   expiresAt: Date;
@@ -67,6 +75,11 @@ export function generateSessionToken(): string {
   return token;
 }
 
+/** A session's id is the hash of its token, so the table holds no credential. */
+export function sessionIdOf(token: string): string {
+  return encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
+}
+
 /**
  * Picks the tenant a fresh session starts in. A user with exactly one open
  * membership starts in it. Everyone else starts unpinned. A platform operator
@@ -88,20 +101,21 @@ export async function createSession(
   userId: string,
   activeTenantId: string | null = null,
 ): Promise<Session> {
-  const sessionId = encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
   const session: Session = {
-    id: sessionId,
+    id: sessionIdOf(token),
+    kind: "browser",
     userId,
     activeTenantId,
     expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30), // 30 days
   };
   await run(
-    "INSERT INTO session (id, user_id, active_tenant_id, expires_at) VALUES (?, ?, ?, ?)",
+    "INSERT INTO session (id, kind, user_id, active_tenant_id, expires_at, created_at) VALUES (?, 'browser', ?, ?, ?, ?)",
     [
       session.id,
       session.userId,
       session.activeTenantId,
       Math.floor(session.expiresAt.getTime() / 1000),
+      Date.now(),
     ],
   );
   return session;
@@ -121,13 +135,18 @@ export async function setSessionTenant(
   ]);
 }
 
+/** How stale a token's last use may get before a request records it again. */
+const LAST_USED_RESOLUTION_MS = 1000 * 60 * 60;
+
 export async function validateSessionToken(
   token: string,
+  kind: SessionKind = "browser",
 ): Promise<SessionValidationResult> {
-  const sessionId = encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
+  const sessionId = sessionIdOf(token);
   const row = (await getOne(
     `
-        SELECT s.id, s.user_id, s.active_tenant_id, s.expires_at,
+        SELECT s.id, s.kind, s.user_id, s.active_tenant_id, s.expires_at,
+               s.last_used_at,
                u.id as uid, u.email, u.name as uname,
                u.is_platform_operator, u.is_active,
                t.status as tenant_status
@@ -140,9 +159,11 @@ export async function validateSessionToken(
   )) as
     | {
         id: string;
+        kind: SessionKind;
         user_id: string;
         active_tenant_id: string | null;
         expires_at: number;
+        last_used_at: number | null;
         uid: string;
         email: string;
         uname: string;
@@ -152,12 +173,13 @@ export async function validateSessionToken(
       }
     | undefined;
 
-  if (!row || row.is_active === 0) {
+  if (!row || row.is_active === 0 || row.kind !== kind) {
     return { session: null, user: null, scope: null, fresh: false };
   }
 
   const session: Session = {
     id: row.id,
+    kind: row.kind,
     userId: row.user_id,
     activeTenantId: row.active_tenant_id,
     expiresAt: new Date(row.expires_at * 1000),
@@ -168,8 +190,19 @@ export async function validateSessionToken(
     return { session: null, user: null, scope: null, fresh: false };
   }
 
+  // A token keeps the expiry it was created with; only a browser session slides.
   let fresh = false;
-  if (Date.now() >= session.expiresAt.getTime() - 1000 * 60 * 60 * 24 * 15) {
+  if (kind === "token") {
+    if (Date.now() - (row.last_used_at ?? 0) >= LAST_USED_RESOLUTION_MS) {
+      await run("UPDATE session SET last_used_at = ? WHERE id = ?", [
+        Date.now(),
+        session.id,
+      ]);
+    }
+  } else if (
+    Date.now() >=
+    session.expiresAt.getTime() - 1000 * 60 * 60 * 24 * 15
+  ) {
     fresh = true;
     session.expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
     await run("UPDATE session SET expires_at = ? WHERE id = ?", [

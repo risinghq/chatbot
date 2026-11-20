@@ -3,7 +3,15 @@ import {
   activeTenantId,
   requireActiveTenant,
   requireAuth,
+  requireBrowserSession,
 } from "../middleware/auth.ts";
+import {
+  checkTokenRequest,
+  createApiToken,
+  listApiTokens,
+  revokeApiToken,
+} from "../platform/auth/api-tokens.ts";
+import { logAction } from "../platform/audit/logger.ts";
 import { loginRateLimiter } from "../middleware/security.ts";
 import { verifyPassword } from "../platform/auth/password.ts";
 import { MembershipService } from "../domains/tenants/index.ts";
@@ -201,7 +209,7 @@ auth.patch("/me", requireAuth, async (c) => {
   return c.json(result.value);
 });
 
-auth.post("/me/password", requireAuth, async (c) => {
+auth.post("/me/password", requireAuth, requireBrowserSession, async (c) => {
   const body = await c.req.json();
   const result = await AccountService.changePassword(
     c.get("user").id,
@@ -209,6 +217,47 @@ auth.post("/me/password", requireAuth, async (c) => {
     { current: body.currentPassword, next: body.newPassword },
   );
   if (!result.ok) return accountProblem(c, result.error);
+  return c.json({ success: true });
+});
+
+auth.get("/tokens", requireAuth, async (c) => {
+  return c.json(await listApiTokens(c.get("user").id));
+});
+
+/**
+ * Mints a token that acts as the caller, pinned to the business the session
+ * is in. The plain token is in this response and nowhere else.
+ */
+auth.post("/tokens", requireAuth, requireBrowserSession, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const checked = checkTokenRequest({ name: body.name, days: body.days });
+  if ("problem" in checked) return c.json({ error: checked.problem }, 400);
+
+  const user = c.get("user");
+  const tenantId = c.get("session").activeTenantId;
+  const created = await createApiToken(user.id, checked, tenantId);
+  await logAction(
+    { userId: user.id, tenantId },
+    "create_api_token",
+    "api_token",
+    created.id,
+    { name: created.name, expiresAt: created.expires_at },
+  );
+  return c.json(created, 201);
+});
+
+auth.delete("/tokens/:id", requireAuth, async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id") ?? "";
+  if (!(await revokeApiToken(user.id, id))) {
+    return c.json({ error: "No such token" }, 404);
+  }
+  await logAction(
+    { userId: user.id, tenantId: c.get("session").activeTenantId },
+    "revoke_api_token",
+    "api_token",
+    id,
+  );
   return c.json({ success: true });
 });
 

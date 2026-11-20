@@ -141,6 +141,30 @@ tenant input. No header or query parameter names a tenant.
 Every request re-reads the membership, so a changed role or a removed membership
 takes effect on the next request. Changing a role ends no session.
 
+## API tokens
+
+An API token lets a script or an agent act as a person without their password
+([`platform/auth/api-tokens.ts`](../apps/backend/src/platform/auth/api-tokens.ts)).
+It is a session row of kind `token`, sent as `Authorization: Bearer vy_…`, and
+it holds the same role and memberships as its owner. Only the SHA-256 of the
+token is stored; the plain token appears once, in the answer that created it.
+
+A token differs from a browser session in four ways:
+
+- It lasts the 1 to 365 days it was created with (90 by default) and never
+  renews itself.
+- It has its own active tenant. Created on the dashboard, it starts in the
+  tenant the browser was in; created from the command line, it starts unpinned.
+  Switching its tenant leaves the browser session alone.
+- It cannot create another token or change the password. Those answer 403 and
+  need a browser login.
+- A bearer token is never accepted as a cookie, nor a cookie session as a
+  bearer.
+
+A person lists and revokes their tokens on `/dashboard/cuenta` or with `GET` and
+`DELETE /api/auth/tokens`. Changing the password ends every token. Audit entries
+name the owner (`user:<id>`), not the token.
+
 ## How a read is scoped
 
 `requireAuth` builds a scope for each request:

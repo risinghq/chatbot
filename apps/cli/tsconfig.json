@@ -1,0 +1,7 @@
+{
+  "extends": "@vendeya/tsconfig/base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["src", "tests"]
+}

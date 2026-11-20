@@ -11,6 +11,7 @@ becomes a reply, and the owner of each change. The user-facing flow is in
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/backend`          | The backend Worker: the Hono API, the webhook, the conversation Durable Object, the cron sweep, provider calls, authentication and tenancy. |
 | `apps/frontend`         | The dashboard Worker: SvelteKit 3 with Svelte 5 on `@sveltejs/adapter-cloudflare`, and its server-side session check.                       |
+| `apps/cli`              | The `vendeya` command line: an API client that acts with an API token, for people and agents.                                               |
 | `packages/core`         | Conversation phases, validation, matching, templates, and the transition contract. It does not call external services.                      |
 | `packages/intelligence` | The OpenAI-backed `IntelligenceProvider` and its prompts.                                                                                   |
 | `packages/types`        | Types shared by the applications and packages.                                                                                              |
@@ -25,6 +26,7 @@ core            -> types, utils
 intelligence    -> core, types
 backend         -> core, intelligence, types, utils
 frontend        -> types
+cli             -> types
 ```
 
 ## Workers and bindings
