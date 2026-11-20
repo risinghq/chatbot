@@ -6,6 +6,7 @@ import {
   type OrderMetrics,
   type OrderStatus,
   type OrderSummary,
+  type ShipmentSummary,
 } from "@vendeya/types";
 import { sql, type ExpressionBuilder } from "kysely";
 import { db, tenantScope } from "../../db/index.ts";
@@ -121,6 +122,53 @@ export const OrderReads = {
       )
       .execute();
     return rows.map(withPaymentState) as OrderSummary[];
+  },
+
+  /**
+   * Shipments of orders in `statuses`, newest order first. A pickup order has
+   * no shipment, so it is not listed. `agentId` narrows to a sales agent's
+   * orders.
+   */
+  shipments: async (
+    tenantId: string | null,
+    statuses: readonly OrderStatus[],
+    limit: number,
+    agentId: string | null = null,
+  ): Promise<ShipmentSummary[]> => {
+    const rows = await scopedOrders(tenantId, agentId)
+      .innerJoin("shipments as s", (join) =>
+        join
+          .onRef("s.order_id", "=", "o.id")
+          .onRef("s.tenant_id", "=", "o.tenant_id"),
+      )
+      .select((eb) => [
+        "s.id",
+        "s.order_id",
+        "s.delivery_zone_id",
+        "s.zone_name",
+        "s.recipient_name",
+        "s.recipient_phone",
+        "s.address_line",
+        "s.district",
+        "s.city",
+        "s.reference",
+        "s.carrier",
+        "s.tracking_code",
+        "s.shipped_at",
+        "s.delivered_at",
+        "s.created_at",
+        "o.number as order_number",
+        "o.status as order_status",
+        "o.total_cents",
+        "cu.name as customer_name",
+        "cu.phone as customer_phone",
+        paidCents(eb).as("paid_cents"),
+      ])
+      .where("o.status", "in", [...statuses])
+      .orderBy("o.id", "desc")
+      .limit(limit)
+      .execute();
+    return rows.map(withPaymentState) as ShipmentSummary[];
   },
 
   /** `agentId` narrows to a sales agent's orders. */

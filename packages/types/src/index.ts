@@ -122,6 +122,7 @@ export type {
   PaymentState,
   PaymentStatus,
   Shipment,
+  ShipmentSummary,
 } from "./orders.ts";
 export {
   DOCUMENT_TYPES,

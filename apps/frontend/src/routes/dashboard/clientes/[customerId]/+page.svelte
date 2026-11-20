@@ -117,9 +117,14 @@ async function remove(customer: Customer) {
 					<p class="mt-1 font-mono text-base text-fg-muted">{formatPhone(customer.phone)}</p>
 				{/if}
 			</div>
-			{#if auth.canDeleteCustomers && data.orders.length === 0}
-				<Button variant="danger" size="sm" onclick={() => remove(customer)} disabled={isSaving}>Eliminar cliente</Button>
-			{/if}
+			<div class="flex gap-2">
+				{#if auth.canDeleteCustomers && data.orders.length === 0}
+					<Button variant="danger" size="sm" onclick={() => remove(customer)} disabled={isSaving}>Eliminar cliente</Button>
+				{/if}
+				{#if canEdit && auth.activeTenantId}
+					<Button size="sm" href="/dashboard/orders/nuevo?customer={customer.id}">Nuevo pedido</Button>
+				{/if}
+			</div>
 		</header>
 
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">

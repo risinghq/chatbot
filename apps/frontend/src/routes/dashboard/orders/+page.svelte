@@ -11,6 +11,7 @@ import EmptyState from "#lib/components/ui/empty-state.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import { fieldStyles } from "#lib/components/ui/field-styles.js";
+import { auth } from "#lib/state/auth.svelte.js";
 import { formatPhone, formatDateTime } from "#lib/utils/formatters.js";
 import { formatCents } from "#lib/utils/money.js";
 import {
@@ -70,7 +71,13 @@ function clearFilters() {
 <PageTitle title="Pedidos" />
 
 <Page>
-	<PageHeader title="Pedidos" subtitle="Lo que tus clientes compraron, del pago a la entrega." />
+	<PageHeader title="Pedidos" subtitle="Lo que tus clientes compraron, del pago a la entrega.">
+		{#snippet actions()}
+			{#if auth.canTakeOrders && auth.activeTenantId}
+				<Button href="/dashboard/orders/nuevo">Nuevo pedido</Button>
+			{/if}
+		{/snippet}
+	</PageHeader>
 
 	{#if data.metrics}
 		{@const m = data.metrics}

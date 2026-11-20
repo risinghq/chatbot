@@ -89,6 +89,32 @@ app.get("/", async (c) => {
   return c.json(orders);
 });
 
+app.get("/shipments", async (c) => {
+  const statuses = (c.req.query("status") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (
+    statuses.length === 0 ||
+    statuses.some((s) => !ORDER_STATUSES.includes(s as OrderStatus))
+  ) {
+    return c.json(
+      {
+        error: `status must list one or more of ${ORDER_STATUSES.join(", ")}`,
+      },
+      400,
+    );
+  }
+
+  const shipments = await OrderReads.shipments(
+    c.get("scope").tenantId,
+    statuses as OrderStatus[],
+    queryLimit(c, 100),
+    agentOf(c),
+  );
+  return c.json(shipments);
+});
+
 app.get("/by-conversation/:phone", async (c) => {
   const scope = c.get("scope");
   const lookup = await lookupConversation(

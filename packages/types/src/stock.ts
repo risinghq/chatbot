@@ -48,6 +48,8 @@ export type StockRow = {
   product_id: string;
   product_name: string;
   price_cents: number;
+  /** Whether a new order may take the variant. */
+  is_active: 0 | 1;
   on_hand: number;
   reserved: number;
   /** On hand minus reserved: what can still be sold. */
