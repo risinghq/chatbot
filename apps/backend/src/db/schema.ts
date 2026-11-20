@@ -26,6 +26,17 @@ export interface AssetsTable {
   created_at: Generated<number>;
 }
 
+export interface AssistantSettingsTable {
+  tenant_id: string;
+  instructions: Generated<string>;
+  faq: Generated<string>;
+  policies: Generated<string>;
+  model: string;
+  stock_location_id: string | null;
+  updated_by: string | null;
+  updated_at: Generated<number>;
+}
+
 export interface AuditLogTable {
   id: string;
   tenant_id: string | null;
@@ -480,6 +491,7 @@ export interface UsersTable {
 export interface Database {
   analytics_events: AnalyticsEventsTable;
   assets: AssetsTable;
+  assistant_settings: AssistantSettingsTable;
   audit_log: AuditLogTable;
   catalog_bundles: CatalogBundlesTable;
   catalog_periods: CatalogPeriodsTable;
@@ -521,6 +533,7 @@ export interface Database {
 export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "analytics_events",
   "assets",
+  "assistant_settings",
   "audit_log",
   "catalog_bundles",
   "catalog_periods",
