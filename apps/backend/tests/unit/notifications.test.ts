@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatConversationDetails } from "../src/domains/conversations/notifications.ts";
+import { formatConversationDetails } from "../../src/domains/conversations/notifications.ts";
 import type { ConversationMetadata, ConversationPhase } from "@vendeya/core";
 
 describe("formatConversationDetails", () => {

@@ -7,8 +7,7 @@ import { TEST_BINDINGS } from "./tests/bindings.ts";
 /**
  * The tests run inside workerd with the bindings in wrangler.jsonc. Each test
  * file gets its own D1, KV and R2 state; `tests/setup.ts` applies the
- * migrations to it. `tests/source` reads files instead of bindings, so Bun
- * runs it.
+ * migrations to it. `tests/unit` needs no binding, so Bun runs it.
  *
  * The dashboard tests render Svelte components, so the Svelte compiler runs
  * here too. It is the dashboard's dependency, resolved from that workspace.
@@ -44,7 +43,7 @@ export default defineConfig(async () => {
     },
     test: {
       include: ["tests/**/*.test.ts"],
-      exclude: ["tests/source/**"],
+      exclude: ["tests/unit/**"],
       setupFiles: ["./tests/setup.ts"],
       testTimeout: 15_000,
     },

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 // Writes src/db/schema.ts, the Kysely `Database` type and TENANT_TABLES, from
 // the migrations. It applies them to an empty SQLite database and reads back
 // each table, so the types follow what D1 holds after a deploy.
-// tests/source/db-schema.test.ts fails when the committed file is stale.
+// tests/unit/db-schema.test.ts fails when the committed file is stale.
 
 const BACKEND = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const MIGRATIONS = join(BACKEND, "migrations");

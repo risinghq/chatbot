@@ -81,17 +81,20 @@ from `mise.toml`, so a version is stated nowhere else.
 apps/backend/tests/            the backend suite, one file per behavior, in workerd
 apps/backend/tests/helpers/    tenants, webhook deliveries, the Graph fake, turns
 apps/backend/tests/setup.ts    runs before each backend test
-apps/backend/tests/source/     tests that read source files, under bun test
+apps/backend/tests/unit/       tests that need no binding, under bun test
 packages/core/tests/           transitions, eligibility, validation, under bun test
+packages/intelligence/tests/   the mock LLM provider, under bun test
 *.test.ts beside the code      apps/frontend/src/lib, packages/core/src
 ```
 
 The backend's tests run under vitest with `@cloudflare/vitest-plugin`
 ([`vitest.config.ts`](../apps/backend/vitest.config.ts)). Each runs inside
 workerd with the bindings of `wrangler.jsonc`: D1, KV, R2, the rate limit and
-the Durable Objects. Before each test, `setup.ts` empties the storage, aborts
-every Durable Object and applies the migrations, so no test sees another's rows,
-breaker state or lock.
+the Durable Objects. Each file builds the schema once. Before each test,
+`setup.ts` aborts every Durable Object, deletes every row and empties KV and R2,
+so no test sees another's rows, breaker state or lock. A test that drops a table
+or adds a trigger changes the schema, and `setup.ts` rebuilds it before the next
+test.
 
 The pool reads `apps/backend/.dev.vars`. The values in
 [`tests/bindings.ts`](../apps/backend/tests/bindings.ts) override it, so a
@@ -100,9 +103,11 @@ the providers at hosts that do not resolve. `fakeGraph()` in
 [`tests/helpers/graph.ts`](../apps/backend/tests/helpers/graph.ts) records each
 send and fails any other request, so a test never reaches the network.
 
-`tests/source/` reads files rather than bindings, so `bun test` runs it. It
-holds the tenant scope guard, which fails on a query that bypasses the scope
-helpers in `db/query.ts`.
+`tests/unit/` needs no binding, so `bun test` runs it without starting a workerd
+per file. It holds the tenant scope guard, which fails on a query that bypasses
+the scope helpers in `db/query.ts`, and the pure logic tests. A test whose code
+imports `cloudflare:workers`, even through the logger, stays in workerd. So does
+the password test, because Bun's PBKDF2 differs from the runtime's.
 
 `packages/core/tests/` is not typechecked: core's `tsconfig.json` includes `src`
 only.
