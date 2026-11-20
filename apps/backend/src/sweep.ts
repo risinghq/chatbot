@@ -13,6 +13,7 @@ import { purgeProcessedMessages } from "./conversation/processed-retention.ts";
 import { lockKey } from "./conversation/locks.ts";
 import { conversationStub } from "./conversation/stub.ts";
 import { checkAndReassignTimeouts } from "./domains/conversations/assignment.ts";
+import { InvitationService } from "./domains/invitations/index.ts";
 import { createLogger } from "./lib/logger.ts";
 
 const logger = createLogger("sweep");
@@ -52,6 +53,9 @@ export async function sweep(
     );
     await guarded("purge finished outbox", () =>
       purgeFinishedOutbox(scheduledTime),
+    );
+    await guarded("purge expired invitations", () =>
+      InvitationService.purgeExpired(scheduledTime),
     );
   }
 }

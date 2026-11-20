@@ -23,9 +23,8 @@ const API_TOKEN = "test-token";
 const SECRETS_KEY = "a".repeat(64);
 
 const TENANT = {
-  id: "tenant-1",
-  slug: "totem",
-  name: "Totem",
+  id: "0196f0a0-0000-7000-8000-000000000001",
+  name: "Tienda Uno",
   status: "active",
   created_at: 0,
 };
@@ -73,8 +72,6 @@ function respondTo(statement: {
 
   if (compact.startsWith("select")) {
     if (compact.includes("from tenants")) {
-      if (compact.includes("where slug = ?"))
-        return d1Result(params[0] === TENANT.slug ? [TENANT] : []);
       if (compact.includes("where id = ?"))
         return d1Result(params[0] === TENANT.id ? [TENANT] : []);
       if (!compact.includes("where")) return d1Result([TENANT]);
@@ -238,7 +235,7 @@ describe("account --remote", () => {
       [
         "src/cli/account.ts",
         "create",
-        "ops",
+        "ops@example.com",
         "--platform-operator",
         "--remote",
       ],
@@ -247,10 +244,10 @@ describe("account --remote", () => {
 
     expect(proc.stderr).toBe("");
     expect(proc.status).toBe(0);
-    expect(proc.stdout).toContain("Created platform operator ops");
+    expect(proc.stdout).toContain("Created platform operator ops@example.com");
 
     const user = findInsert("users");
-    expect(user.params[1]).toBe("ops");
+    expect(user.params[1]).toBe("ops@example.com");
     expect(user.params[2]).toMatch(/^pbkdf2-sha256\$100000\$/);
     expect(user.params[4]).toBe(1);
 
@@ -266,7 +263,7 @@ describe("account --remote", () => {
         "channel",
         "create",
         "--tenant",
-        "totem",
+        TENANT.id,
         "--phone-number-id",
         "pn-123",
         "--remote",

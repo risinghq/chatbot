@@ -7,15 +7,16 @@ import { getOne } from "../../db/index.ts";
 const logger = createLogger("notification-resolver");
 
 /**
- * Group numbers configured for the deployment. These are VendeYa's own
- * operations groups.
+ * VendeYa's own operations group, for system alerts a tenant has not routed
+ * elsewhere. Sales alerts have no platform fallback: they belong to the
+ * business, so a business with no sales group gets them only through its
+ * assigned agent.
  */
 const STATIC_ROLES = {
   dev: () => env.WHATSAPP_GROUP_DEV,
-  sales: () => env.WHATSAPP_GROUP_AGENT,
 } as Record<string, () => string | undefined>;
 
-// A tenant that wants its own routing sets these keys in its tenant settings.
+// A tenant routes its own alerts with these keys in its tenant settings.
 const TENANT_ROLE_KEYS: Record<string, string> = {
   dev: "whatsapp_group_dev",
   sales: "whatsapp_group_sales",

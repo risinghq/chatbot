@@ -13,6 +13,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  insertUser,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -60,13 +61,7 @@ async function createOperator(fixture?: TenantFixture): Promise<string> {
     return userId;
   }
 
-  const userId = `u-${crypto.randomUUID()}`;
-  await run(
-    `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
-     VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-    [userId, `op-${userId.slice(2, 12)}`],
-  );
-  return userId;
+  return insertUser({ name: "Operator", isPlatformOperator: true });
 }
 
 async function accountOf(userId: string) {

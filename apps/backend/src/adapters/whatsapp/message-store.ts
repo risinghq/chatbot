@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import type { ConversationRef } from "@vendeya/types";
 import type {
   ConversationMessage,
@@ -20,7 +21,7 @@ export const MessageStore = {
     whatsappMessageId?: string,
     productId?: string,
   ): Promise<string> {
-    const id = crypto.randomUUID();
+    const id = newId();
     await run(
       `INSERT INTO messages (id, tenant_id, channel_account_id, phone_number, direction, type, content, status, whatsapp_message_id, product_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

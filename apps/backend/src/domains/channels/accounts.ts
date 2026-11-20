@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 /**
  * Channel accounts: one row per business phone number a tenant messages from.
  * Inbound routing resolves Meta's `metadata.phone_number_id` to an account here.
@@ -107,7 +108,7 @@ async function secretStatements(
     ];
   }
 
-  const secretId = crypto.randomUUID();
+  const secretId = newId();
   return [
     stmt(
       `INSERT INTO channel_secrets (id, tenant_id, purpose, ciphertext, iv, key_id)
@@ -214,12 +215,12 @@ export const ChannelAccountService = {
     channelType?: ChannelType;
     id?: string;
   }): Promise<ChannelAccount> => {
-    const id = data.id ?? crypto.randomUUID();
+    const id = data.id ?? newId();
     const statements: D1PreparedStatement[] = [];
 
     let accessTokenSecretId: string | null = null;
     if (data.accessToken) {
-      accessTokenSecretId = crypto.randomUUID();
+      accessTokenSecretId = newId();
       statements.push(
         await insertSecret(
           accessTokenSecretId,
@@ -232,7 +233,7 @@ export const ChannelAccountService = {
 
     // The verify token identifies the number to Meta's handshake. The system
     // generates it: there is nothing for the operator to choose.
-    const verifyTokenSecretId = crypto.randomUUID();
+    const verifyTokenSecretId = newId();
     statements.push(
       await insertSecret(
         verifyTokenSecretId,
@@ -244,7 +245,7 @@ export const ChannelAccountService = {
 
     let appSecretSecretId: string | null = null;
     if (data.appSecret) {
-      appSecretSecretId = crypto.randomUUID();
+      appSecretSecretId = newId();
       statements.push(
         await insertSecret(
           appSecretSecretId,

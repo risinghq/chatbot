@@ -22,7 +22,7 @@ describe("account channel create", () => {
         "channel",
         "create",
         "--tenant",
-        "totem",
+        "0196f0a0-0000-7000-8000-000000000001",
         "--phone-number-id",
         "pnid-no-key",
       ],

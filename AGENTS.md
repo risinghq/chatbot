@@ -32,9 +32,10 @@ only the rules those documents do not.
 - **A new workspace** needs a `typecheck` script, which `bun run typecheck`
   runs. Nothing checks that it has one.
 - **Names.** The product and every workspace package are VendeYa (`@vendeya/*`).
-  The repository is still named `chatbot`. Totem is the default tenant, a client
-  business, and its slug `totem` is a lookup key for an existing row, so it is
-  never renamed. Do not rename in passing.
+  The repository is still named `chatbot`. Do not rename in passing.
+- **No built-in business.** Every business is a tenant with a UUID v7 id. Code
+  never names a tenant, and nothing a tenant sells, stores or is alerted about
+  falls back to the platform.
 - **Business rules.** Implement what the code and the owner say. Credit tiers,
   NSE limits and bundle rules found in old notes are not live rules.
 
@@ -48,11 +49,11 @@ commit. A page that is wrong is worse than none.
 
 ## Environment hazards
 
-- `bun run dev`, `seed` and `account` read `apps/backend/.dev.vars`. If it holds
-  real `WHATSAPP_*` values, a local run seeds a live number and can send real
-  messages. Point `GRAPH_API_BASE_URL` at a fake server for local probes.
-- `seed --remote`, `account --remote` and `db:migrate:remote` write to the
-  deployed D1 database and R2 bucket. Run them only when you mean to.
+- `bun run dev`, `seed` and `account` read `apps/backend/.dev.vars`. A number
+  registered with a real access token can send real messages. Point
+  `GRAPH_API_BASE_URL` at a fake server for local probes.
+- `account --remote` and `db:migrate:remote` write to the deployed D1 database.
+  Run them only when you mean to. The seed only writes the local one.
 - The backend's tests run in workerd with their own D1, KV and R2 per test, and
   `apps/backend/tests/bindings.ts` overrides `.dev.vars`. A script run outside
   the tests uses the local state under `apps/backend/.wrangler/state`, which

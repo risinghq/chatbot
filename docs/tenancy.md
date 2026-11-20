@@ -7,24 +7,31 @@ schema is in [`migrations/`](../apps/backend/migrations).
 
 ## Tenants
 
-A tenant is a row in `tenants` with a slug, a name and a status, `active` or
-`suspended`. Almost every other table carries `tenant_id`. A conversation is
-keyed by `(tenant_id, channel_account_id, phone_number)`, so the same contact
-has a separate conversation with each business and each number.
+A tenant is a row in `tenants` with a UUID v7 id, a name and a status, `active`
+or `suspended`. The id is the only key; the name is a label the business can
+change, and two businesses may share one. Almost every other table carries
+`tenant_id`. A conversation is keyed by
+`(tenant_id, channel_account_id, phone_number)`, so the same contact has a
+separate conversation with each business and each number.
 
-The seed creates one tenant, `totem`, with a sample catalog. A platform operator
-creates any other, with no deploy, from the command line:
+There is no built-in business. A business joins by signing up
+(`POST /api/auth/signup`, the `/registro` page): one batch creates the account,
+the tenant and the admin membership, and logs the founder in. A platform
+operator can also create a tenant from the command line:
 
 ```sh
-bun run account tenant create acme --name "Acme" --remote
+bun run account tenant create --name "Acme" --remote
 ```
 
 or through the API:
 
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"slug":"acme","name":"Acme"}' https://sales.rising.sh/api/tenants
+  -d '{"name":"Acme"}' https://sales.rising.sh/api/tenants
 ```
+
+The local seed creates a demo business with a sample catalog
+([Get started](./get-started.md#the-seed)). Nothing seeds the deployed database.
 
 A new tenant has no catalog, no periods and no channel account. A platform
 operator creates one from `/dashboard/negocios` in the dashboard
@@ -32,8 +39,8 @@ operator creates one from `/dashboard/negocios` in the dashboard
 support (`account create`, `account channel create`,
 [Operations](./operations.md#accounts)). `GET /api/admin/setup-status` reports
 what the new tenant still needs, and `POST /api/tenants/:id/members` accepts
-`{ username, role }` as well as `{ userId, role }` so the dashboard can add a
-member by login name.
+`{ email, role }` as well as `{ userId, role }` so the dashboard can add a
+member by the email they log in with.
 
 A tenant's files sit under its id in R2, and each conversation's Durable Object
 is named by its tenant, number and contact. A tenant shares the Workers, the
@@ -70,13 +77,23 @@ Order status changes allowed per role are in
 `requireRole` in [`middleware/auth.ts`](../apps/backend/src/middleware/auth.ts)
 and the route files.
 
-Authorization reads the membership role. `users.role` is written when a user is
-created and not read for authorization. A user can belong to several tenants
-with a different role in each. Availability for new conversations
-(`is_available`) is also per membership.
+Authorization reads the membership role; a user has no role of their own. A user
+can belong to several tenants with a different role in each. Availability for
+new conversations (`is_available`) is also per membership.
 
-A tenant admin creates users in their own tenant from the dashboard
-(`POST /api/admin/users`). A user's `phone_number` is where their personal
+A user logs in with their email, stored trimmed and lower-case and unique across
+the deployment. A tenant admin brings people in by invitation
+(`POST /api/admin/invitations` with `{ email, role }`). The answer carries a
+link, `/invitacion/<token>`, shown once for the admin to send. Only the token's
+hash is stored, and the link lasts seven days. Whoever opens it joins the tenant
+with the invited role: an existing account by entering its password, a new
+person by choosing a name and password. Accepting logs them in, pinned to that
+tenant. A newer invitation to the same email replaces the pending one, and the
+hourly sweep deletes expired ones.
+
+Each user edits their own name and `phone_number` (`PATCH /api/auth/me`) and
+changes their password with the current one (`POST /api/auth/me/password`),
+which ends their other sessions. The `phone_number` is where their personal
 alerts go.
 
 ## Platform operators
@@ -95,8 +112,8 @@ tenant matter, even one with other memberships.
 Operators are made only from the command line:
 
 ```sh
-bun run account create <username> --platform-operator
-bun run account promote <username>
+bun run account create <email> --platform-operator
+bun run account promote <email>
 ```
 
 `create --platform-operator` makes an account with no membership. `promote`
@@ -239,7 +256,7 @@ tenant. It is a SQL update, run from `apps/backend`:
 
 ```sh
 bunx wrangler d1 execute vendeya --remote \
-  --command "UPDATE tenants SET status = 'suspended' WHERE slug = 'acme'"
+  --command "UPDATE tenants SET status = 'suspended' WHERE id = '<tenant id>'"
 ```
 
 Leave off `--remote` to change the local database. Setting the status back to

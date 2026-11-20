@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 /**
  * Tenant-scoped secrets. A value is AES-256-GCM ciphertext under SECRETS_KEY
  * (platform/crypto/secrets.ts), keyed by (tenant_id, key), and never leaves
@@ -75,7 +76,7 @@ export const TenantSecrets = {
         `INSERT INTO tenant_secrets (id, tenant_id, key, ciphertext, iv, key_id)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [
-          crypto.randomUUID(),
+          newId(),
           tenantId,
           key,
           encrypted.ciphertext,

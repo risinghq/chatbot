@@ -163,9 +163,9 @@ curl -b "session=<token>" https://sales.rising.sh/api/providers/<dni>
 ```
 
 It runs the same parallel check with no conversation, so no catalog is
-consulted. `?tenant=<slug>` names the tenant whose Cálidda login the FNB leg
-runs on; without it FNB reports it needs a tenant and the answer comes from the
-Power BI report
+consulted. `?tenant=<tenant id>` names the tenant whose Cálidda login the FNB
+leg runs on; without it FNB reports it needs a tenant and the answer comes from
+the Power BI report
 ([`routes/providers.ts`](../apps/backend/src/routes/providers.ts)). The
 dashboard's Proveedores tile, shown to platform operators only, offers the
 tenant picker and calls it.

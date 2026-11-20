@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import { createLogger } from "../../lib/logger.ts";
 import { WhatsAppService } from "../../adapters/whatsapp/index.ts";
 import { ChannelAccountService } from "../channels/accounts.ts";
@@ -68,7 +69,7 @@ export async function dispatchNotifications(
          (id, tenant_id, trace_id, event_type, rule_id, status, reason, content_snapshot, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          crypto.randomUUID(),
+          newId(),
           event.tenantId ?? null,
           traceId,
           event.type,

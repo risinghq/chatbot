@@ -8,14 +8,14 @@ import Button from "#lib/components/ui/button.svelte";
 import { fetchApi } from "#lib/utils/api.js";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 
-let username = $state("");
+let email = $state("");
 let password = $state("");
 let error = $state("");
 let loading = $state(false);
 
 async function handleSubmit() {
-  if (!(username && password)) {
-    error = "Usuario y contraseña son requeridos";
+  if (!(email && password)) {
+    error = "Correo y contraseña son requeridos";
     return;
   }
 
@@ -26,7 +26,7 @@ async function handleSubmit() {
     const data = await fetchApi<{ user: any }>("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email, password }),
     });
 
     auth.hydrate(data.user);
@@ -50,7 +50,7 @@ onMount(() => {
 <div class="flex min-h-dvh flex-col items-center justify-center bg-canvas p-4">
 	<div class="w-full max-w-sm rounded-lg border border-border bg-surface p-6 shadow-sm">
 		<h1 class="text-lg font-medium text-fg">vendeya</h1>
-		<p class="mt-1 mb-6 text-base text-fg-muted">Entra con la cuenta que te dio tu negocio.</p>
+		<p class="mt-1 mb-6 text-base text-fg-muted">Entra con tu correo y tu contraseña.</p>
 
 		<form
 			onsubmit={(e) => {
@@ -58,17 +58,17 @@ onMount(() => {
 				handleSubmit();
 			}}
 		>
-			<FormField label="Identificador" for="username">
+			<FormField label="Correo" for="email">
 				<Input
-					id="username"
-					autocomplete="username"
-					bind:value={username}
+					id="email"
+					type="email"
+					autocomplete="email"
+					bind:value={email}
 					disabled={loading}
-					placeholder="agente_01"
 				/>
 			</FormField>
 
-			<FormField label="Clave de acceso" for="password">
+			<FormField label="Contraseña" for="password">
 				<Input
 					id="password"
 					type="password"
@@ -86,5 +86,9 @@ onMount(() => {
 				{loading ? "Verificando…" : "Acceder"}
 			</Button>
 		</form>
+
+		<p class="mt-6 text-sm text-fg-muted">
+			¿Tu negocio aún no usa vendeya? <a href="/registro" class="text-fg underline underline-offset-2">Crea una cuenta</a>
+		</p>
 	</div>
 </div>

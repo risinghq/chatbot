@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import type { Order } from "@vendeya/types";
 import { limaDateString } from "../../db/query.ts";
 import { eventBus } from "../../shared/events/index.ts";
@@ -10,7 +11,7 @@ const ORDER_NUMBER_SEQUENCE_WIDTH = 3;
 
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
   const { ref } = input;
-  const id = crypto.randomUUID();
+  const id = newId();
   const now = Date.now();
   const productJson = JSON.stringify(input.products);
   const mainProduct = input.products[0];

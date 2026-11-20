@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import { logAction } from "../../platform/audit/logger.ts";
 import { eventBus, createEvent } from "../../shared/events/index.ts";
 import { AssetService } from "../assets/index.ts";
@@ -36,7 +37,7 @@ async function storeUpload(
   const extension = file.name.split(".").pop() || FALLBACK_EXTENSION[kind];
   // The asset id names the file, so every upload has its own storage key. A
   // corrected contract adds an asset instead of overwriting an audit record.
-  const assetId = crypto.randomUUID();
+  const assetId = newId();
 
   const storageKey = privateStorageKey(
     ref.tenantId,

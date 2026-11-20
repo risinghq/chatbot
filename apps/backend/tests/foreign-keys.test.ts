@@ -13,6 +13,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  insertUser,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
@@ -46,12 +47,7 @@ describe("foreign key enforcement", () => {
   });
 
   it("rejects a membership for a tenant that does not exist", async () => {
-    const userId = `u-${crypto.randomUUID()}`;
-    await run(
-      `INSERT INTO users (id, username, password_hash, role, name)
-       VALUES (?, ?, 'x', 'admin', 'Test')`,
-      [userId, `user-${userId.slice(2, 10)}`],
-    );
+    const userId = await insertUser();
 
     await expect(
       run(
@@ -368,12 +364,10 @@ describe("foreign key enforcement", () => {
     }
 
     it("grants no membership to a user id that does not exist", async () => {
-      const operatorId = `u-${crypto.randomUUID()}`;
-      await run(
-        `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
-         VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-        [operatorId, `op-${operatorId.slice(2, 10)}`],
-      );
+      const operatorId = await insertUser({
+        name: "Operator",
+        isPlatformOperator: true,
+      });
 
       const token = generateSessionToken();
       await createSession(token, operatorId, null);

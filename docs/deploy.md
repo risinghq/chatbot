@@ -137,13 +137,19 @@ The `account` command writes to the deployed database with `--remote`, over the
 Cloudflare API. It needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in
 the shell — the same two values the
 [deploy workflow](#deploys-from-github-actions) uses — never `wrangler login`.
-The token needs **Account > D1 > Edit**, and `bun run seed --remote` also needs
-**Account > Workers R2 Storage > Edit**. Run these at the repository root:
+The token needs **Account > D1 > Edit**. A fresh deployment needs one platform
+operator; businesses then sign up on the dashboard. Run this at the repository
+root:
 
 ```sh
-bun run account create ops --platform-operator --remote
-bun run account tenant create <slug> --name "<business name>" --remote
-bun run account create <username> --tenant <slug> --remote
+bun run account create <email> --platform-operator --remote
+```
+
+An operator can also open a business and its admin by hand:
+
+```sh
+bun run account tenant create --name "<business name>" --remote
+bun run account create <email> --tenant <tenant id> --remote
 ```
 
 A channel account stores the number's access token encrypted. With `--remote`
@@ -152,15 +158,14 @@ the command encrypts with the `SECRETS_KEY` in your shell, never the one in
 
 ```sh
 SECRETS_KEY=<the deployed key> bun run account channel create \
-  --tenant <slug> --phone-number-id <id> --remote
+  --tenant <tenant id> --phone-number-id <id> --remote
 ```
 
 It reads the access token from a hidden prompt.
 [Connecting WhatsApp](./whatsapp.md) says where each value comes from, and how
 to point Meta's webhook at `https://<hostname>/api/webhook`.
 
-`bun run seed --remote` writes the default tenant `totem` and its sample catalog
-to the deployed database and bucket, without the test conversations.
+Nothing seeds the deployed database. Each business enters its own catalog.
 
 ## Deploys from GitHub Actions
 

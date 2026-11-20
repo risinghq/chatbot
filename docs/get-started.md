@@ -65,24 +65,32 @@ the seed again after it.
 bun run seed
 ```
 
-writes the default tenant `totem`, a sample catalog, and a few test
-conversations to the local D1, and uploads the catalog images to the local R2.
-With no `WHATSAPP_PHONE_ID` in `.dev.vars`, the tenant's number is a `pending`
-placeholder. The seed is safe to run again.
+creates a demo business, "Tienda demo", in the local D1 with a sample catalog
+and a few test conversations, and uploads the catalog images to the local R2.
+The conversations hang off a `pending` placeholder number, which needs
+`SECRETS_KEY` in `.dev.vars`. It prints the business's id.
+
+Each run creates a new demo business. `bun run seed -- --tenant <id>` loads the
+demo into an existing one instead. The seed only writes the local database: a
+real business starts at signup and owns everything it sells.
 
 ## The first account
 
-The seed creates no user. Create an admin of `totem`:
+The seed creates no user. Create an admin of the demo business:
 
 ```sh
-bun run account create admin
+bun run account create admin@example.com --tenant <id>
 ```
+
+The `--tenant` flag can be left out while the database has one business. Signing
+up at <http://localhost:5173/registro> also works: it opens a new, empty
+business with you as its admin.
 
 It asks for a password twice, at least 12 characters. To also act across
 tenants, create a platform operator:
 
 ```sh
-bun run account create ops --platform-operator
+bun run account create ops@example.com --platform-operator
 ```
 
 [Operations](./operations.md#accounts) has every form of the command.
@@ -112,7 +120,7 @@ curl http://localhost:8787/cdn-cgi/local/scheduled
 
 ## Talk to the bot
 
-1. Open <http://localhost:5173> and log in as `admin`.
+1. Open <http://localhost:5173> and log in as `admin@example.com`.
 2. Open the Simulador tile.
 3. Start a new simulation ("Nueva simulación") and pick the persona "FNB -
    Crédito Alto (S/ 8000)". A persona answers the eligibility check in place of
@@ -140,7 +148,7 @@ The same conversation through the API, with both servers running:
 
 ```sh
 curl -c cookies.txt -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"<password>"}' \
+  -d '{"email":"admin@example.com","password":"<password>"}' \
   http://localhost:5173/api/auth/login
 phone=$(curl -s -b cookies.txt -H 'content-type: application/json' \
   -d '{"personaId":"fnb_high_credit"}' \

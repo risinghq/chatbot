@@ -1,3 +1,4 @@
+import { newId } from "@vendeya/utils";
 import type { ConversationStatus, SaleStatus, Segment } from "@vendeya/types";
 import { batch, getOne, stmt } from "../index.ts";
 
@@ -185,7 +186,7 @@ export async function seedTestData(tenantId: string, channelAccountId: string) {
     );
 
     for (const message of conversation.messages) {
-      const messageId = `msg-${crypto.randomUUID()}`;
+      const messageId = newId();
       const direction = message.role === "incoming" ? "inbound" : "outbound";
       const createdAt = now + message.offsetMs;
 

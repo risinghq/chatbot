@@ -3,7 +3,7 @@ import { fetchApi } from "#lib/utils/api.js";
 import { showTenantSelector } from "#lib/state/tenant-switching.js";
 
 type User = {
-  username: string;
+  email: string;
   /**
    * The role the session acts with. A platform operator is admin in every
    * scope. Anyone else has their role in the active tenant, null until one is
@@ -24,7 +24,6 @@ type User = {
 
 type Tenant = {
   id: string;
-  slug: string;
   name: string;
   role: string | null;
   /** Whether the tenant's own OpenAI key is stored. */

@@ -93,7 +93,7 @@ describe("audit actors", () => {
         action,
         "user",
         "u-target",
-        { username: "maria" },
+        { email: "maria@example.com" },
       ).run();
       cliRowId = (await rowsFor(action))[0]!.id;
     });
@@ -128,12 +128,10 @@ describe("audit actors", () => {
 
       expect(entry?.actor).toBe(
         (
-          (await getOne("SELECT username FROM users WHERE id = ?", [
-            userId,
-          ])) as {
-            username: string;
+          (await getOne("SELECT name FROM users WHERE id = ?", [userId])) as {
+            name: string;
           }
-        ).username,
+        ).name,
       );
     });
 
@@ -153,7 +151,7 @@ describe("audit actors", () => {
       expect(response.status).toBe(200);
       const { logs } = (await response.json()) as {
         logs: Array<
-          AuditRow & { user_name: string; user_username: string | null }
+          AuditRow & { user_name: string; user_email: string | null }
         >;
       };
       const mine = logs.filter((log) => log.action === action);
@@ -162,7 +160,7 @@ describe("audit actors", () => {
       expect(cli.user_id).toBeNull();
       expect(cli.actor).toBe("cli:someone");
       expect(cli.user_name).toBe("cli:someone");
-      expect(cli.user_username).toBeNull();
+      expect(cli.user_email).toBeNull();
 
       const person = mine.find((log) => log.user_id === userId)!;
       expect(person.user_name).toBe("Test User");
@@ -172,7 +170,7 @@ describe("audit actors", () => {
   describe("a row whose user does not resolve", () => {
     type AuditPageRow = AuditRow & {
       user_name: string;
-      user_username: string | null;
+      user_email: string | null;
     };
 
     async function auditPage(userId: string): Promise<AuditPageRow[]> {
@@ -209,7 +207,7 @@ describe("audit actors", () => {
       )!;
 
       expect(row.user_name).toBe(`user:${userId}`);
-      expect(row.user_username).toMatch(/^user-/);
+      expect(row.user_email).toMatch(/@test\.invalid$/);
     });
   });
 });

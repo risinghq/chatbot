@@ -46,16 +46,16 @@ takes effect at the next deploy. Secrets are set with `wrangler secret put` and
 take effect at once. Locally, `apps/backend/.dev.vars` sets both and overrides
 the values in `wrangler.jsonc`.
 
-| Name                                         | Kind     | Without it                                                                                                             |
-| -------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ENVIRONMENT`                                | variable | anything but `production` serves the simulator routes, and a 500 carries the error's message and stack                 |
-| `PUBLIC_URL`                                 | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:` |
-| `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL`    | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                      |
-| `BOT_RESPONSE_DELAY_MS`                      | variable | 2300                                                                                                                   |
-| `PLATFORM_OPS_PHONE_NUMBER_ID`               | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one          |
-| `WHATSAPP_GROUP_AGENT`, `WHATSAPP_GROUP_DEV` | variable | sales and dev alerts with no tenant setting have no target. See [Alerts](#alerts)                                      |
-| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`            | variable | `info`. See [Logs](#logs)                                                                                              |
-| `SECRETS_KEY`                                | secret   | no stored credential can be written or read                                                                            |
+| Name                                      | Kind     | Without it                                                                                                             |
+| ----------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ENVIRONMENT`                             | variable | anything but `production` serves the simulator routes, and a 500 carries the error's message and stack                 |
+| `PUBLIC_URL`                              | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:` |
+| `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL` | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                      |
+| `BOT_RESPONSE_DELAY_MS`                   | variable | 2300                                                                                                                   |
+| `PLATFORM_OPS_PHONE_NUMBER_ID`            | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one          |
+| `WHATSAPP_GROUP_DEV`                      | variable | system alerts with no tenant setting have no target. See [Alerts](#alerts)                                             |
+| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`         | variable | `info`. See [Logs](#logs)                                                                                              |
+| `SECRETS_KEY`                             | secret   | no stored credential can be written or read                                                                            |
 
 `SECRETS_KEY` is the only secret the Worker needs. It encrypts every credential
 stored in D1: each number's access token and app secret, each tenant's OpenAI
@@ -63,34 +63,30 @@ key and Cálidda password. The credentials themselves are entered on the
 dashboard or the `account` command, not in `.dev.vars` or `wrangler secret`.
 
 In production `wrangler deploy` refuses to deploy while the secret is missing.
-`WHATSAPP_PHONE_ID`, `WHATSAPP_TOKEN` and `WHATSAPP_APP_SECRET` are read only by
-the seed, from `.dev.vars`. They give the default tenant its number and its Meta
-credentials.
 
 ## Accounts
 
-The seed creates no user. Every first account comes from the command line
-([`cli/account.ts`](../apps/backend/src/cli/account.ts)). Each form writes to
-the local D1 database, or with `--remote` to the deployed one, which reads
-`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` from the environment
+A business and its first admin normally come from signing up on the dashboard. A
+platform operator, and any account made outside the dashboard, comes from the
+command line ([`cli/account.ts`](../apps/backend/src/cli/account.ts)). Each form
+writes to the local D1 database, or with `--remote` to the deployed one, which
+reads `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` from the environment
 ([Deploy](./deploy.md#the-first-accounts)):
 
 ```sh
-bun run account create <username> [--platform-operator | --tenant <tenant>] [--name <display name>]
-bun run account promote <username>
-bun run account tenant create <slug> --name <business name>
-bun run account channel create --tenant <tenant> --phone-number-id <id> \
+bun run account create <email> [--platform-operator | --tenant <tenant id>] [--name <display name>]
+bun run account promote <email>
+bun run account tenant create --name <business name>
+bun run account channel create --tenant <tenant id> --phone-number-id <id> \
   [--waba-id <id>] [--display-phone-number <number>] [--label <label>]
 ```
-
-`<tenant>` is a tenant's id or slug.
 
 - `create` makes an `admin` of the tenant given by `--tenant`. With exactly one
   tenant, `--tenant` can be left off. `--platform-operator` makes a platform
   operator with no membership instead. The two flags exclude each other.
 - `promote` makes an existing, active account a platform operator and keeps its
   memberships. Promoting an operator changes nothing.
-- `tenant create` makes an active tenant with no number.
+- `tenant create` makes an active tenant with no number and prints its id.
 - `channel create` gives a tenant a WhatsApp number. It reads the access token,
   and stores it encrypted with `SECRETS_KEY`. An empty token makes the number
   `pending`. With `--remote` the key is the `SECRETS_KEY` of your shell, which
@@ -100,7 +96,7 @@ A password or an access token is read from a hidden prompt, or from stdin when
 stdin is not a terminal:
 
 ```sh
-printf '%s\n' "$PASSWORD" | bun run account create <username>
+printf '%s\n' "$PASSWORD" | bun run account create <email>
 ```
 
 A password is asked twice and must be at least 12 characters. Neither is ever
@@ -224,9 +220,10 @@ Alerts are WhatsApp messages sent by the backend on events
 | agent assigned                                         | the agent's phone                         |
 | system error, outage, provider degraded, loop exceeded | the dev target                            |
 
-The sales target is the tenant setting `whatsapp_group_sales`, else
-`WHATSAPP_GROUP_AGENT`. The dev target is `whatsapp_group_dev`, else
-`WHATSAPP_GROUP_DEV`. A tenant admin sets the tenant values:
+The sales target is the tenant setting `whatsapp_group_sales`. A tenant without
+it gets sales alerts only through the assigned agent. The dev target is
+`whatsapp_group_dev`, else `WHATSAPP_GROUP_DEV`. A tenant admin sets the tenant
+values:
 
 ```sh
 curl -X POST -b "session=<token>" -H 'content-type: application/json' \
@@ -243,11 +240,11 @@ the platform setting `platform_ops_channel_account_id` names, else
 `PLATFORM_OPS_PHONE_NUMBER_ID`. Every decision is recorded in
 `notification_traces`.
 
-`WHATSAPP_GROUP_AGENT` and `WHATSAPP_GROUP_DEV` are VendeYa's own operations
-groups. They receive the alerts of every tenant that has no setting of its own,
-and those alerts carry the customer's name, phone and DNI, so they must hold
-only VendeYa staff. A business that wants its own alerts gets
-`whatsapp_group_sales` and `whatsapp_group_dev` set.
+Sales alerts carry the customer's name, phone and DNI and belong to the
+business, so they have no platform fallback: one business's customers never
+reach a group outside it. `WHATSAPP_GROUP_DEV` is VendeYa's own operations group
+for system alerts, such as an outage or a failed turn, of every tenant that has
+no `whatsapp_group_dev`. It must hold only VendeYa staff.
 
 Alert links and the backend's CORS origin come from `PUBLIC_URL`, the address
 image links use too, with any trailing slash removed (`publicOrigin` in

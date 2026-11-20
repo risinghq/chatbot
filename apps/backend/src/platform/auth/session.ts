@@ -26,7 +26,7 @@ export interface Session {
 
 export interface User {
   id: string;
-  username: string;
+  email: string;
   /**
    * The role the session acts with, from `sessionRole`. A platform operator is
    * admin in every scope. Anyone else has their membership role in the active
@@ -128,7 +128,7 @@ export async function validateSessionToken(
   const row = (await getOne(
     `
         SELECT s.id, s.user_id, s.active_tenant_id, s.expires_at,
-               u.id as uid, u.username, u.role, u.name as uname,
+               u.id as uid, u.email, u.name as uname,
                u.is_platform_operator, u.is_active,
                t.status as tenant_status
         FROM session s
@@ -144,8 +144,7 @@ export async function validateSessionToken(
         active_tenant_id: string | null;
         expires_at: number;
         uid: string;
-        username: string;
-        role: string;
+        email: string;
         uname: string;
         is_platform_operator: number;
         is_active: number;
@@ -216,7 +215,7 @@ export async function validateSessionToken(
 
   const user: User = {
     id: row.uid,
-    username: row.username,
+    email: row.email,
     role: sessionRole({ isPlatformOperator, membershipRole }),
     name: row.uname,
     isPlatformOperator,

@@ -9,7 +9,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 
 import { getAll, run } from "../src/db/index.ts";
-import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
+import {
+  createTenantFixture,
+  insertUser,
+  type TenantFixture,
+} from "./helpers/tenancy.ts";
 
 import { requireAuth, requireRole } from "../src/middleware/auth.ts";
 import {
@@ -63,12 +67,10 @@ describe("auditing an operations sweep", () => {
     alpha = await createTenantFixture("alpha-ops");
     beta = await createTenantFixture("beta-ops");
 
-    const operatorId = `u-${crypto.randomUUID()}`;
-    await run(
-      `INSERT INTO users (id, username, password_hash, role, name, is_platform_operator)
-       VALUES (?, ?, 'x', 'admin', 'Operator', 1)`,
-      [operatorId, `op-${operatorId.slice(2, 12)}`],
-    );
+    const operatorId = await insertUser({
+      name: "Operator",
+      isPlatformOperator: true,
+    });
 
     // No tenant pinned: this is the cross-tenant support session.
     operator = await login(operatorId, null);

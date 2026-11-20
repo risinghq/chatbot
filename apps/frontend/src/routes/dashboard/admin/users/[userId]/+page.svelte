@@ -109,7 +109,7 @@ onMount(() => {
 });
 </script>
 
-<PageTitle title={user ? `Editar ${user.username}` : "Cargando..."} />
+<PageTitle title={user ? `Editar ${user.name}` : "Cargando..."} />
 
 {#if !data.user?.activeTenantId}
 <NeedsTenant />
@@ -121,7 +121,7 @@ onMount(() => {
 		<header class="flex items-start justify-between gap-4">
 			<div class="min-w-0">
 				<h2 class="text-lg text-fg">{user.name}</h2>
-				<p class="mt-0.5 font-mono text-sm text-fg-muted">@{user.username}</p>
+				<p class="mt-0.5 text-sm text-fg-muted">{user.email}</p>
 			</div>
 			<Badge variant={user.is_active ? "success" : "default"}>
 				{user.is_active ? "Activo" : "Inactivo"}

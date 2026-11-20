@@ -1,4 +1,5 @@
 import type { ConversationRef } from "@vendeya/types";
+import { newId } from "@vendeya/utils";
 import { run } from "../../src/db/index.ts";
 import { ChannelAccountService } from "../../src/domains/channels/accounts.ts";
 import { TenantSecrets } from "../../src/domains/settings/tenant-secrets.ts";
@@ -25,16 +26,12 @@ export type TenantFixture = {
  * test that replaces the number sets `channelAccountId`, and `ref` follows it.
  */
 export async function createTenantFixture(
-  slug: string,
+  name: string,
 ): Promise<TenantFixture> {
-  const tenantId = `tn-${crypto.randomUUID()}`;
-  const channelAccountId = `ch-${crypto.randomUUID()}`;
+  const tenantId = await insertTenant(name);
+  const channelAccountId = newId();
   const phoneNumberId = `pnid-${crypto.randomUUID().slice(0, 8)}`;
 
-  await run(
-    "INSERT INTO tenants (id, slug, name, status) VALUES (?, ?, ?, 'active')",
-    [tenantId, `${slug}-${tenantId.slice(3, 11)}`, slug],
-  );
   const account = await ChannelAccountService.create({
     id: channelAccountId,
     tenantId,
@@ -75,7 +72,7 @@ export async function addChannelAccount(
   appSecret: string;
   ref(phoneNumber: string): ConversationRef;
 }> {
-  const channelAccountId = `ch-${crypto.randomUUID()}`;
+  const channelAccountId = newId();
   const phoneNumberId = `pnid-${crypto.randomUUID().slice(0, 8)}`;
   const appSecret = options.appSecret ?? TEST_APP_SECRET;
 
@@ -133,22 +130,47 @@ export async function insertConversation(
   );
 }
 
+/** An active tenant with no number. Returns its id. */
+export async function insertTenant(name = "Test Business"): Promise<string> {
+  const tenantId = newId();
+  await run("INSERT INTO tenants (id, name, status) VALUES (?, ?, 'active')", [
+    tenantId,
+    name,
+  ]);
+  return tenantId;
+}
+
+/**
+ * A user with no membership and a password nobody can log in with. Returns
+ * its id; the email is `<id>@test.invalid`.
+ */
+export async function insertUser(
+  options: { name?: string; isPlatformOperator?: boolean } = {},
+): Promise<string> {
+  const userId = newId();
+  await run(
+    `INSERT INTO users (id, email, password_hash, name, is_platform_operator)
+     VALUES (?, ?, 'x', ?, ?)`,
+    [
+      userId,
+      `${userId}@test.invalid`,
+      options.name ?? "Test User",
+      options.isPlatformOperator ? 1 : 0,
+    ],
+  );
+  return userId;
+}
+
 /** A user with a membership in one tenant, plus the scope they act under. */
 export async function createMember(
-  fixture: TenantFixture,
+  fixture: Pick<TenantFixture, "tenantId">,
   role: "admin" | "developer" | "supervisor" | "sales_agent" = "admin",
 ) {
-  const userId = `u-${crypto.randomUUID()}`;
-
-  await run(
-    `INSERT INTO users (id, username, password_hash, role, name)
-     VALUES (?, ?, 'x', ?, ?)`,
-    [userId, `user-${userId.slice(2, 10)}`, role, "Test User"],
-  );
+  const userId = await insertUser();
   await run(
     `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
      VALUES (?, ?, ?, ?)`,
-    [crypto.randomUUID(), fixture.tenantId, userId, role],
+    [newId(), fixture.tenantId, userId, role],
   );
 
   return {

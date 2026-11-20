@@ -31,7 +31,7 @@ export const SystemLogService = {
     const auditLogs = await getAll<any>(
       `SELECT
          a.id, a.created_at, a.action, a.resource_type, a.resource_id, a.metadata,
-         u.username as actor_name, a.user_id, a.actor
+         u.name as actor_name, a.user_id, a.actor
        FROM audit_log a
        LEFT JOIN users u ON a.user_id = u.id
        WHERE ${tenantOrPlatformPredicate(tenantId, "a.tenant_id")}

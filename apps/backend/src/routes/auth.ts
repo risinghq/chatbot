@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   activeTenantId,
   requireActiveTenant,
@@ -7,6 +7,9 @@ import {
 import { loginRateLimiter } from "../middleware/security.ts";
 import { verifyPassword } from "../platform/auth/password.ts";
 import { MembershipService } from "../domains/tenants/index.ts";
+import { AccountService, normalizeEmail } from "../domains/accounts/index.ts";
+import type { AccountError } from "../domains/accounts/errors.ts";
+import { InvitationService } from "../domains/invitations/index.ts";
 import {
   createSession,
   defaultTenantForUser,
@@ -19,61 +22,41 @@ import { sessionRole } from "../platform/auth/scope.ts";
 import { getOne } from "../db/index.ts";
 
 /**
- * Logging in and out, and the caller's own account. Mounted at /api/auth ahead
- * of the global `requireAuth`, so each route that needs a session says so.
+ * Signing up, logging in and out, and the caller's own account. Mounted at
+ * /api/auth ahead of the global `requireAuth`, so each route that needs a
+ * session says so.
  */
 const auth = new Hono();
 
-auth.post("/login", loginRateLimiter, async (c) => {
-  const { username, password } = await c.req.json();
+function accountProblem(c: Context, error: AccountError) {
+  return c.json(
+    { error: error.message, reason: error.reason },
+    error.reason === "email_taken" ? 409 : 400,
+  );
+}
 
-  const user = (await getOne("SELECT * FROM users WHERE username = ?", [
-    username,
-  ])) as
-    | {
-        id: string;
-        username: string;
-        password_hash: string;
-        role: string;
-        name: string;
-        is_active: number;
-        is_platform_operator: number;
-      }
-    | undefined;
-
-  if (!user || user.is_active === 0) {
-    return c.json({ error: "Invalid credentials" }, 401);
-  }
-
-  if (
-    typeof password !== "string" ||
-    !(await verifyPassword(password, user.password_hash))
-  ) {
-    return c.json({ error: "Invalid credentials" }, 401);
-  }
-
+/**
+ * Opens a session for a user who has just proved who they are, and answers
+ * with the user and the open tenants they belong to. `tenantId` pins a tenant
+ * the caller has already checked the user belongs to.
+ */
+async function startSession(c: Context, userId: string, tenantId?: string) {
+  const user = (await getOne(
+    "SELECT id, email, name, is_platform_operator FROM users WHERE id = ?",
+    [userId],
+  )) as {
+    id: string;
+    email: string;
+    name: string;
+    is_platform_operator: number;
+  };
   const isPlatformOperator = user.is_platform_operator === 1;
 
-  // A user who is not a platform operator and belongs to no tenant has nothing
-  // to log in to. Suspended tenants still count as memberships here.
-  // A user whose tenants are all suspended logs in unpinned. That is the same
-  // session `validateSessionToken` leaves after a tenant is suspended under a
-  // logged-in user, so they can see that they have no business to act in.
-  if (
-    !isPlatformOperator &&
-    (await MembershipService.countForUser(user.id)) === 0
-  ) {
-    return c.json({ error: "Invalid credentials" }, 401);
-  }
-
-  // The session carries the tenant scope it acts in. A user with one open
-  // membership starts pinned to it. A platform operator, and a user with several
-  // open memberships or none, starts unpinned and picks a tenant via
-  // POST /api/tenants/active. Only open tenants can be pinned or picked.
-  const pinnedTenantId = await defaultTenantForUser(
-    user.id,
-    isPlatformOperator,
-  );
+  // A user with one open membership starts pinned to it. A platform operator,
+  // and a user with several open memberships or none, starts unpinned and
+  // picks a tenant via POST /api/tenants/active.
+  const pinnedTenantId =
+    tenantId ?? (await defaultTenantForUser(user.id, isPlatformOperator));
   const membership = pinnedTenantId
     ? await MembershipService.get(pinnedTenantId, user.id)
     : null;
@@ -85,9 +68,7 @@ auth.post("/login", loginRateLimiter, async (c) => {
   return c.json({
     user: {
       id: user.id,
-      username: user.username,
-      // A platform operator is admin in every scope. Anyone else holds their
-      // membership role in the pinned tenant, so it is null while unpinned.
+      email: user.email,
       role: sessionRole({
         isPlatformOperator,
         membershipRole: membership?.role ?? null,
@@ -99,11 +80,97 @@ auth.post("/login", loginRateLimiter, async (c) => {
     },
     tenants: (await MembershipService.listForUser(user.id)).map((m) => ({
       id: m.id,
-      slug: m.slug,
       name: m.name,
       role: m.role,
     })),
   });
+}
+
+auth.post("/login", loginRateLimiter, async (c) => {
+  const { email, password } = await c.req.json();
+  const address = normalizeEmail(email);
+
+  const user = address
+    ? ((await getOne(
+        "SELECT id, password_hash, is_active, is_platform_operator FROM users WHERE email = ?",
+        [address],
+      )) as
+        | {
+            id: string;
+            password_hash: string;
+            is_active: number;
+            is_platform_operator: number;
+          }
+        | undefined)
+    : undefined;
+
+  if (
+    !user ||
+    user.is_active === 0 ||
+    typeof password !== "string" ||
+    !(await verifyPassword(password, user.password_hash))
+  ) {
+    return c.json({ error: "Invalid credentials" }, 401);
+  }
+
+  // A user who is not a platform operator and belongs to no tenant has nothing
+  // to log in to. Suspended tenants still count: a user whose tenants are all
+  // suspended logs in unpinned, as `validateSessionToken` leaves them after a
+  // suspension, so they can see they have no business to act in.
+  if (
+    user.is_platform_operator !== 1 &&
+    (await MembershipService.countForUser(user.id)) === 0
+  ) {
+    return c.json({ error: "Invalid credentials" }, 401);
+  }
+
+  return startSession(c, user.id);
+});
+
+/** A new business and its first admin, logged in at once. */
+auth.post("/signup", loginRateLimiter, async (c) => {
+  const body = await c.req.json();
+  const result = await AccountService.signUp({
+    email: body.email,
+    password: body.password,
+    name: body.name,
+    businessName: body.businessName,
+  });
+  if (!result.ok) return accountProblem(c, result.error);
+
+  return startSession(c, result.value.userId);
+});
+
+/** What an invitation link offers, before anyone accepts it. */
+auth.get("/invitations/:token", loginRateLimiter, async (c) => {
+  const preview = await InvitationService.preview(c.req.param("token"));
+  return preview
+    ? c.json(preview)
+    : c.json({ error: "This invitation link is not valid." }, 404);
+});
+
+/** Accepts an invitation and logs in as the invited account. */
+auth.post("/invitations/:token/accept", loginRateLimiter, async (c) => {
+  const body = await c.req.json();
+  const result = await InvitationService.accept(c.req.param("token"), {
+    name: body.name,
+    password: body.password,
+  });
+  if (!result.ok) {
+    const status = {
+      not_found: 404,
+      wrong_password: 401,
+      inactive: 403,
+    } as const;
+    return c.json(
+      { error: result.error.message, reason: result.error.reason },
+      status[result.error.reason as keyof typeof status] ?? 400,
+    );
+  }
+
+  // A person with several businesses would start unpinned, but they came for
+  // this one.
+  return startSession(c, result.value.userId, result.value.tenantId);
 });
 
 auth.post("/logout", requireAuth, async (c) => {
@@ -113,9 +180,36 @@ auth.post("/logout", requireAuth, async (c) => {
   return c.json({ success: true });
 });
 
-auth.get("/me", requireAuth, (c) => {
+auth.get("/me", requireAuth, async (c) => {
   const user = c.get("user");
-  return c.json({ user });
+  const profile = await getOne<{ phone_number: string | null }>(
+    "SELECT phone_number FROM users WHERE id = ?",
+    [user.id],
+  );
+  return c.json({
+    user: { ...user, phoneNumber: profile?.phone_number ?? null },
+  });
+});
+
+auth.patch("/me", requireAuth, async (c) => {
+  const body = await c.req.json();
+  const result = await AccountService.updateProfile(c.get("user").id, {
+    name: body.name,
+    phoneNumber: body.phoneNumber,
+  });
+  if (!result.ok) return accountProblem(c, result.error);
+  return c.json(result.value);
+});
+
+auth.post("/me/password", requireAuth, async (c) => {
+  const body = await c.req.json();
+  const result = await AccountService.changePassword(
+    c.get("user").id,
+    c.get("session").id,
+    { current: body.currentPassword, next: body.newPassword },
+  );
+  if (!result.ok) return accountProblem(c, result.error);
+  return c.json({ success: true });
 });
 
 /**
