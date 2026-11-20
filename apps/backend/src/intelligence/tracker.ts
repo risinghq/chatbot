@@ -25,13 +25,16 @@ export type LLMCallData = {
   contextMetadata?: Record<string, any>;
 };
 
-export function trackLLMCall(data: LLMCallData): void {
-  _trackLLMCallAsync(data).catch((err) => {
+/** Never throws: a lost cost row must not fail the turn that made the call. */
+export async function trackLLMCall(data: LLMCallData): Promise<void> {
+  try {
+    await _trackLLMCallAsync(data);
+  } catch (err) {
     logger.error(
       { err, operation: data.operation },
       "Failed to track LLM call",
     );
-  });
+  }
 }
 
 async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {

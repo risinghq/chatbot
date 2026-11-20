@@ -1,16 +1,18 @@
 /**
- * A conversation that escalates is handed to an agent, and the agent hears
- * about it once. Each test runs the real bot turn; the only fake is the network.
+ * A conversation the assistant hands off goes to an agent, and the agent hears
+ * about it once. Each test runs the real turn; the only fakes are the network
+ * and the model, which asks for `hand_off`.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationPhase } from "@vendeya/core";
-import type { DomainEvent } from "@vendeya/types";
+import type { ConversationRef, DomainEvent } from "@vendeya/types";
 
 import { getOne, run } from "../src/db/index.ts";
 import { answerMessage } from "../src/conversation/handler/index.ts";
 import { checkAndReassignTimeouts } from "../src/domains/conversations/assignment.ts";
 import { eventBus } from "../src/shared/events/index.ts";
+import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
 import {
   createMember,
   createTenantFixture,
@@ -20,20 +22,15 @@ import {
 } from "./helpers/tenancy.ts";
 
 const CUSTOMER = "51900888001";
+const REASON = "customer_asked_for_a_person";
+const ASK = "quiero hablar con una persona";
 
-const SECOND_OBJECTION: ConversationPhase = {
-  phase: "handling_objection",
-  segment: "fnb",
-  credit: 3000,
-  name: "Ana",
-  objectionCount: 2,
-};
-
-describe("escalating a conversation", () => {
+describe("handing a conversation off", () => {
   let tenant: TenantFixture;
   let alerts: Array<{ event: DomainEvent; assignedAtEmit: string | null }>;
   let assignments: DomainEvent[];
   let originalFetch: typeof globalThis.fetch;
+  let model: FakeModel;
 
   const ref = () => tenant.ref(CUSTOMER);
 
@@ -67,13 +64,20 @@ describe("escalating a conversation", () => {
     return userId;
   }
 
-  async function customerWrites(text: string): Promise<void> {
+  async function writes(target: ConversationRef, text: string) {
     await answerMessage({
-      ref: ref(),
+      ref: target,
       content: text,
       timestamp: Date.now() - 11 * 60 * 1000,
       messageId: `wamid-${crypto.randomUUID()}`,
     });
+  }
+
+  /** The customer asks for a person and the model hands the chat off. */
+  async function asksForAPerson(target = ref()): Promise<void> {
+    model.calls({ name: "hand_off", arguments: { reason: REASON } });
+    model.says("Te paso con una persona del equipo.");
+    await writes(target, ASK);
   }
 
   const onAlert = async (event: DomainEvent) => {
@@ -89,12 +93,8 @@ describe("escalating a conversation", () => {
 
   beforeEach(async () => {
     tenant = await createTenantFixture("escalation-assignment");
-    await insertConversation(ref(), {
-      contextData: {
-        phase: SECOND_OBJECTION,
-        metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-      },
-    });
+    await insertConversation(ref());
+    await withOpenAiKey(tenant.tenantId);
     alerts = [];
     assignments = [];
     eventBus.on("escalation_triggered", onAlert);
@@ -102,24 +102,26 @@ describe("escalating a conversation", () => {
     originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
       new Response("{}")) as unknown as typeof fetch;
+    model = fakeModel();
   });
 
   afterEach(async () => {
     eventBus.off("escalation_triggered", onAlert);
     eventBus.off("agent_assigned", onAssigned);
+    model.restore();
     globalThis.fetch = originalFetch;
   });
 
-  it("assigns an available agent and silences the bot for them", async () => {
+  it("assigns an available agent and silences the assistant for them", async () => {
     const agent = await agentWithPhone("51911111111");
 
-    await customerWrites("no");
+    await asksForAPerson();
 
     expect(await conversation()).toMatchObject({
       assignedAgent: agent,
       status: "human_takeover",
-      handoverReason: "multiple_objections",
-      phase: { phase: "escalated", reason: "multiple_objections" },
+      handoverReason: REASON,
+      phase: { phase: "escalated", reason: REASON },
     });
     expect((await conversation()).notifiedAt).toBeGreaterThan(0);
     expect(assignments).toHaveLength(1);
@@ -131,10 +133,14 @@ describe("escalating a conversation", () => {
   it("assigns before it alerts, so the alert reaches the agent", async () => {
     const agent = await agentWithPhone("51911111111");
 
-    await customerWrites("no");
+    await asksForAPerson();
 
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.assignedAtEmit).toBe(agent);
+    expect(alerts[0]!.event.payload).toMatchObject({
+      reason: REASON,
+      context: { message: ASK },
+    });
   });
 
   it("leaves the conversation to the sales group when nobody is available", async () => {
@@ -144,7 +150,7 @@ describe("escalating a conversation", () => {
       [agent],
     );
 
-    await customerWrites("no");
+    await asksForAPerson();
 
     expect(await conversation()).toMatchObject({
       assignedAgent: null,
@@ -158,21 +164,23 @@ describe("escalating a conversation", () => {
   });
 
   describe("when the customer keeps writing", () => {
-    it("alerts and assigns once, and keeps the agent and the time", async () => {
+    it("alerts and assigns once, keeps the agent, and asks the model nothing", async () => {
       const agents = [
         await agentWithPhone("51911111111"),
         await agentWithPhone("51922222222"),
       ];
-      await customerWrites("no");
-      const afterEscalation = await conversation();
-      expect(agents).toContain(afterEscalation.assignedAgent!);
+      await asksForAPerson();
+      const afterHandOff = await conversation();
+      expect(agents).toContain(afterHandOff.assignedAgent!);
+      const calls = model.requests.length;
 
-      await customerWrites("hola?");
-      await customerWrites("¿alguien me atiende?");
+      await writes(ref(), "hola?");
+      await writes(ref(), "¿alguien me atiende?");
 
       expect(alerts).toHaveLength(1);
       expect(assignments).toHaveLength(1);
-      expect(await conversation()).toEqual(afterEscalation);
+      expect(model.requests).toHaveLength(calls);
+      expect(await conversation()).toEqual(afterHandOff);
     });
   });
 
@@ -180,7 +188,7 @@ describe("escalating a conversation", () => {
     it("is handed to the next agent by the timer, still escalated", async () => {
       const first = await agentWithPhone("51911111111");
       const second = await agentWithPhone("51922222222");
-      await customerWrites("no");
+      await asksForAPerson();
       expect([first, second]).toContain((await conversation()).assignedAgent!);
       await run(
         "UPDATE conversations SET assignment_notified_at = ? WHERE tenant_id = ? AND phone_number = ?",
@@ -193,7 +201,7 @@ describe("escalating a conversation", () => {
       expect(after.assignedAgent).not.toBeNull();
       expect(after).toMatchObject({
         status: "human_takeover",
-        handoverReason: "multiple_objections",
+        handoverReason: REASON,
         phase: { phase: "escalated" },
       });
       expect(after.notifiedAt).toBeGreaterThan(Date.now() - 60 * 1000);
@@ -204,20 +212,9 @@ describe("escalating a conversation", () => {
   it("reaches nobody from a simulation", async () => {
     await agentWithPhone("51911111111");
     const simulated = await simulatorRef(tenant.tenantId, "51900000001");
-    await insertConversation(simulated, {
-      contextData: {
-        phase: SECOND_OBJECTION,
-        metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-      },
-      isSimulation: true,
-    });
+    await insertConversation(simulated, { isSimulation: true });
 
-    await answerMessage({
-      ref: simulated,
-      content: "no",
-      timestamp: Date.now() - 11 * 60 * 1000,
-      messageId: `wamid-${crypto.randomUUID()}`,
-    });
+    await asksForAPerson(simulated);
 
     const row = (await getOne(
       `SELECT assigned_agent, context_data FROM conversations

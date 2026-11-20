@@ -22,7 +22,10 @@ import type { ConversationRef } from "@vendeya/types";
 import { executeCommands } from "../src/conversation/handler/command-executor.ts";
 import type { OutboxRow } from "../src/conversation/outbox.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
+import { ProductImageService } from "../src/domains/catalog/images.ts";
+import { ProductService } from "../src/domains/catalog/products.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
+import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
 
 const CUSTOMER = "51900666001";
 const HOUR = 60 * 60 * 1000;
@@ -44,6 +47,7 @@ describe("a turn whose first reply could not be sent", () => {
   let refused: number;
   let toRefuse: number;
   let bundleIds: string[];
+  let model: FakeModel;
 
   async function rows(): Promise<OutboxRow[]> {
     return (await getAll(
@@ -191,35 +195,46 @@ describe("a turn whose first reply could not be sent", () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }) as unknown as typeof globalThis.fetch;
+    model = fakeModel();
+    await withOpenAiKey(tenant.tenantId);
   });
 
   afterEach(async () => {
     vi.useRealTimers();
+    model.restore();
     globalThis.fetch = originalFetch;
   });
 
   it("queues the whole turn behind the reply that failed, and delivers it in order", async () => {
-    await insertConversation(ref, {
-      contextData: {
-        phase: OFFERING,
-        metadata: {
-          createdAt: Date.now(),
-          lastActivityAt: Date.now(),
-          segment: "fnb",
-          credit: 5000,
-          dni: "12345678",
-          name: "Juan",
-        },
-      },
+    await insertConversation(ref);
+    const product = await ProductService.create({
+      tenantId: tenant.tenantId,
+      name: "Cocina 4 hornillas",
+      category: "cocinas",
+      status: "active",
     });
+    for (const imageId of ["img-front", "img-side"]) {
+      await ProductImageService.add({
+        tenantId: tenant.tenantId,
+        productId: product.id,
+        imageId,
+        byteSize: 1000,
+        createdBy: null,
+      });
+    }
+    model.calls({
+      name: "send_product_photos",
+      arguments: { product_id: product.id },
+    });
+    model.says("Te envío las fotos de la cocina.");
     toRefuse = 1;
 
     await customerWrites(tenant, CUSTOMER, "quiero ver cocinas");
 
-    // Two bundle images and the follow-up text. Only the first reached
-    // WhatsApp, and the rest queued behind it without a request.
+    // The reply and the two photos after it. Only the reply reached
+    // WhatsApp, and the photos queued behind it without a request.
     const queued = await rows();
-    expect(queued.map((row) => row.type)).toEqual(["image", "image", "text"]);
+    expect(queued.map((row) => row.type)).toEqual(["text", "image", "image"]);
     expect(queued.map((row) => row.status)).toEqual([
       "pending",
       "pending",
@@ -232,19 +247,16 @@ describe("a turn whose first reply could not be sent", () => {
     expect(queued[2]).toMatchObject({ attempts: 0, last_kind: null });
     expect(await outboundStatuses()).toEqual(["queued", "queued", "queued"]);
 
-    // The turn finished: the customer's message is answered for, and the phase
-    // records both products, because a queued image still reaches the customer.
+    // The turn finished: the customer's message is answered for.
     expect(await inboxStatuses()).toEqual(["processed"]);
-    expect(await phase()).toMatchObject({
-      phase: "offering_products",
-      sentProducts: [{ productId: bundleIds[0] }, { productId: bundleIds[1] }],
-    });
-
-    const order = queued.map((row) => row.content);
 
     await drainOutbox();
 
-    expect(delivered).toEqual(order);
+    expect(delivered).toEqual([
+      "Te envío las fotos de la cocina.",
+      `${tenant.tenantId}/images/img-front.jpg`,
+      `${tenant.tenantId}/images/img-side.jpg`,
+    ]);
     expect((await rows()).map((row) => row.status)).toEqual([
       "sent",
       "sent",
@@ -261,9 +273,8 @@ describe("a turn whose first reply could not be sent", () => {
 
     expect(await rows()).toHaveLength(1);
     expect(refused).toBe(1);
-    expect((await phase()).phase).toBe("confirming_client");
 
-    // The customer comes back after the idle reset, so the bot greets again.
+    // The customer comes back after the idle reset and is answered again.
     await goIdle();
     await customerWrites(tenant, CUSTOMER, "hola de nuevo");
 

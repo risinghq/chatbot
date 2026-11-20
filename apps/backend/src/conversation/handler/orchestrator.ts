@@ -1,22 +1,29 @@
-import { createProvider } from "@vendeya/intelligence";
+import { createCompletion } from "@vendeya/intelligence";
 import type { ConversationRef, QuotedMessageContext } from "@vendeya/types";
 import {
   ChannelUnavailableError,
   WhatsAppService,
 } from "../../adapters/whatsapp/index.ts";
-import { ProductService } from "../../domains/catalog/products.ts";
+import { batch } from "../../db/index.ts";
+import {
+  type AgentTurn,
+  AssistantUnavailableError,
+  runAgent,
+} from "../../domains/assistant/agent.ts";
+import type { ToolEffect } from "../../domains/assistant/tools/index.ts";
 import { assignNextAgentHeld } from "../../domains/conversations/assignment.ts";
 import { openAiApiKey } from "../../domains/settings/openai.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { createEvent, eventBus } from "../../shared/events/index.ts";
-import { claimMessageAlert, raiseUnreadAlert } from "../unread-alerts.ts";
+import { markAsProcessed } from "../message-inbox.ts";
 import {
+  activityUpdate,
+  conversationUpdate,
   getOrCreateConversation,
   isSessionTimedOut,
   resetSession,
 } from "../store.ts";
-import { executeCommands } from "./command-executor.ts";
-import { runEnrichmentLoop } from "./enrichment-loop.ts";
+import { claimMessageAlert, raiseUnreadAlert } from "../unread-alerts.ts";
 import { calculateResponseDelay } from "./response-timing.ts";
 import { sleep } from "./sleep.ts";
 
@@ -37,6 +44,10 @@ export type IncomingMessage = {
   inboxIds?: string;
 };
 
+type HandOff = Extract<ToolEffect, { kind: "hand_off" }>;
+type Photos = Extract<ToolEffect, { kind: "send_photos" }>;
+type OrderCreated = Extract<ToolEffect, { kind: "order_created" }>;
+
 /**
  * One turn. The caller holds the conversation lock, which only
  * `ConversationObject` takes.
@@ -46,24 +57,12 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
     message;
   const { tenantId, channelAccountId, phoneNumber } = ref;
 
-  logger.debug(
-    { tenantId, phoneNumber, messageId, hasQuoted: !!quotedContext },
-    "Processing message",
-  );
-
   let conversation = await getOrCreateConversation(ref);
 
   if (isSessionTimedOut(conversation.metadata)) {
-    logger.info(
-      {
-        tenantId,
-        phoneNumber,
-        lastCategory: conversation.metadata.lastCategory,
-      },
-      "Session timeout reset",
-    );
+    logger.info({ tenantId, phoneNumber }, "Session timeout reset");
     await resetSession(ref, conversation.metadata.lastCategory);
-    // Reload the reset state so the turn cannot write the timed-out phase
+    // Reload the reset state so the turn cannot write the timed-out state
     // back when it records its result.
     conversation = await getOrCreateConversation(ref);
   }
@@ -71,13 +70,12 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
   const traceId = crypto.randomUUID();
   const eventContext = { traceId, tenantId, channelAccountId };
 
-  // A simulated turn moves the conversation like a real one but touches
-  // nothing outside it: no read receipt, order, notification, assigned agent
-  // or unread alert. Its analytics carry `is_simulation`, so they stay.
+  // A simulated turn answers like a real one but touches nothing outside the
+  // conversation: no read receipt, order, notification, assigned agent or
+  // unread alert.
   const real = !conversation.isSimulation;
 
-  // A person-held conversation gets a read receipt but no typing indicator
-  // because the bot sends no reply.
+  // A person holds the conversation, so the assistant stays out of it.
   const held = conversation.phase.phase === "escalated";
   if (real) {
     await WhatsAppService.markAsRead(ref, messageId, { typing: !held });
@@ -90,82 +88,10 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
   let recorded = false;
 
   try {
-    const provider = createProvider(await openAiApiKey(tenantId));
-
-    const catalogContext = {
-      activeBrands: await ProductService.getActiveBrands(tenantId),
-      activeCategories: await ProductService.getCategories(tenantId),
-    };
-
-    const result = await runEnrichmentLoop(
-      conversation.phase,
-      content,
-      conversation.metadata,
-      ref,
-      provider,
-      quotedContext,
-      catalogContext,
-    );
-
-    const delay = calculateResponseDelay(timestamp, Date.now());
-    if (delay > 0) {
-      await sleep(delay);
-    }
-
-    await executeCommands(
-      result,
-      ref,
-      conversation.metadata,
-      conversation.isSimulation,
-      traceId,
-      inboxIds,
-    );
-    recorded = true;
-
-    // The transition's events go out after its replies, for the reason
-    // `executeCommands` persists the phase after them: a send that throws
-    // puts this message back on its queue to be answered again from the
-    // same phase, and anything emitted before that point is emitted twice.
-    // `purchase_confirmed` creates an order, so emitted first it turned one
-    // number switched off mid-confirmation into two orders for one sale.
-    if (real && result.events && result.events.length > 0) {
-      for (const event of result.events) {
-        await eventBus.emit({ ...event, ...eventContext });
-      }
-    }
-
-    // The only place a turn emits `escalation_triggered`. Core and the
-    // enrichment loop leave it out of `result.events`. An escalated
-    // conversation stays escalated on every later message, and only the turn
-    // that escalates it alerts and picks an agent. The agent is assigned
-    // first, so the alert reaches them and not the sales group.
-    // A later held message alerts the assigned agent only when no unread
-    // alert already represents the conversation. Both alerts are awaited
-    // inside the lock: the next message must see the marker as the delivery
-    // left it, kept or released.
-    if (
-      real &&
-      result.type === "update" &&
-      result.nextPhase.phase === "escalated"
-    ) {
-      if (!held) {
-        await assignNextAgentHeld(ref);
-        await raiseUnreadAlert(ref);
-        await eventBus.emit(
-          createEvent(
-            "escalation_triggered",
-            {
-              phoneNumber,
-              reason: result.nextPhase.reason,
-              context: {
-                phase: conversation.phase.phase,
-                message: content,
-              },
-            },
-            eventContext,
-          ),
-        );
-      } else if (await claimMessageAlert(ref)) {
+    if (held) {
+      await recordTurn(ref, null, inboxIds);
+      recorded = true;
+      if (real && (await claimMessageAlert(ref))) {
         await eventBus.emit(
           createEvent(
             "customer_message_received",
@@ -174,6 +100,75 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
           ),
         );
       }
+      return;
+    }
+
+    const turn = await workOutTurn(ref, real, quotedContext?.body);
+    const handOff = turn.effects.find(
+      (effect): effect is HandOff => effect.kind === "hand_off",
+    );
+    const orders = turn.effects.filter(
+      (effect): effect is OrderCreated => effect.kind === "order_created",
+    );
+
+    const delay = calculateResponseDelay(timestamp, Date.now());
+    if (delay > 0 && hasOutput(turn)) await sleep(delay);
+
+    try {
+      await sendTurn(ref, turn, !real);
+    } catch (error) {
+      // The order exists now. Leaving the message on its queue would answer
+      // it again and create a second order, so the turn is recorded without
+      // its reply and staff learn of the order from its alert.
+      if (!(error instanceof ChannelUnavailableError) || orders.length === 0) {
+        throw error;
+      }
+      logger.warn(
+        { tenantId, channelAccountId, phoneNumber, status: error.status },
+        "Channel switched off after an order was created; recording the turn without its reply",
+      );
+    }
+
+    await recordTurn(ref, handOff ?? null, inboxIds);
+    recorded = true;
+
+    // Events go out after the turn is recorded: a send that throws puts the
+    // message back on its queue, and anything emitted before that point
+    // would be emitted twice.
+    if (!real) return;
+    for (const { order } of orders) {
+      await eventBus.emit(
+        createEvent(
+          "order_created",
+          {
+            orderId: order.id,
+            orderNumber: String(order.number),
+            amountCents: order.total_cents,
+            clientName: order.customer.name,
+            phoneNumber,
+            productName: order.lines.map((line) => line.name).join(", "),
+          },
+          eventContext,
+        ),
+      );
+    }
+    // The agent is assigned before the alert, so the alert reaches them and
+    // not the sales group. Both are awaited inside the lock: the next message
+    // must see the unread marker as this turn left it.
+    if (handOff) {
+      await assignNextAgentHeld(ref);
+      await raiseUnreadAlert(ref);
+      await eventBus.emit(
+        createEvent(
+          "escalation_triggered",
+          {
+            phoneNumber,
+            reason: handOff.reason,
+            context: { message: content },
+          },
+          eventContext,
+        ),
+      );
     }
   } catch (error) {
     if (error instanceof ChannelUnavailableError) {
@@ -196,15 +191,7 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
     }
 
     logger.error(
-      {
-        error,
-        tenantId,
-        phoneNumber,
-        messageId,
-        phase: conversation.phase.phase,
-        traceId,
-        recorded,
-      },
+      { error, tenantId, phoneNumber, messageId, traceId, recorded },
       "Message processing failed",
     );
 
@@ -219,7 +206,6 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
           error: "Error processing message",
           context: {
             error: error instanceof Error ? error.message : String(error),
-            phase: conversation.phase.phase,
           },
         },
         eventContext,
@@ -228,4 +214,148 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
 
     if (!recorded) throw error;
   }
+}
+
+/**
+ * The assistant's answer. A real conversation without a key goes to staff,
+ * since no retry can answer it. A model failure is thrown for the queue to
+ * retry and then hand off, unless the turn already created an order: a
+ * retry would create it again, so the conversation goes to staff at once
+ * with the order still announced. The simulator shows every failure.
+ */
+async function workOutTurn(
+  ref: ConversationRef,
+  real: boolean,
+  quoted: string | undefined,
+): Promise<AgentTurn> {
+  const apiKey = await openAiApiKey(ref.tenantId);
+  if (!apiKey) {
+    if (!real) throw new Error("The business has no OpenAI key");
+    return {
+      reply: "",
+      effects: [{ kind: "hand_off", reason: "no_openai_key" }],
+    };
+  }
+  try {
+    return await runAgent({
+      ref,
+      simulated: !real,
+      complete: createCompletion(apiKey),
+      quoted,
+    });
+  } catch (error) {
+    if (
+      !real ||
+      !(error instanceof AssistantUnavailableError) ||
+      !error.effects.some((effect) => effect.kind === "order_created")
+    ) {
+      throw error;
+    }
+    logger.warn(
+      { tenantId: ref.tenantId, phoneNumber: ref.phoneNumber, error },
+      "The assistant model failed after creating an order; handing the conversation to staff",
+    );
+    return {
+      reply: "",
+      effects: [
+        ...error.effects,
+        { kind: "hand_off", reason: "assistant_unavailable" },
+      ],
+    };
+  }
+}
+
+function hasOutput(turn: AgentTurn): boolean {
+  return (
+    turn.reply !== "" || turn.effects.some((e) => e.kind === "send_photos")
+  );
+}
+
+/** The reply first, then the photos a tool asked for, in order. */
+async function sendTurn(
+  ref: ConversationRef,
+  turn: AgentTurn,
+  simulated: boolean,
+): Promise<void> {
+  if (turn.reply) await sendText(ref, turn.reply, simulated);
+  for (const effect of turn.effects) {
+    if (effect.kind === "send_photos") await sendPhotos(ref, effect, simulated);
+  }
+}
+
+async function sendText(
+  ref: ConversationRef,
+  content: string,
+  simulated: boolean,
+): Promise<void> {
+  if (simulated) {
+    await WhatsAppService.logMessage(ref, "outbound", "text", content, "sent");
+    return;
+  }
+  const outcome = await WhatsAppService.sendMessage(ref, content, {
+    retry: true,
+  });
+  if (!outcome.ok && !outcome.queued) {
+    logger.warn(
+      { tenantId: ref.tenantId, kind: outcome.kind, reason: outcome.reason },
+      "Reply was not sent",
+    );
+  }
+}
+
+/** The product's name captions its first photo only. */
+async function sendPhotos(
+  ref: ConversationRef,
+  photos: Photos,
+  simulated: boolean,
+): Promise<void> {
+  for (const [index, key] of photos.storageKeys.entries()) {
+    if (simulated) {
+      await WhatsAppService.logMessage(
+        ref,
+        "outbound",
+        "image",
+        key,
+        "sent",
+        photos.productId,
+      );
+      continue;
+    }
+    const outcome = await WhatsAppService.sendImage(
+      ref,
+      key,
+      index === 0 ? photos.productName : undefined,
+      photos.productId,
+      { retry: true },
+    );
+    if (!outcome.ok && !outcome.queued) {
+      logger.warn(
+        { tenantId: ref.tenantId, kind: outcome.kind, reason: outcome.reason },
+        "Product photo was not sent",
+      );
+    }
+  }
+}
+
+/**
+ * The turn's mark on the conversation and its settled queue rows commit
+ * together. Without a hand-off only the activity time is written, so a
+ * hand-off made while the turn ran, as when Meta refuses the reply, stands.
+ */
+async function recordTurn(
+  ref: ConversationRef,
+  handOff: HandOff | null,
+  inboxIds: string | undefined,
+): Promise<void> {
+  const statements = [
+    handOff
+      ? await conversationUpdate(
+          ref,
+          { phase: "escalated", reason: handOff.reason },
+          {},
+        )
+      : activityUpdate(ref),
+  ];
+  if (inboxIds) statements.push(markAsProcessed(inboxIds));
+  await batch(statements);
 }

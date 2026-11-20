@@ -34,18 +34,22 @@ export async function backendFetch(
   return response;
 }
 
-/** Meta delivering one signed text message to the number `phoneNumberId`. */
+/**
+ * Meta delivering one signed text message to the number `phoneNumberId`.
+ * `quoting` is the id of the earlier message the customer replies to.
+ */
 export async function deliver(
   phoneNumberId: string,
   from: string,
   text: string,
+  options: { quoting?: string } = {},
 ): Promise<Response> {
   // Old enough that `calculateResponseDelay` adds no pacing to the turn.
   const sentAt = Date.now() - 11 * 60 * 1000;
   return backendFetch(
     "/api/webhook",
     await signedWebhookRequest(
-      inboundText(phoneNumberId, from, text, { sentAt }),
+      inboundText(phoneNumberId, from, text, { ...options, sentAt }),
     ),
   );
 }
@@ -73,8 +77,14 @@ export async function customerWrites(
   tenant: TenantFixture,
   phoneNumber: string,
   text: string,
+  options: { quoting?: string } = {},
 ): Promise<void> {
-  const response = await deliver(tenant.phoneNumberId, phoneNumber, text);
+  const response = await deliver(
+    tenant.phoneNumberId,
+    phoneNumber,
+    text,
+    options,
+  );
   expect(response.status).toBe(200);
   await quietWindowPasses(tenant.ref(phoneNumber));
 }

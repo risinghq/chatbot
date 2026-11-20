@@ -1,12 +1,12 @@
 /**
  * A refused send throws `ChannelUnavailableError`, and the aggregator requeues
- * the message. The first attempt must record nothing (no new phase, TRACK_EVENT
- * rows or domain events), and the retry must record each exactly once.
+ * the message. The first attempt must record nothing, and the retry must
+ * record it once. A turn that already filed an order is the exception.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { getAll, getOne, run } from "../src/db/index.ts";
+import { db, getAll, getOne, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   insertConversation,
@@ -15,7 +15,6 @@ import {
   setChannelStatus,
 } from "./helpers/tenancy.ts";
 
-import { GREETING } from "@vendeya/core";
 import type {
   ConversationMetadata,
   ConversationPhase,
@@ -29,7 +28,16 @@ import { ChannelUnavailableError } from "../src/adapters/whatsapp/index.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
+import { ProductService } from "../src/domains/catalog/products.ts";
+import { VariantService } from "../src/domains/catalog/variants.ts";
+import { StockService } from "../src/domains/stock/index.ts";
 import { eventBus } from "../src/shared/events/index.ts";
+import {
+  DEFAULT_REPLY,
+  type FakeModel,
+  fakeModel,
+  withOpenAiKey,
+} from "./helpers/model.ts";
 
 const CUSTOMER = "51900777001";
 
@@ -44,7 +52,7 @@ describe("a send refused partway through a transition", () => {
   /** Runs inside a read receipt, before it answers. */
   let onReceipt: () => Promise<void>;
   let originalFetch: typeof globalThis.fetch;
-  let originalRandom: typeof Math.random;
+  let model: FakeModel;
 
   async function setStatus(status: ChannelAccount["status"]): Promise<void> {
     await setChannelStatus(account.id, status);
@@ -139,10 +147,6 @@ describe("a send refused partway through a transition", () => {
     sends = 0;
     onSend = async () => {};
     onReceipt = async () => {};
-    originalRandom = Math.random;
-    // Fix the one-message purchase-confirmation variant so this test does not
-    // depend on pacing sleeps.
-    Math.random = () => 0.999999;
     originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
       if (JSON.parse(String(init?.body ?? "{}")).status === "read") {
@@ -157,112 +161,131 @@ describe("a send refused partway through a transition", () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }) as unknown as typeof globalThis.fetch;
+    model = fakeModel();
+    await withOpenAiKey(tenant.tenantId);
   });
 
   afterEach(async () => {
-    Math.random = originalRandom;
+    model.restore();
     globalThis.fetch = originalFetch;
   });
 
-  /**
-   * A new contact says "hola". The greeting transition lists `session_start`
-   * before its sends, and the number is switched off after the dequeue and
-   * before the first send.
-   */
-  describe("on a new contact's first message", () => {
+  describe("on a customer's message", () => {
     beforeEach(async () => {
+      await insertConversation(ref);
       await queue("hola");
     });
 
-    it("neither moves the conversation on nor counts a session", async () => {
+    it("leaves the message queued and sends nothing", async () => {
       await answerWithNumberSwitchedOffMidFlight();
 
       expect(await queueStatuses()).toEqual(["pending"]);
-      // The phase stays `greeting`. `confirming_client` would read the next
-      // "hola" as the answer to a question never asked.
-      expect(await storedPhase()).toEqual({ phase: "greeting" });
-      expect(await analytics("session_start")).toBe(0);
       expect(sends).toBe(0);
     });
 
-    it("greets them, once, when the number comes back", async () => {
+    it("answers it, once, when the number comes back", async () => {
       await answerWithNumberSwitchedOffMidFlight();
 
       await setStatus("active");
       await answerQueued();
 
       expect(await queueStatuses()).toEqual(["processed"]);
-      expect(await storedPhase()).toEqual({ phase: "confirming_client" });
-      expect(await analytics("session_start")).toBe(1);
-
-      const greetings = GREETING.flat();
-      const last = (await outbound()).at(-1);
-      expect(last?.status).toBe("sent");
-      expect(greetings).toContain(last?.content ?? "");
+      expect(await outbound()).toEqual([
+        { content: DEFAULT_REPLY, status: "failed" },
+        { content: DEFAULT_REPLY, status: "sent" },
+      ]);
     });
   });
 
   /**
-   * `purchase_confirmed` is a domain event the orchestrator emits, and its
-   * subscriber creates the order. Emitting it before the sends would make the
-   * retry confirm the same sale twice.
+   * The order exists once create_order ran. Leaving the message queued would
+   * answer it again and file a second order, so the turn is recorded without
+   * its reply and staff learn of the order from its event.
    */
-  describe("on a purchase confirmation", () => {
-    let confirmations: number;
-    const countConfirmation = () => {
-      confirmations++;
+  describe("on a turn that filed an order", () => {
+    let announced: number;
+    const countOrder = () => {
+      announced++;
     };
 
+    async function orders(): Promise<number> {
+      return (
+        await db
+          .selectFrom("orders")
+          .select("id")
+          .where("tenant_id", "=", ref.tenantId)
+          .execute()
+      ).length;
+    }
+
     beforeEach(async () => {
-      await insertConversation(ref, {
-        contextData: {
-          phase: {
-            phase: "confirming_selection",
-            segment: "fnb",
-            credit: 5000,
-            name: "Juan",
-            selectedProduct: {
-              name: "Cocina 4 hornillas",
-              price: 1200,
-              productId: "prod-cocina",
-            },
-          },
-          metadata: {
-            createdAt: Date.now(),
-            lastActivityAt: Date.now(),
-            dni: "12345678",
-          },
+      await insertConversation(ref);
+      const product = await ProductService.create({
+        tenantId: tenant.tenantId,
+        name: "Cocina 4 hornillas",
+        category: "cocinas",
+      });
+      const variant = await VariantService.create(tenant.tenantId, product.id, {
+        name: null,
+        sku: "COC-4",
+        price_cents: 120_000,
+        cost_cents: null,
+        is_active: 1,
+      });
+      const location = await StockService.defaultLocation(tenant.tenantId);
+      await StockService.record({
+        tenantId: tenant.tenantId,
+        variantId: variant.id,
+        locationId: location!.id,
+        kind: "receive",
+        quantity: 5,
+        createdBy: null,
+      });
+      model.calls({
+        name: "create_order",
+        arguments: {
+          customer_name: "Juan Pérez",
+          document_type: "dni",
+          document_number: "12345678",
+          lines: [{ variant_id: variant.id, quantity: 1 }],
+          address: null,
+          zone_id: null,
+          payment_method_id: null,
+          notes: null,
         },
       });
-      await queue("sí");
+      model.says("Listo, tu pedido está registrado.");
+      await queue("sí, confirmo");
 
-      confirmations = 0;
-      eventBus.on("purchase_confirmed", countConfirmation);
+      announced = 0;
+      eventBus.on("order_created", countOrder);
     });
 
     afterEach(async () => {
-      eventBus.off("purchase_confirmed", countConfirmation);
+      eventBus.off("order_created", countOrder);
     });
 
-    it("confirms nothing until the confirmation reaches the customer", async () => {
+    it("records the turn without its reply and announces the order", async () => {
       await answerWithNumberSwitchedOffMidFlight();
 
-      expect(await queueStatuses()).toEqual(["pending"]);
-      expect(confirmations).toBe(0);
-      expect(await analytics("purchase_confirmed")).toBe(0);
-      expect((await storedPhase()).phase).toBe("confirming_selection");
+      expect(await queueStatuses()).toEqual(["processed"]);
+      expect(await orders()).toBe(1);
+      expect(announced).toBe(1);
+      expect(await outbound()).toEqual([
+        { content: "Listo, tu pedido está registrado.", status: "failed" },
+      ]);
     });
 
-    it("confirms the sale exactly once when the number comes back", async () => {
+    it("files no second order when the number comes back", async () => {
       await answerWithNumberSwitchedOffMidFlight();
+      const calls = model.requests.length;
 
       await setStatus("active");
       await answerQueued();
 
-      expect(await queueStatuses()).toEqual(["processed"]);
-      expect(confirmations).toBe(1);
-      expect(await analytics("purchase_confirmed")).toBe(1);
-      expect((await storedPhase()).phase).toBe("closing");
+      expect(model.requests.length).toBe(calls);
+      expect(await orders()).toBe(1);
+      expect(announced).toBe(1);
     });
   });
 

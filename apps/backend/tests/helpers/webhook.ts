@@ -66,7 +66,8 @@ export function inboundText(
   phoneNumberId: string,
   from: string,
   text: string,
-  options: { id?: string; sentAt?: number } = {},
+  /** `quoting` is the id of the earlier message this one replies to. */
+  options: { id?: string; sentAt?: number; quoting?: string } = {},
 ) {
   return inboundMessage(phoneNumberId, {
     from,
@@ -74,6 +75,7 @@ export function inboundText(
     timestamp: String(Math.floor((options.sentAt ?? Date.now()) / 1000)),
     type: "text",
     text: { body: text },
+    ...(options.quoting && { context: { id: options.quoting } }),
   });
 }
 

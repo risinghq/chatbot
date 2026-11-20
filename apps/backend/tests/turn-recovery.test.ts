@@ -2,18 +2,15 @@
  * A turn that cannot work out a reply must not leave the customer unanswered
  * and unnoticed. Each test fills the inbox, mostly through a real signed
  * webhook, and wakes the conversation's object, whose pass answers the turn
- * and hands off a failed one. The only fakes are the network and the
- * enrichment step that stands in for the LLM.
+ * and hands off a failed one. The only fakes are the network and the model.
  */
 
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ConversationPhase } from "@vendeya/core";
 import type { DomainEvent } from "@vendeya/types";
 
 import { getAll, getOne, run } from "../src/db/index.ts";
-import { enrichmentRegistry } from "../src/conversation/enrichment/registry.ts";
 import { storeIncomingMessage } from "../src/conversation/message-inbox.ts";
 import { conversationStub } from "../src/conversation/stub.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
@@ -24,49 +21,43 @@ import {
   TEST_APP_SECRET,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
+import {
+  DEFAULT_REPLY,
+  type FakeModel,
+  fakeModel,
+  withOpenAiKey,
+} from "./helpers/model.ts";
 import { customerWrites } from "./helpers/turn.ts";
 
 const CUSTOMER = "51900888001";
 
-const OBJECTION: ConversationPhase = {
-  phase: "handling_objection",
-  segment: "fnb",
-  credit: 3000,
-  name: "Ana",
-  objectionCount: 1,
-};
-
-/** What the objection phase answers when the message is not a question. */
-const FOLLOW_UP = "¿Te gustaría ver alguna otra opción?";
+/** The reason a turn records when the model fails it. */
+const MODEL_DOWN = "The assistant model did not answer";
 
 describe("a customer whose turn fails", () => {
   let tenant: TenantFixture;
   let originalFetch: typeof globalThis.fetch;
+  let model: FakeModel;
   /** Replies WhatsApp accepted, in order. */
   let delivered: string[];
   let alerts: DomainEvent[];
-  /** Turns that reached the reply step. */
+  /** Model calls so far; each turn here makes one. */
   let attempts: number;
-  /** How many of those throw before one succeeds. */
+  /** How many of those fail before one answers. */
   let failures: number;
-  /** Runs inside a reply step attempt, before it throws or answers. */
+  /** Runs inside a model call, before it fails or answers. */
   let whileAnswering: Record<number, () => Promise<void>>;
 
   const onAlert = (event: DomainEvent) => {
     if (event.tenantId === tenant.tenantId) alerts.push(event);
   };
 
-  /** The reply step: the first `failures` calls throw, the rest say "not a question". */
+  /** The model: the first `failures` calls fail, the rest answer. */
   function replyStep() {
-    enrichmentRegistry.clear();
-    enrichmentRegistry.register({
-      type: "detect_question",
-      execute: async () => {
-        attempts++;
-        await whileAnswering[attempts]?.();
-        if (attempts <= failures) throw new Error("the model is down");
-        return { type: "question_detected", isQuestion: false };
-      },
+    model.onCall(async (call) => {
+      attempts = call;
+      await whileAnswering[call]?.();
+      if (call <= failures) model.fails();
     });
   }
 
@@ -140,26 +131,18 @@ describe("a customer whose turn fails", () => {
     });
     tenant.channelAccountId = account.id;
 
-    await insertConversation(
-      {
-        tenantId: tenant.tenantId,
-        channelAccountId: account.id,
-        phoneNumber: CUSTOMER,
-      },
-      {
-        contextData: {
-          phase: OBJECTION,
-          metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-        },
-      },
-    );
+    await insertConversation({
+      tenantId: tenant.tenantId,
+      channelAccountId: account.id,
+      phoneNumber: CUSTOMER,
+    });
+    await withOpenAiKey(tenant.tenantId);
 
     delivered = [];
     alerts = [];
     attempts = 0;
     failures = 0;
     whileAnswering = {};
-    replyStep();
     eventBus.on("escalation_triggered", onAlert);
 
     originalFetch = globalThis.fetch;
@@ -171,11 +154,13 @@ describe("a customer whose turn fails", () => {
         { headers: { "Content-Type": "application/json" } },
       );
     }) as unknown as typeof globalThis.fetch;
+    model = fakeModel();
+    replyStep();
   });
 
   afterEach(async () => {
     eventBus.off("escalation_triggered", onAlert);
-    enrichmentRegistry.clear();
+    model.restore();
     globalThis.fetch = originalFetch;
   });
 
@@ -188,7 +173,7 @@ describe("a customer whose turn fails", () => {
     await wake();
     await wake();
 
-    expect(delivered).toEqual([FOLLOW_UP]);
+    expect(delivered).toEqual([DEFAULT_REPLY]);
     expect(await inbox()).toMatchObject([{ status: "processed", attempts: 1 }]);
     expect((await conversation()).status).toBe("active");
     expect(alerts).toEqual([]);
@@ -203,7 +188,7 @@ describe("a customer whose turn fails", () => {
 
     expect(attempts).toBe(2);
     expect(await inbox()).toMatchObject([
-      { status: "failed", attempts: 2, last_error: "the model is down" },
+      { status: "failed", attempts: 2, last_error: MODEL_DOWN },
     ]);
     expect(delivered).toEqual([]);
     expect(await conversation()).toEqual({
@@ -213,7 +198,7 @@ describe("a customer whose turn fails", () => {
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.payload).toMatchObject({
       reason: "turn_failed",
-      context: { failedTurns: 1, lastReason: "the model is down" },
+      context: { failedTurns: 1, lastReason: MODEL_DOWN },
     });
     expect((await inbox())[0]!.handed_off_at).not.toBeNull();
 
@@ -331,7 +316,7 @@ describe("a customer whose turn fails", () => {
 
     expect(attempts).toBe(2);
     expect(await inbox()).toMatchObject([
-      { status: "failed", attempts: 2, last_error: "the model is down" },
+      { status: "failed", attempts: 2, last_error: MODEL_DOWN },
     ]);
     expect(await conversation()).toEqual({
       status: "human_takeover",
@@ -360,7 +345,7 @@ describe("a customer whose turn fails", () => {
     // The next instance settles the dead turn, then answers it.
     await wake();
 
-    expect(delivered).toEqual([FOLLOW_UP]);
+    expect(delivered).toEqual([DEFAULT_REPLY]);
     expect(await outboundRows()).toBe(1);
     expect(await inbox()).toMatchObject([{ status: "processed", attempts: 1 }]);
     expect(alerts).toEqual([]);

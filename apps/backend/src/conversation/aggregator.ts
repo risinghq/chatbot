@@ -91,10 +91,9 @@ async function recordUnanswered(
   if (error instanceof ChannelUnavailableError) {
     // The number was switched off between the dequeue and a send, and
     // `pendingGroup` keeps the group out of every pass until it is back. The
-    // replay is faithful because `executeCommands` persists the phase and
-    // analytics, and the orchestrator emits events, only after every send went
-    // out. An earlier message of the same batch may already have reached the
-    // customer, and the retry sends it again.
+    // replay is faithful because the turn records the conversation and emits
+    // events only after every send went out. A reply that already reached
+    // the customer is sent again by the retry.
     await markAsPending(group.ids);
     logger.warn(
       { ...context, status: error.status },
