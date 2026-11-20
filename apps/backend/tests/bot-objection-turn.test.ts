@@ -220,7 +220,6 @@ describe("escalation from a phase", () => {
         phase: { ...objection, objectionCount: 2 },
         metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
       },
-      isSimulation: true,
     });
     escalations = [];
     eventBus.on("escalation_triggered", onEscalation);

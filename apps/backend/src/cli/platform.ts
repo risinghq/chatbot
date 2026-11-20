@@ -55,6 +55,9 @@ export async function withPlatform<T>(
     : shellKey === undefined
       ? {}
       : { SECRETS_KEY: shellKey };
+  // Wrangler logs its notices on stdout, which is the script's answer: `token
+  // create` pipes a token into `vendeya login`. Its warnings go to stderr.
+  process.env.WRANGLER_LOG ??= "warn";
   const proxy = await getPlatformProxy<Env>({ configPath });
   const env: Env = { ...proxy.env, ...overrides };
 

@@ -71,10 +71,17 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
   const traceId = crypto.randomUUID();
   const eventContext = { traceId, tenantId, channelAccountId };
 
+  // A simulated turn moves the conversation like a real one but touches
+  // nothing outside it: no read receipt, order, notification, assigned agent
+  // or unread alert. Its analytics carry `is_simulation`, so they stay.
+  const real = !conversation.isSimulation;
+
   // A person-held conversation gets a read receipt but no typing indicator
   // because the bot sends no reply.
   const held = conversation.phase.phase === "escalated";
-  await WhatsAppService.markAsRead(ref, messageId, { typing: !held });
+  if (real) {
+    await WhatsAppService.markAsRead(ref, messageId, { typing: !held });
+  }
 
   // Set once the turn is recorded. A failure before it is passed on: the
   // caller owns the queue rows and decides whether to try again. A failure
@@ -121,7 +128,7 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
     // same phase, and anything emitted before that point is emitted twice.
     // `purchase_confirmed` creates an order, so emitted first it turned one
     // number switched off mid-confirmation into two orders for one sale.
-    if (result.events && result.events.length > 0) {
+    if (real && result.events && result.events.length > 0) {
       for (const event of result.events) {
         await eventBus.emit({ ...event, ...eventContext });
       }
@@ -136,7 +143,11 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
     // alert already represents the conversation. Both alerts are awaited
     // inside the lock: the next message must see the marker as the delivery
     // left it, kept or released.
-    if (result.type === "update" && result.nextPhase.phase === "escalated") {
+    if (
+      real &&
+      result.type === "update" &&
+      result.nextPhase.phase === "escalated"
+    ) {
       if (!held) {
         await assignNextAgentHeld(ref);
         await raiseUnreadAlert(ref);
@@ -196,6 +207,9 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
       },
       "Message processing failed",
     );
+
+    // A simulated failure reaches the person at the simulator as an error.
+    if (!real) throw error;
 
     await eventBus.emit(
       createEvent(

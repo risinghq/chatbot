@@ -62,6 +62,16 @@ async function resolveAccount(ref: ConversationRef): Promise<SendTarget> {
     return { unsendable: null, reason: "account_not_found", recordable: false };
   }
 
+  if (account.channel_type !== "whatsapp") {
+    // The simulator's turns record their replies instead of sending them, so
+    // a send reaching here is a bug and Meta must not see it.
+    logger.error(
+      { channelAccountId: account.id, tenantId: ref.tenantId },
+      "Refusing to send on a channel that is not WhatsApp",
+    );
+    return { unsendable: null, reason: "not_whatsapp", recordable: true };
+  }
+
   if (account.tenant_id !== ref.tenantId) {
     // A mismatch means the conversation ref was assembled from two tenants.
     // Refuse it instead of sending on the wrong account.

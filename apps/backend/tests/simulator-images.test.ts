@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import {
   createMember,
   createTenantFixture,
+  simulatorRef,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -79,7 +80,7 @@ describe("simulated product images", () => {
     const conversation = (await created.json()) as { phone_number: string };
 
     await sendBundleImages({
-      ref: tenant.ref(conversation.phone_number),
+      ref: await simulatorRef(tenant.tenantId, conversation.phone_number),
       segment: "fnb",
       creditLine: 5000,
       isSimulation: true,

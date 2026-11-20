@@ -7,6 +7,7 @@ import {
   createMember,
   createTenantFixture,
   insertConversation,
+  simulatorRef,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -86,18 +87,21 @@ describe("simulated conversation phone numbers", () => {
     expect((await listed()).sort()).toEqual([second, third, fourth].sort());
   });
 
-  it("skips a number a real conversation already holds", async () => {
-    const first = await create();
-    await remove(first);
-    await insertConversation(tenant.ref(first), { clientName: "Cliente Real" });
+  it("numbers apart from the business's WhatsApp conversations", async () => {
+    await insertConversation(tenant.ref("51900000001"), {
+      clientName: "Cliente Real",
+    });
 
-    const next = await create();
-
-    expect(next).not.toBe(first);
+    expect(await create()).toBe("51900000001");
   });
 
   it("never allocates the reserved replay contact", async () => {
-    await insertConversation(tenant.ref("51999999999"), { isSimulation: true });
+    await insertConversation(
+      await simulatorRef(tenant.tenantId, "51999999999"),
+      {
+        isSimulation: true,
+      },
+    );
 
     const phone = await create();
 

@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { CATALOG_IMAGE_CACHE_CONTROL } from "./adapters/storage/images.ts";
 import { initializeApplication } from "./bootstrap/index.ts";
-import { isProduction, publicOrigin } from "./config.ts";
+import { publicOrigin } from "./config.ts";
 import { isCatalogImageKey } from "./lib/storage-paths.ts";
 import { requireAuth, requireRole } from "./middleware/auth.ts";
 import { errorHandler } from "./middleware/error.ts";
@@ -56,13 +56,6 @@ app.get("/media/:key{.+}", async (c) => {
 app.route("/api/health", health);
 app.route("/api/webhook", webhook);
 app.route("/api/auth", auth);
-
-// The simulator plays customers against live tenant data, so production does
-// not serve it. This sits before requireAuth so the answer is 404 for
-// everyone, not 401 for a caller who is not signed in.
-app.all("/api/simulator/*", async (c, next) =>
-  isProduction() ? c.notFound() : next(),
-);
 
 app.use("/api/*", requireAuth);
 app.route("/api/tenants", tenants);

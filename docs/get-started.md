@@ -40,8 +40,9 @@ prints a line such as `SECRETS_KEY="IiGTB0N-..."`. Put it in
 
 Without `SECRETS_KEY`, no credential can be stored. The seed skips the channel
 account and says so, the account command refuses to create one, and nothing can
-be sent to WhatsApp. The simulator still works, because it sends nothing. A
-different key later cannot read the tokens stored under this one.
+be sent to WhatsApp. The simulator still works: it talks on the business's
+simulator channel, which needs no credential. A different key later cannot read
+the tokens stored under this one.
 
 ## The database
 
@@ -140,10 +141,6 @@ si        -> Genial 😊, ¿me brindas el número de tu DNI?
 The wording varies between runs. Answer with a group, such as `Tecnología`, then
 a category it lists, such as `celulares`, to get up to three products as images.
 
-For each simulated message the backend logs "Refusing to send on a channel
-account that is not active". It comes from marking the message read on the
-`pending` placeholder number, and changes nothing.
-
 The same conversation through the API, with both servers running:
 
 ```sh
@@ -164,16 +161,20 @@ curl -b cookies.txt http://localhost:5173/api/simulator/conversation/$phone
 
 The server chooses the new conversation's phone number and returns it in
 `phone_number`. It takes one past the highest simulated number (`519` and eight
-digits) on the tenant's default channel account, starting at `51900000001`. It
-skips `51999999999`, which the replay of a real conversation uses, and any
-number a real conversation holds. A deleted conversation never frees a number
-another simulation holds.
+digits) on the tenant's simulator channel, starting at `51900000001`. It skips
+`51999999999`, which the replay of a real conversation uses. The simulator
+channel is apart from the business's WhatsApp numbers, so a simulated number
+never meets a real customer's thread. A deleted conversation never frees a
+number another simulation holds.
 
-Without an OpenAI key, a message the bot's patterns do not recognize gets no
-reply, the backend logs "Message processing failed", and the simulator answers
-500 with `{"status":"failed","error":"..."}`. Each tenant brings its own key:
-the admin enters it on `/dashboard/admin/settings`, under OpenAI, and the bot
-can answer questions and recover from unclear replies.
+Without an OpenAI key, the simulator answers 409 with
+`{"reason":"no_openai_key"}` and the page asks for the key. Each tenant brings
+its own key: the admin enters it on `/dashboard/admin/settings`, under OpenAI. A
+turn that fails after that answers 500 with `{"status":"failed","error":"..."}`.
+
+The `vendeya` command line drives the same routes: `simulate start`, then
+`simulate say <phone> <message>` prints the assistant's replies
+([Operations](./operations.md#the-vendeya-command-line)).
 
 ## Next
 

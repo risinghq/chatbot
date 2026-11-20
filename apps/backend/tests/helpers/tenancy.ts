@@ -97,6 +97,15 @@ export async function addChannelAccount(
   };
 }
 
+/** A contact on the tenant's simulator channel, where simulations live. */
+export async function simulatorRef(
+  tenantId: string,
+  phoneNumber: string,
+): Promise<ConversationRef> {
+  const account = await ChannelAccountService.simulatorFor(tenantId);
+  return { tenantId, channelAccountId: account.id, phoneNumber };
+}
+
 /** Insert a conversation row directly, bypassing the handler. */
 export async function insertConversation(
   ref: ConversationRef,

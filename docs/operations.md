@@ -48,7 +48,7 @@ the values in `wrangler.jsonc`.
 
 | Name                                      | Kind     | Without it                                                                                                             |
 | ----------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ENVIRONMENT`                             | variable | anything but `production` serves the simulator routes, and a 500 carries the error's message and stack                 |
+| `ENVIRONMENT`                             | variable | anything but `production` makes a 500 carry the error's message and stack                                              |
 | `PUBLIC_URL`                              | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:` |
 | `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL` | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                      |
 | `BOT_RESPONSE_DELAY_MS`                   | variable | 2300                                                                                                                   |

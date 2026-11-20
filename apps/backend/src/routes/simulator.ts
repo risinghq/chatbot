@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import { WhatsAppService } from "../adapters/whatsapp/index.ts";
 import { PersonasService } from "../domains/personas/index.ts";
 import { ChannelAccountService } from "../domains/channels/accounts.ts";
+import { hasOpenAiApiKey } from "../domains/settings/openai.ts";
 import {
   getOrCreateConversation,
   resetSession,
@@ -28,60 +29,47 @@ simulator.use("/*", requireActiveTenant);
 simulator.use("/*", requireRole("admin", "developer"));
 
 /**
- * Simulated conversations still belong to a channel account: they are stored in
- * the same table and share its identity. The tenant's default account is used.
+ * Simulated conversations live on the tenant's simulator channel, apart from
+ * its WhatsApp numbers, so the simulator works before any number exists.
  */
 async function simulatorRef(
   c: Context,
   phoneNumber: string,
-): Promise<ConversationRef | null> {
+): Promise<ConversationRef> {
   const tenantId = activeTenantId(c);
-  const account = await ChannelAccountService.getDefaultForTenant(tenantId);
-
-  if (!account) return null;
-
-  return {
-    tenantId,
-    channelAccountId: account.id,
-    phoneNumber,
-  };
+  const account = await ChannelAccountService.simulatorFor(tenantId);
+  return { tenantId, channelAccountId: account.id, phoneNumber };
 }
 
 /**
- * The conversation being replayed belongs to the tenant but not necessarily to
- * the number the simulator runs on. A business with two WhatsApp numbers has
- * two separate threads with the same contact, and `channelAccountId` says which
- * one is being loaded. Without it the default account is assumed.
+ * The real conversation being replayed. A business with two WhatsApp numbers
+ * has two separate threads with the same contact, and `channelAccountId` says
+ * which one is being loaded. Without it the default number is assumed.
  */
 async function replaySourceRef(
   c: Context,
   phoneNumber: string,
   channelAccountId?: string,
 ): Promise<ConversationRef | null> {
-  if (!channelAccountId) return await simulatorRef(c, phoneNumber);
-
   const tenantId = activeTenantId(c);
-  const account = await ChannelAccountService.getById(channelAccountId);
+  const account = channelAccountId
+    ? await ChannelAccountService.getById(channelAccountId)
+    : await ChannelAccountService.getDefaultForTenant(tenantId);
 
   // Another tenant's account is indistinguishable from one that does not exist.
   if (!account || account.tenant_id !== tenantId) return null;
 
-  return { tenantId, channelAccountId, phoneNumber };
+  return { tenantId, channelAccountId: account.id, phoneNumber };
 }
 
-const NO_ACCOUNT = {
-  error:
-    "This tenant has no channel account yet; add one before using the simulator",
-} as const;
-
-/** Every replay is loaded onto this contact, on the tenant's default number. */
+/** Every replay is loaded onto this contact, on the simulator channel. */
 const SIMULATOR_PHONE = "51999999999";
 
 const SIMULATED_FIRST_PHONE = 51900000001;
 
 /**
- * Returns one past the highest simulated number on this account. Skips a number
- * a real conversation holds and the reserved replay contact.
+ * Returns one past the highest simulated number on this account. Skips the
+ * reserved replay contact and any number already taken.
  */
 async function nextSimulatedPhone(ref: ConversationRef): Promise<string> {
   const highest = (
@@ -173,17 +161,12 @@ simulator.delete("/personas/:id", async (c) => {
 });
 
 /**
- * The simulated conversations on the simulator's number. Every route here that
- * takes a simulated conversation's phone number resolves it through
- * `simulatorRef`, and the frontend keys rows by phone number alone. A row on
- * another number would open a new empty thread or answer 404.
+ * The simulated conversations on the simulator channel. Every route here
+ * resolves a phone number through `simulatorRef`, so the frontend keys rows by
+ * phone number alone.
  */
 simulator.get("/conversations", async (c) => {
   const ref = await simulatorRef(c, SIMULATOR_PHONE);
-  if (!ref) return c.json(NO_ACCOUNT, 400);
-
-  // Simulations on another number stay in the table. They show again if that
-  // number becomes the default.
   const conversations = await getAll<Conversation>(
     `SELECT * FROM conversations
      WHERE tenant_id = ? AND channel_account_id = ? AND is_simulation = 1
@@ -200,7 +183,6 @@ simulator.post("/conversations", async (c) => {
   const { personaId } = await c.req.json();
 
   const account = await simulatorRef(c, SIMULATOR_PHONE);
-  if (!account) return c.json(NO_ACCOUNT, 400);
   const ref = { ...account, phoneNumber: await nextSimulatedPhone(account) };
 
   // Validate persona if provided
@@ -240,8 +222,14 @@ simulator.post("/message", async (c) => {
     return c.json({ error: "phoneNumber and message required" }, 400);
   }
 
+  if (!(await hasOpenAiApiKey(activeTenantId(c)))) {
+    return c.json(
+      { error: "The business has no OpenAI key", reason: "no_openai_key" },
+      409,
+    );
+  }
+
   const ref = await simulatorRef(c, phoneNumber);
-  if (!ref) return c.json(NO_ACCOUNT, 400);
 
   await getOrCreateConversation(ref, true);
 
@@ -277,7 +265,6 @@ simulator.post("/message", async (c) => {
 // Get conversation state for simulator
 simulator.get("/conversation/:phone", async (c) => {
   const ref = await simulatorRef(c, pathParam(c, "phone"));
-  if (!ref) return c.json(NO_ACCOUNT, 400);
 
   const conv = await getOrCreateConversation(ref, true);
   const messages = await WhatsAppService.getMessageHistory(ref, 100);
@@ -291,7 +278,6 @@ simulator.get("/conversation/:phone", async (c) => {
 // Reset simulator conversation
 simulator.post("/reset/:phone", async (c) => {
   const ref = await simulatorRef(c, pathParam(c, "phone"));
-  if (!ref) return c.json(NO_ACCOUNT, 400);
 
   await resetSession(ref);
   await WhatsAppService.clearMessageHistory(ref);
@@ -302,7 +288,6 @@ simulator.post("/reset/:phone", async (c) => {
 // Delete simulator conversation
 simulator.delete("/conversations/:phone", async (c) => {
   const ref = await simulatorRef(c, pathParam(c, "phone"));
-  if (!ref) return c.json(NO_ACCOUNT, 400);
 
   const conv = await findConversation(ref);
 
@@ -333,11 +318,7 @@ simulator.post("/load", async (c) => {
     return c.json({ error: "sourcePhone required" }, 400);
   }
 
-  // The replay always loads onto the default account, where the rest of the
-  // simulator looks for it. Only the source is read from the number the
-  // conversation happened on.
   const targetRef = await simulatorRef(c, SIMULATOR_PHONE);
-  if (!targetRef) return c.json(NO_ACCOUNT, 400);
 
   const sourceRef = await replaySourceRef(c, sourcePhone, sourceChannel);
 

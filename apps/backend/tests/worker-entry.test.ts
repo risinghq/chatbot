@@ -42,7 +42,7 @@ describe("the API's CORS origin", () => {
 });
 
 describe("the simulator routes", () => {
-  it("answer 404 in production, while a mounted route still asks for a session", async () => {
+  it("are mounted in production and ask for a session", async () => {
     env.ENVIRONMENT = "production";
 
     for (const path of [
@@ -50,15 +50,8 @@ describe("the simulator routes", () => {
       "/api/simulator/conversations",
       "/api/simulator/conversation/51999999999",
     ]) {
-      expect((await backendFetch(path)).status, path).toBe(404);
+      expect((await backendFetch(path)).status, path).toBe(401);
     }
-    expect((await backendFetch("/api/conversations")).status).toBe(401);
-  });
-
-  it("are mounted outside production and ask for a session", async () => {
-    env.ENVIRONMENT = "development";
-
-    expect((await backendFetch("/api/simulator/personas")).status).toBe(401);
   });
 });
 

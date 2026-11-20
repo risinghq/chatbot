@@ -126,6 +126,45 @@ describe("vendeya", () => {
     expect(JSON.stringify(h.out())).not.toContain("sk-secret");
   });
 
+  test("simulate say writes as the customer and prints only the new replies", async () => {
+    const h = harness({
+      env: AUTHED,
+      reply: (sent) =>
+        sent.method === "POST"
+          ? { body: { status: "processed" } }
+          : {
+              body: {
+                conversation: { phase: { phase: "greeting" }, id: "x" },
+                messages: [
+                  {
+                    direction: "inbound",
+                    type: "text",
+                    content: "hola",
+                    id: 1,
+                  },
+                  { direction: "outbound", type: "text", content: "¡Hola!" },
+                  { direction: "inbound", type: "text", content: "precio" },
+                  { direction: "outbound", type: "text", content: "S/ 800" },
+                ],
+              },
+            },
+    });
+    const code = await main(
+      ["simulate", "say", "51900000001", "cuánto", "cuesta"],
+      h.io,
+    );
+    expect(code).toBe(0);
+    expect(h.sent[0]).toMatchObject({
+      method: "POST",
+      url: "http://local/api/simulator/message",
+      body: { phoneNumber: "51900000001", message: "cuánto cuesta" },
+    });
+    expect(h.out()).toEqual({
+      phase: { phase: "greeting" },
+      replies: [{ direction: "outbound", type: "text", content: "S/ 800" }],
+    });
+  });
+
   test("api passes JSON through", async () => {
     const h = harness({ env: AUTHED });
     const code = await main(

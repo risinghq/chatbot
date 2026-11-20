@@ -42,6 +42,34 @@ function confirmed(ctx: CommandContext, action: string) {
   if (!ctx.options.yes) throw new UsageError(`${action} needs --yes.`);
 }
 
+type SimulatedMessage = {
+  direction: "inbound" | "outbound";
+  type: string;
+  content: string;
+};
+
+/** The thread trimmed to what a reader acts on: the phase and the messages. */
+async function simulatedThread(
+  ctx: CommandContext,
+  phone: string,
+): Promise<{ phase: unknown; messages: SimulatedMessage[] }> {
+  const thread = (await ctx.call(
+    "GET",
+    `/api/simulator/conversation/${encodeURIComponent(phone)}`,
+  )) as {
+    conversation: { phase: unknown };
+    messages: SimulatedMessage[];
+  };
+  return {
+    phase: thread.conversation.phase,
+    messages: thread.messages.map(({ direction, type, content }) => ({
+      direction,
+      type,
+      content,
+    })),
+  };
+}
+
 export const COMMANDS: Command[] = [
   {
     words: "whoami",
@@ -175,6 +203,70 @@ export const COMMANDS: Command[] = [
     usage: "channels list",
     summary: "WhatsApp numbers of the active business.",
     run: (ctx) => ctx.call("GET", "/api/admin/channels"),
+  },
+  {
+    words: "simulate list",
+    usage: "simulate list",
+    summary: "Simulated conversations of the active business.",
+    run: (ctx) => ctx.call("GET", "/api/simulator/conversations"),
+  },
+  {
+    words: "simulate start",
+    usage: "simulate start",
+    summary: "Start a simulated conversation; answers with its phone number.",
+    run: async (ctx) => {
+      noMoreArgs(ctx, 0);
+      const conversation = (await ctx.call(
+        "POST",
+        "/api/simulator/conversations",
+        {},
+      )) as { phone_number: string };
+      return { phone: conversation.phone_number };
+    },
+  },
+  {
+    words: "simulate say",
+    usage: "simulate say <phone> <message...>",
+    summary: "Write as the customer and print the assistant's replies.",
+    run: async (ctx) => {
+      const phone = need(ctx.args[0], "phone");
+      const message = need(ctx.args.slice(1).join(" "), "message");
+      await ctx.call("POST", "/api/simulator/message", {
+        phoneNumber: phone,
+        message,
+      });
+      const thread = await simulatedThread(ctx, phone);
+      const lastInbound = thread.messages.findLastIndex(
+        (m) => m.direction === "inbound",
+      );
+      return {
+        phase: thread.phase,
+        replies: thread.messages.slice(lastInbound + 1),
+      };
+    },
+  },
+  {
+    words: "simulate show",
+    usage: "simulate show <phone>",
+    summary: "A simulated conversation's phase and messages.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 1);
+      return simulatedThread(ctx, need(ctx.args[0], "phone"));
+    },
+  },
+  {
+    words: "simulate delete",
+    usage: "simulate delete <phone> --yes",
+    summary: "Delete a simulated conversation.",
+    run: (ctx) => {
+      noMoreArgs(ctx, 1);
+      const phone = need(ctx.args[0], "phone");
+      confirmed(ctx, "Deleting a simulation");
+      return ctx.call(
+        "DELETE",
+        `/api/simulator/conversations/${encodeURIComponent(phone)}`,
+      );
+    },
   },
   {
     words: "tokens list",
