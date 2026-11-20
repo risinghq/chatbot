@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { ORDER_STATUSES, type OrderStatus } from "@vendeya/types";
 import { limaDateString, limaDayBounds, limaRangeEdge } from "../db/query.ts";
 import { ReportService } from "../domains/reports/index.ts";
 import { requireRole, requireTenantScope } from "../middleware/auth.ts";
@@ -72,8 +73,13 @@ reports.get("/activity", async (c) => {
 reports.get("/orders", async (c) => {
   const startDateStr = c.req.query("startDate");
   const endDateStr = c.req.query("endDate");
-  const status = c.req.query("status") || "";
-  const assignedAgent = c.req.query("assignedAgent") || "";
+  const status = c.req.query("status") || undefined;
+  if (status && !ORDER_STATUSES.includes(status as OrderStatus)) {
+    return c.json(
+      { error: `status must be one of ${ORDER_STATUSES.join(", ")}` },
+      400,
+    );
+  }
 
   const startMs = startDateStr
     ? limaRangeEdge(startDateStr, "start", "startDate")
@@ -86,8 +92,7 @@ reports.get("/orders", async (c) => {
     tenantId: c.get("scope").tenantId,
     startDate: startMs === undefined ? undefined : new Date(startMs),
     endDate: endMs === undefined ? undefined : new Date(endMs),
-    status: status || undefined,
-    assignedAgent: assignedAgent || undefined,
+    status: status as OrderStatus | undefined,
   });
 
   const dateRange =

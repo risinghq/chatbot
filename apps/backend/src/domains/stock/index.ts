@@ -1,4 +1,6 @@
+import type { Compilable, ExpressionBuilder } from "kysely";
 import type {
+  OrderStatus,
   StockLocation,
   StockMovement,
   StockMovementKind,
@@ -7,6 +9,7 @@ import type {
 import { newId } from "@vendeya/utils";
 import { batch, db } from "../../db/index.ts";
 import { isConstraintError } from "../../db/constraints.ts";
+import type { Database } from "../../db/schema.ts";
 
 /** The location a business gets when it records stock without naming one. */
 export const DEFAULT_LOCATION_NAME = "Almacén principal";
@@ -188,47 +191,120 @@ export const StockService = {
     note?: string | null;
     createdBy: string | null;
   }): Promise<StockMovement> => {
-    const { tenantId, variantId, locationId, kind, quantity } = movement;
-    const delta = DELTAS[kind](quantity);
     const id = newId();
-
-    try {
-      await batch([
-        db.insertInto("stock_levels").orIgnore().values({
-          tenant_id: tenantId,
-          variant_id: variantId,
-          location_id: locationId,
-        }),
-        db
-          .updateTable("stock_levels")
-          .set((eb) => ({
-            on_hand: eb("on_hand", "+", delta.onHand),
-            reserved: eb("reserved", "+", delta.reserved),
-          }))
-          .where("variant_id", "=", variantId)
-          .where("location_id", "=", locationId)
-          .where("tenant_id", "=", tenantId),
-        db.insertInto("stock_movements").values({
-          id,
-          tenant_id: tenantId,
-          variant_id: variantId,
-          location_id: locationId,
-          kind,
-          quantity,
-          note: movement.note || null,
-          created_by: movement.createdBy,
-        }),
-      ]);
-    } catch (error) {
-      if (isConstraintError(error, "CHECK")) throw new InsufficientStockError();
-      throw error;
-    }
+    await runMovements(
+      movementStatements({
+        tenantId: movement.tenantId,
+        locationId: movement.locationId,
+        kind: movement.kind,
+        items: [
+          { id, variantId: movement.variantId, quantity: movement.quantity },
+        ],
+        note: movement.note || null,
+        createdBy: movement.createdBy,
+      }),
+    );
 
     return await db
       .selectFrom("stock_movements")
       .selectAll()
-      .where("tenant_id", "=", tenantId)
+      .where("tenant_id", "=", movement.tenantId)
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
   },
 };
+
+/** The order a set of movements belongs to, and the status it must be in. */
+export type OrderGuard = { id: string; status: OrderStatus };
+
+/**
+ * The statements that record one movement per item and move its level, for
+ * the caller to run in one batch, alone (`runMovements`) or with its own
+ * writes. With `order`, each movement names the order and each statement
+ * applies only while the order is in `order.status`, so a batch that lost a
+ * race to move the order changes no stock.
+ */
+export function movementStatements(m: {
+  tenantId: string;
+  locationId: string;
+  kind: StockMovementKind;
+  items: { variantId: string; quantity: number; id?: string }[];
+  order?: OrderGuard;
+  note?: string | null;
+  createdBy: string | null;
+}): Compilable[] {
+  const { tenantId, locationId, kind, order } = m;
+  const orderInStatus = (eb: ExpressionBuilder<Database, any>) =>
+    order
+      ? eb.exists(
+          eb
+            .selectFrom("orders")
+            .select(eb.lit(1).as("one"))
+            .where("orders.id", "=", order.id)
+            .where("orders.tenant_id", "=", tenantId)
+            .where("orders.status", "=", order.status),
+        )
+      : eb.lit(true);
+
+  return m.items.flatMap(({ variantId, quantity, id }) => {
+    const delta = DELTAS[kind](quantity);
+    return [
+      db.insertInto("stock_levels").orIgnore().values({
+        tenant_id: tenantId,
+        variant_id: variantId,
+        location_id: locationId,
+      }),
+      db
+        .updateTable("stock_levels")
+        .set((eb) => ({
+          on_hand: eb("on_hand", "+", delta.onHand),
+          reserved: eb("reserved", "+", delta.reserved),
+        }))
+        .where("variant_id", "=", variantId)
+        .where("location_id", "=", locationId)
+        .where("tenant_id", "=", tenantId)
+        .where(orderInStatus),
+      db
+        .insertInto("stock_movements")
+        .columns([
+          "id",
+          "tenant_id",
+          "variant_id",
+          "location_id",
+          "kind",
+          "quantity",
+          "note",
+          "order_id",
+          "created_by",
+        ])
+        .expression(
+          db
+            .selectNoFrom((eb) => [
+              eb.val(id ?? newId()).as("id"),
+              eb.val(tenantId).as("tenant_id"),
+              eb.val(variantId).as("variant_id"),
+              eb.val(locationId).as("location_id"),
+              eb.val(kind).as("kind"),
+              eb.val(quantity).as("quantity"),
+              eb.val(m.note ?? null).as("note"),
+              eb.val(order?.id ?? null).as("order_id"),
+              eb.val(m.createdBy).as("created_by"),
+            ])
+            .where(orderInStatus),
+        ),
+    ];
+  });
+}
+
+/**
+ * Runs a batch that moves stock. A level CHECK that refuses a result below
+ * zero rolls back the whole batch and throws `InsufficientStockError`.
+ */
+export async function runMovements(statements: Compilable[]): Promise<void> {
+  try {
+    await batch(statements);
+  } catch (error) {
+    if (isConstraintError(error, "CHECK")) throw new InsufficientStockError();
+    throw error;
+  }
+}

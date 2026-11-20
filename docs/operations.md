@@ -146,6 +146,12 @@ bun run vendeya images add <product id> polo-frente.jpg polo-espalda.jpg
 bun run vendeya stock receive POLO-M 10 --note "Factura 001-2345"
 bun run vendeya stock adjust POLO-M -- -2
 bun run vendeya stock list
+bun run vendeya zones add 10.50 --name "Lima centro"
+bun run vendeya methods add --name Yape --note "Yape al 999 999 999"
+bun run vendeya orders create --phone 51999999999 --name "Ana" POLO-M=2 --zone <zone id> --address "Av. Arequipa 123"
+bun run vendeya orders status <order id> confirmed
+bun run vendeya payments add <order id> 109.30 --method Yape --reference 0042
+bun run vendeya payments confirm <order id> <payment id>
 ```
 
 `bun run vendeya --help` lists every command. Each answer is JSON on stdout and

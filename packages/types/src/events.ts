@@ -56,7 +56,7 @@ export type DomainEvent =
       payload: {
         orderId: string;
         orderNumber: string;
-        amount: number;
+        amountCents: number;
         clientName: string;
         phoneNumber: string;
         dni?: string;

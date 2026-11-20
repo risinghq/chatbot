@@ -10,11 +10,10 @@ import { Hono } from "hono";
 import { getOne, run } from "../src/db/index.ts";
 import {
   addChannelAccount,
-  createMember,
   createTenantFixture,
+  fileOrder,
   insertConversation,
   insertUser,
-  simulatorRef,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
@@ -23,11 +22,9 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import tenantRoutes from "../src/routes/tenants.ts";
-import simulatorRoutes from "../src/routes/simulator.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { webhookRequest } from "./helpers/turn.ts";
 import { signedWebhookRequest } from "./helpers/webhook.ts";
-import type { ConversationRef } from "@vendeya/types";
 
 describe("foreign key enforcement", () => {
   let tenant: TenantFixture;
@@ -167,18 +164,11 @@ describe("foreign key enforcement", () => {
 
     it("is refused on an order", async () => {
       await expect(
-        run(
-          `INSERT INTO orders
-               (id, tenant_id, channel_account_id, order_number, conversation_phone,
-                client_name, client_dni, products, total_amount, delivery_address)
-             VALUES (?, ?, ?, ?, '51900000016', 'Ana', '12345678', '[]', 100, 'Lima')`,
-          [
-            crypto.randomUUID(),
-            tenant.tenantId,
-            other.channelAccountId,
-            `A-${crypto.randomUUID().slice(0, 8)}`,
-          ],
-        ),
+        fileOrder({
+          tenantId: tenant.tenantId,
+          channelAccountId: other.channelAccountId,
+          phoneNumber: "51900000016",
+        }),
       ).rejects.toThrow();
     });
   });
@@ -275,77 +265,36 @@ describe("foreign key enforcement", () => {
     ).toEqual({ c: 0 });
   });
 
-  // Every table referencing conversations must specify ON DELETE CASCADE so
-  // deleting a conversation doesn't leave orphaned rows.
-  describe("deleting a conversation that has an order behind it", () => {
-    const CUSTOMER = "51900000020";
+  it("cascades a tenant delete through its orders and customers", async () => {
+    const scratch = await createTenantFixture("fk-cascade-orders");
+    await fileOrder(scratch.ref("51900000003"));
 
-    async function insertOrder(ref: ConversationRef): Promise<string> {
-      const id = crypto.randomUUID();
-      await run(
-        `INSERT INTO orders
-           (id, tenant_id, channel_account_id, order_number, conversation_phone,
-            client_name, client_dni, products, total_amount, delivery_address)
-         VALUES (?, ?, ?, ?, ?, 'Ana', '12345678', '[]', 100, 'Lima')`,
-        [
-          id,
-          ref.tenantId,
-          ref.channelAccountId,
-          `A-${crypto.randomUUID().slice(0, 8)}`,
-          ref.phoneNumber,
-        ],
-      );
-      return id;
+    await run("DELETE FROM tenants WHERE id = ?", [scratch.tenantId]);
+
+    for (const table of ["orders", "order_lines", "customers"]) {
+      expect(
+        await getOne(`SELECT COUNT(*) as c FROM ${table} WHERE tenant_id = ?`, [
+          scratch.tenantId,
+        ]),
+      ).toEqual({ c: 0 });
     }
+  });
 
-    async function orderCount(id: string): Promise<number> {
-      return (
-        (await getOne("SELECT COUNT(*) as c FROM orders WHERE id = ?", [
-          id,
-        ])) as {
-          c: number;
-        }
-      ).c;
-    }
+  /** An order belongs to its customer, so it outlives the thread it came from. */
+  it("keeps the order when its conversation is deleted", async () => {
+    const ref = tenant.ref("51900000020");
+    await insertConversation(ref);
+    const order = await fileOrder(ref);
 
-    it("takes the order with it rather than failing", async () => {
-      const ref = tenant.ref(CUSTOMER);
-      await insertConversation(ref);
-      const orderId = await insertOrder(ref);
+    await run(
+      `DELETE FROM conversations
+         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
+      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    );
 
-      await expect(
-        run(
-          `DELETE FROM conversations
-             WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-          [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-        ),
-      ).resolves.toBeDefined();
-
-      expect(await orderCount(orderId)).toBe(0);
-    });
-
-    it("lets the simulator delete a conversation that reached checkout", async () => {
-      const ref = await simulatorRef(tenant.tenantId, CUSTOMER);
-      await insertConversation(ref, { isSimulation: true });
-      const orderId = await insertOrder(ref);
-
-      const admin = await createMember(tenant, "admin");
-      const token = generateSessionToken();
-      await createSession(token, admin.userId, tenant.tenantId);
-
-      const app = new Hono();
-      app.use("/api/*", requireAuth);
-      app.route("/api/simulator", simulatorRoutes);
-
-      const response = await app.request(
-        `/api/simulator/conversations/${CUSTOMER}`,
-        { method: "DELETE", headers: { Cookie: `session=${token}` } },
-      );
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ status: "deleted" });
-      expect(await orderCount(orderId)).toBe(0);
-    });
+    expect(
+      await getOne("SELECT COUNT(*) as c FROM orders WHERE id = ?", [order.id]),
+    ).toEqual({ c: 1 });
   });
 
   describe("routes that check before the constraint does", () => {
@@ -490,12 +439,7 @@ describe("the composite reference itself", () => {
       }
     }
 
-    expect(referencing.sort()).toEqual([
-      "messages",
-      "orders",
-      "outbox",
-      "unread_alerts",
-    ]);
+    expect(referencing.sort()).toEqual(["messages", "outbox", "unread_alerts"]);
 
     for (const table of referencing) {
       const keys = (

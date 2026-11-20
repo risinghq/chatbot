@@ -4,6 +4,15 @@ import { InvalidPagingError } from "../lib/http.ts";
 import { createLogger } from "../lib/logger.ts";
 import { InvalidDateError } from "../db/query.ts";
 import { DuplicateSkuError } from "../domains/catalog/variants.ts";
+import {
+  CustomerHasOrdersError,
+  DuplicatePhoneError,
+} from "../domains/customers/index.ts";
+import {
+  DuplicateNameError,
+  OrderInputError,
+  OrderStateError,
+} from "../domains/orders/index.ts";
 import { InsufficientStockError } from "../domains/stock/index.ts";
 import { TenantScopeRequiredError } from "../platform/auth/scope.ts";
 import { NO_ACTIVE_TENANT } from "./auth.ts";
@@ -26,9 +35,17 @@ export async function errorHandler(err: Error, c: Context) {
     return c.json({ error: err.message }, 400);
   }
 
+  if (err instanceof OrderInputError) {
+    return c.json({ error: err.message }, 400);
+  }
+
   if (
     err instanceof DuplicateSkuError ||
-    err instanceof InsufficientStockError
+    err instanceof InsufficientStockError ||
+    err instanceof OrderStateError ||
+    err instanceof DuplicateNameError ||
+    err instanceof DuplicatePhoneError ||
+    err instanceof CustomerHasOrdersError
   ) {
     return c.json({ error: err.message }, 409);
   }

@@ -48,6 +48,17 @@ export function queryLimit(c: Context, defaultLimit: number): number {
   return value;
 }
 
+/** The request body when it is a JSON object, or null for anything else. */
+export async function jsonObject(
+  c: Context,
+): Promise<Record<string, unknown> | null> {
+  const body: unknown = await c.req.json().catch(() => null);
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  return body as Record<string, unknown>;
+}
+
 /** The `offset` query value, or 0 when it is absent or empty. */
 export function queryOffset(c: Context): number {
   const raw = c.req.query("offset");

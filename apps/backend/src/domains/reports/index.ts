@@ -4,6 +4,8 @@ import {
   tenantPredicate,
 } from "../../db/query.ts";
 import * as XLSX from "xlsx";
+import type { OrderStatus, PaymentState } from "@vendeya/types";
+import { OrderReads } from "../orders/index.ts";
 import { getAll, getOne } from "../../db/index.ts";
 
 type ActivityReportParams = {
@@ -22,8 +24,22 @@ type OrderReportParams = {
   tenantId: string | null;
   startDate?: Date;
   endDate?: Date;
-  status?: string;
-  assignedAgent?: string;
+  status?: OrderStatus;
+};
+
+const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  pending: "Pendiente",
+  confirmed: "Confirmado",
+  packed: "Empacado",
+  shipped: "Enviado",
+  delivered: "Entregado",
+  cancelled: "Cancelado",
+};
+
+const PAYMENT_STATE_LABELS: Record<PaymentState, string> = {
+  unpaid: "Sin pagar",
+  partial: "Pago parcial",
+  paid: "Pagado",
 };
 
 export const ReportService = {
@@ -207,112 +223,34 @@ export const ReportService = {
   },
 
   generateOrderReport: async (params: OrderReportParams) => {
-    const { tenantId, startDate, endDate, status, assignedAgent } = params;
-
-    const conditions: string[] = [];
-    const values: any[] = [];
-
-    conditions.push(tenantPredicate(tenantId));
-    if (tenantId) values.push(tenantId);
-
-    if (startDate) {
-      conditions.push("created_at >= ?");
-      values.push(startDate.getTime());
-    }
-
-    if (endDate) {
-      conditions.push("created_at <= ?");
-      values.push(endDate.getTime());
-    }
-
-    if (status) {
-      conditions.push("status = ?");
-      values.push(status);
-    }
-
-    if (assignedAgent) {
-      conditions.push("assigned_agent = ?");
-      values.push(assignedAgent);
-    }
-
-    const rows = await getAll<Record<string, unknown>>(
-      `
-        SELECT 
-          order_number as "Número de Orden",
-          client_name as "Cliente",
-          client_dni as "DNI",
-          conversation_phone as "Teléfono",
-          total_amount as "Monto Total",
-          delivery_address as "Dirección",
-          delivery_reference as "Referencia",
-          status as "Estado",
-          assigned_agent as "Agente",
-          supervisor_notes as "Notas Supervisor",
-          calidda_notes as "Notas Calidda",
-          created_at as "Fecha Creación",
-          updated_at as "Última Actualización"
-        FROM orders
-        WHERE ${conditions.join(" AND ")}
-        ORDER BY created_at DESC
-      `,
-      values,
-    );
-
-    const statusMap: Record<string, string> = {
-      pending: "Pendiente",
-      supervisor_approved: "Aprobado Supervisor",
-      supervisor_rejected: "Rechazado Supervisor",
-      calidda_approved: "Aprobado Calidda",
-      calidda_rejected: "Rechazado Calidda",
-      delivered: "Entregado",
-    };
-
-    const transformedRows = rows.map((row, index) => {
-      const formatTimestamp = (ts: any) => {
-        const timestamp = Number(ts);
-        return !Number.isNaN(timestamp)
-          ? new Date(timestamp).toLocaleString("es-PE", {
-              timeZone: "America/Lima",
-            })
-          : "";
-      };
-
-      return {
-        "#": index + 1,
-        "Número de Orden": row["Número de Orden"],
-        Cliente: row.Cliente,
-        DNI: row.DNI,
-        Teléfono: row.Teléfono,
-        "Monto Total": `S/ ${Number(row["Monto Total"]).toFixed(2)}`,
-        Dirección: row.Dirección || "",
-        Referencia: row.Referencia || "",
-        Estado: statusMap[row.Estado as string] || row.Estado,
-        Agente: row.Agente || "",
-        "Notas Supervisor": row["Notas Supervisor"] || "",
-        "Notas Calidda": row["Notas Calidda"] || "",
-        "Fecha Creación": formatTimestamp(row["Fecha Creación"]),
-        "Última Actualización": formatTimestamp(row["Última Actualización"]),
-      };
+    const { tenantId, startDate, endDate, status } = params;
+    const orders = await OrderReads.list(tenantId, {
+      status,
+      startMs: startDate?.getTime(),
+      endMs: endDate?.getTime(),
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(transformedRows);
+    const soles = (cents: number) => `S/ ${(cents / 100).toFixed(2)}`;
+    const rows = orders.map((order) => ({
+      Pedido: order.number,
+      Cliente: order.customer_name,
+      Teléfono: order.customer_phone ?? "",
+      Estado: ORDER_STATUS_LABELS[order.status],
+      Pago: PAYMENT_STATE_LABELS[order.payment_state],
+      Subtotal: soles(order.subtotal_cents),
+      Envío: soles(order.delivery_fee_cents),
+      Total: soles(order.total_cents),
+      Pagado: soles(order.paid_cents),
+      Origen: order.source === "assistant" ? "Asistente" : "Equipo",
+      Fecha: new Date(order.created_at).toLocaleString("es-PE", {
+        timeZone: "America/Lima",
+      }),
+    }));
 
-    worksheet["!cols"] = [
-      { wch: 5 }, // #
-      { wch: 18 }, // Número de Orden
-      { wch: 25 }, // Cliente
-      { wch: 12 }, // DNI
-      { wch: 15 }, // Teléfono
-      { wch: 12 }, // Monto Total
-      { wch: 35 }, // Dirección
-      { wch: 25 }, // Referencia
-      { wch: 18 }, // Estado
-      { wch: 20 }, // Agente
-      { wch: 30 }, // Notas Supervisor
-      { wch: 30 }, // Notas Calidda
-      { wch: 20 }, // Fecha Creación
-      { wch: 20 }, // Última Actualización
-    ];
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet["!cols"] = [10, 25, 15, 12, 10, 12, 10, 12, 12, 10, 20].map(
+      (wch) => ({ wch }),
+    );
 
     const workbook = XLSX.utils.book_new();
     const sheetName = startDate

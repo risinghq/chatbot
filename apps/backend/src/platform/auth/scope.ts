@@ -52,8 +52,9 @@ export function hasRole(scope: AuthScope, allowed: string[]): boolean {
 /**
  * The sales agent whose assignments bound this caller, or null when the role
  * sees the whole tenant. The agent reaches conversations assigned to them or
- * to nobody, and only orders from conversations assigned to them. An operator
- * is admin (see `sessionRole`), so an agent membership does not narrow them.
+ * to nobody, and the orders they created or whose conversation is assigned to
+ * them. An operator is admin (see `sessionRole`), so an agent membership does
+ * not narrow them.
  */
 export function assignedAgentScope(scope: AuthScope): string | null {
   return sessionRole(scope) === "sales_agent" ? scope.userId : null;

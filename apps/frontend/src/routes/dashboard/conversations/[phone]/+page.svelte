@@ -33,6 +33,7 @@ import Textarea from "#lib/components/ui/textarea.svelte";
 import MessageThread from "#lib/components/conversations/message-thread.svelte";
 import MessageInput from "#lib/components/conversations/message-input.svelte";
 import { phaseLabel } from "#lib/utils/conversation-phase.js";
+import { orderLabel, orderStatusLabel } from "#lib/utils/order-status.js";
 import type { PageData } from "./$types";
 
 interface Props {
@@ -45,8 +46,7 @@ let conversation = $state<Conversation | null>(null);
 let messages = $state<ConversationMessage[]>([]);
 let messageText = $state("");
 let saving = $state(false);
-let order = $state<Order | null>(null);
-let creatingOrder = $state(false);
+const order = $derived<Order | null>(data.order ?? null);
 let uploadingContract = $state(false);
 let contractFile: File | null = $state(null);
 let audioFile: File | null = $state(null);
@@ -61,7 +61,6 @@ let deliveryReference = $state("");
 $effect(() => {
   conversation = data.conversation;
   messages = data.messages || [];
-  order = data.order || null;
   // Reset form fields when conversation changes
   agentNotes = data.conversation?.agent_notes || "";
   saleStatus = data.conversation?.sale_status || "pending";
@@ -216,50 +215,6 @@ async function handleUploadContract() {
     toast.error("Error al subir contrato");
   } finally {
     uploadingContract = false;
-  }
-}
-
-async function createOrder() {
-  if (!conversation) return;
-  creatingOrder = true;
-
-  try {
-    // Parse products from products_interested if it exists
-    let productsArray = [];
-    try {
-      productsArray = JSON.parse(conversation.products_interested || "[]");
-    } catch {
-      productsArray = [];
-    }
-
-    // Calculate total (if products have price info, otherwise 0)
-    const totalAmount = productsArray.reduce((sum: number, p: any) => {
-      return sum + (p.price || 0);
-    }, 0);
-
-    const newOrder = await fetchApi<Order>("/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationPhone: conversation.phone_number,
-        channelAccountId: conversation.channel_account_id,
-        clientName: conversation.client_name || "Sin nombre",
-        clientDni: conversation.dni || "",
-        products: conversation.products_interested,
-        totalAmount: totalAmount,
-        deliveryAddress: deliveryAddress,
-        deliveryReference: deliveryReference,
-      }),
-    });
-
-    order = newOrder;
-    toast.success(`Orden creada: ${newOrder.order_number}`);
-    goto(`/dashboard/orders/${newOrder.id}`);
-  } catch (error) {
-    console.error("Failed to create order:", error);
-    toast.error("Error al crear la orden");
-  } finally {
-    creatingOrder = false;
   }
 }
 
@@ -431,24 +386,15 @@ function goBack() {
 					</div>
 				{/if}
 
-				{#if saleStatus === "confirmed" && !order && deliveryAddress}
-					<div class="p-4">
-						<p class="mb-3 text-base text-fg-muted">La venta está confirmada. Puedes crear una orden para este cliente.</p>
-						<Button variant="secondary" onclick={createOrder} disabled={creatingOrder} class="w-full">
-							{creatingOrder ? "Creando…" : "Crear orden"}
-						</Button>
-					</div>
-				{/if}
-
 				{#if order}
 					<div class="p-4">
-						{@render sectionHeading("Orden creada")}
+						{@render sectionHeading("Último pedido")}
 						<a
 							href="/dashboard/orders/{order.id}"
 							class="flex items-center justify-between rounded-md border border-border px-3 py-2 hover:bg-hover"
 						>
-							<span class="font-mono text-base text-fg">{order.order_number}</span>
-							<span class="flex items-center gap-1 text-sm text-fg-muted">Ver orden <Icon name="arrow" class="size-3.5" /></span>
+							<span class="font-mono text-base text-fg">{orderLabel(order.number)}</span>
+							<span class="flex items-center gap-1 text-sm text-fg-muted">{orderStatusLabel(order.status)} <Icon name="arrow" class="size-3.5" /></span>
 						</a>
 					</div>
 				{/if}

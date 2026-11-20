@@ -228,6 +228,120 @@ describe("vendeya", () => {
     expect(h.sent.map((s) => s.method)).toEqual(["GET"]);
   });
 
+  test("orders create names lines by SKU and ships when given an address", async () => {
+    const h = harness({
+      env: AUTHED,
+      reply: (sent) =>
+        sent.method === "GET"
+          ? { body: [{ variant_id: "v1", sku: "POLO=M" }] }
+          : { status: 201, body: { id: "o1" } },
+    });
+    const code = await main(
+      [
+        "orders",
+        "create",
+        "--phone",
+        "51987654321",
+        "--name",
+        "Ana",
+        "POLO=M=2",
+        "--zone",
+        "z1",
+        "--address",
+        "Av. Arequipa 123",
+      ],
+      h.io,
+    );
+    expect(code).toBe(0);
+    expect(h.sent[1]).toMatchObject({
+      method: "POST",
+      url: "http://local/api/orders",
+      body: {
+        customer: { phone: "51987654321", name: "Ana" },
+        channel_account_id: null,
+        lines: [{ variant_id: "v1", quantity: 2 }],
+        shipment: { address_line: "Av. Arequipa 123", zone_id: "z1" },
+      },
+    });
+  });
+
+  test("orders create refuses a zone without an address, and an unknown SKU", async () => {
+    const h = harness({ env: AUTHED, reply: () => ({ body: [] }) });
+    const base = ["orders", "create", "--phone", "519", "--name", "Ana"];
+    expect(await main([...base, "X=1", "--zone", "z1"], h.io)).toBe(2);
+    expect(await main([...base, "NOPE=1"], h.io)).toBe(2);
+    expect(h.sent.map((s) => s.method)).toEqual(["GET"]);
+  });
+
+  test("orders status needs --yes only to cancel", async () => {
+    const h = harness({ env: AUTHED });
+    expect(await main(["orders", "status", "o1", "packed"], h.io)).toBe(0);
+    expect(await main(["orders", "status", "o1", "cancelled"], h.io)).toBe(2);
+    expect(
+      await main(["orders", "status", "o1", "cancelled", "--yes"], h.io),
+    ).toBe(0);
+    expect(h.sent.map((s) => [s.url, s.body])).toEqual([
+      ["http://local/api/orders/o1/transition", { status: "packed" }],
+      ["http://local/api/orders/o1/transition", { status: "cancelled" }],
+    ]);
+  });
+
+  test("payments add uses a configured method by name, or keeps the name given", async () => {
+    const h = harness({
+      env: AUTHED,
+      reply: (sent) =>
+        sent.method === "GET"
+          ? { body: [{ id: "pm1", name: "Yape" }] }
+          : { status: 201, body: { id: "p1" } },
+    });
+    expect(
+      await main(["payments", "add", "o1", "49.90", "--method", "yape"], h.io),
+    ).toBe(0);
+    expect(
+      await main(
+        [
+          "payments",
+          "add",
+          "o1",
+          "10",
+          "--method",
+          "Efectivo",
+          "--reference",
+          "op-9",
+        ],
+        h.io,
+      ),
+    ).toBe(0);
+    const posts = h.sent.filter((s) => s.method === "POST");
+    expect(posts.map((s) => [s.url, s.body])).toEqual([
+      [
+        "http://local/api/orders/o1/payments",
+        { method_id: "pm1", amount_cents: 4990, reference: null },
+      ],
+      [
+        "http://local/api/orders/o1/payments",
+        { method_name: "Efectivo", amount_cents: 1000, reference: "op-9" },
+      ],
+    ]);
+  });
+
+  test("payments confirm posts to the payment of the order", async () => {
+    const h = harness({ env: AUTHED });
+    expect(await main(["payments", "confirm", "o1", "p1"], h.io)).toBe(0);
+    expect(h.sent[0]).toMatchObject({
+      method: "POST",
+      url: "http://local/api/orders/o1/payments/p1/confirm",
+    });
+  });
+
+  test("zones add sends its fee in cents", async () => {
+    const h = harness({ env: AUTHED });
+    expect(
+      await main(["zones", "add", "10.50", "--name", "Lima centro"], h.io),
+    ).toBe(0);
+    expect(h.sent[0]?.body).toEqual({ name: "Lima centro", fee_cents: 1050 });
+  });
+
   test("images add uploads each file as multipart, without a JSON type", async () => {
     const h = harness({ env: AUTHED });
     const dir = await mkdtemp(path.join(configDir, "img-"));

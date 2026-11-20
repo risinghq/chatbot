@@ -5,6 +5,7 @@ import type { ConversationRef } from "@vendeya/types";
 import {
   createMember,
   createTenantFixture,
+  fileOrder,
   insertConversation,
   type TenantFixture,
   setChannelStatus,
@@ -18,12 +19,7 @@ import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
 import { canAccessTenant } from "../src/platform/auth/scope.ts";
-import {
-  getOrders,
-  getOrderById,
-  getOrderByConversation,
-} from "../src/domains/orders/read.ts";
-import { createOrder } from "../src/domains/orders/write.ts";
+import { OrderReads } from "../src/domains/orders/index.ts";
 import {
   listConversations,
   lookupConversation,
@@ -178,32 +174,19 @@ describe("tenant isolation", () => {
       await insertConversation(alphaRef);
       await insertConversation(betaRef);
 
-      const alphaOrder = await createOrder({
-        ref: alphaRef,
-        clientName: "Alpha Client",
-        clientDni: "12345678",
-        products: [
-          { productId: "p1", name: "Cocina", price: 100, quantity: 1 },
-        ],
-        totalAmount: 100,
-        deliveryAddress: "Lima",
-      });
+      const alphaOrder = await fileOrder(alphaRef, { name: "Alpha Client" });
+      const betaOrder = await fileOrder(betaRef, { name: "Beta Client" });
 
-      const betaOrder = await createOrder({
-        ref: betaRef,
-        clientName: "Beta Client",
-        clientDni: "87654321",
-        products: [{ productId: "p2", name: "Terma", price: 200, quantity: 1 }],
-        totalAmount: 200,
-        deliveryAddress: "Callao",
-      });
-
-      expect((await getOrders(alpha.tenantId)).map((o) => o.id)).toEqual([
+      expect(
+        (await OrderReads.list(alpha.tenantId, {})).map((o) => o.id),
+      ).toEqual([alphaOrder.id]);
+      expect(await OrderReads.detail(alpha.tenantId, betaOrder.id)).toBeNull();
+      expect((await OrderReads.latestForConversation(alphaRef))?.id).toBe(
         alphaOrder.id,
-      ]);
-      expect(await getOrderById(alpha.tenantId, betaOrder.id)).toBeNull();
-      expect((await getOrderByConversation(alphaRef))?.id).toBe(alphaOrder.id);
-      expect((await getOrderByConversation(betaRef))?.id).toBe(betaOrder.id);
+      );
+      expect((await OrderReads.latestForConversation(betaRef))?.id).toBe(
+        betaOrder.id,
+      );
     });
 
     it("does not return another tenant's catalog", async () => {

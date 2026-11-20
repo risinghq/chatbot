@@ -34,6 +34,8 @@ export type StockMovement = {
   kind: StockMovementKind;
   quantity: number;
   note: string | null;
+  /** The order a reserve, release or ship belongs to. */
+  order_id: string | null;
   created_by: string | null;
   created_at: number;
 };

@@ -1,7 +1,9 @@
-import type { ConversationRef } from "@vendeya/types";
+import type { ConversationRef, OrderDetail } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
 import { run } from "../../src/db/index.ts";
 import { ChannelAccountService } from "../../src/domains/channels/accounts.ts";
+import { CustomerService } from "../../src/domains/customers/index.ts";
+import { OrderWrites } from "../../src/domains/orders/index.ts";
 import { TenantSecrets } from "../../src/domains/settings/tenant-secrets.ts";
 import {
   SystemSettings,
@@ -243,4 +245,32 @@ export async function setChannelStatus(
     status,
     channelAccountId,
   ]);
+}
+
+/**
+ * Files a one-line order from `ref`'s phone. Without `createdBy` it is the
+ * assistant's order, as on a confirmed purchase; with it, a staff member's.
+ */
+export async function fileOrder(
+  ref: ConversationRef,
+  options: { name?: string; amountCents?: number; createdBy?: string } = {},
+): Promise<OrderDetail> {
+  const customer = await CustomerService.upsertByPhone(ref.tenantId, {
+    phone: ref.phoneNumber,
+    name: options.name ?? "Cliente de prueba",
+  });
+  return OrderWrites.create({
+    tenantId: ref.tenantId,
+    customer,
+    channelAccountId: ref.channelAccountId,
+    source: options.createdBy ? "staff" : "assistant",
+    createdBy: options.createdBy ?? null,
+    lines: [
+      {
+        name: "Producto de prueba",
+        quantity: 1,
+        unitPriceCents: options.amountCents ?? 10000,
+      },
+    ],
+  });
 }

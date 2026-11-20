@@ -14,6 +14,7 @@ import type { Bundle } from "@vendeya/types";
 import {
   addChannelAccount,
   createTenantFixture,
+  fileOrder,
   insertConversation,
   insertTenant,
   insertUser,
@@ -56,7 +57,6 @@ import { AssetService } from "../src/domains/assets/index.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
-import { createOrder } from "../src/domains/orders/write.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 
@@ -365,13 +365,8 @@ describe("HTTP authorization", () => {
   });
 
   it("does not leak another tenant's orders", async () => {
-    const betaOrder = await createOrder({
-      ref: beta.ref(SHARED_PHONE),
-      clientName: "Beta Client",
-      clientDni: "87654321",
-      products: [{ productId: "p1", name: "Terma", price: 200, quantity: 1 }],
-      totalAmount: 200,
-      deliveryAddress: "Callao",
+    const betaOrder = await fileOrder(beta.ref(SHARED_PHONE), {
+      name: "Beta Client",
     });
 
     expect(await getJson<unknown[]>("/api/orders", alphaAdmin)).toEqual([]);
@@ -1065,40 +1060,32 @@ describe("HTTP authorization", () => {
       ).toEqual({ order: null });
     });
 
-    it("refuses to create an order without the channel account", async () => {
-      const body = {
-        conversationPhone: SHARED_PHONE,
-        clientName: "Alpha Client",
-        clientDni: "12345678",
-        products: [],
-        totalAmount: 100,
-        deliveryAddress: "Lima",
-      };
+    /**
+     * An order belongs to a customer, not a thread, so it needs no number to
+     * be unambiguous. A number it names must be the business's own.
+     */
+    it("records the number an order names, and refuses another business's", async () => {
+      const post = (channelAccountId: string) =>
+        app.request("/api/orders", {
+          method: "POST",
+          headers: {
+            Cookie: alphaAdmin.cookie,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            customer: { name: "Alpha Client", phone: SHARED_PHONE },
+            channel_account_id: channelAccountId,
+            lines: [{ name: "Terma", quantity: 1, unit_price_cents: 10000 }],
+            shipment: null,
+          }),
+        });
 
-      const ambiguous = await app.request("/api/orders", {
-        method: "POST",
-        headers: {
-          Cookie: alphaAdmin.cookie,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      expect(ambiguous.status).toBe(409);
-
-      const named = await app.request("/api/orders", {
-        method: "POST",
-        headers: {
-          Cookie: alphaAdmin.cookie,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...body,
-          channelAccountId: second.channelAccountId,
-        }),
-      });
+      const named = await post(second.channelAccountId);
       expect(named.status).toBe(201);
       const created = (await named.json()) as { channel_account_id: string };
       expect(created.channel_account_id).toBe(second.channelAccountId);
+
+      expect((await post(beta.channelAccountId)).status).toBe(404);
     });
 
     it("a still-unambiguous contact needs no channel account", async () => {
@@ -1119,17 +1106,15 @@ describe("HTTP authorization", () => {
      * order the API returns and follows its link the way a click would.
      */
     it("the order page links to the thread the order belongs to", async () => {
-      const order = await createOrder({
-        ref: second.ref(SHARED_PHONE),
-        clientName: "Alpha Client, second number",
-        clientDni: "12345678",
-        products: [{ productId: "p1", name: "Terma", price: 200, quantity: 1 }],
-        totalAmount: 200,
-        deliveryAddress: "Lima",
+      const order = await fileOrder(second.ref(SHARED_PHONE), {
+        name: "Alpha Client, second number",
       });
 
       const page = await renderComponent(ORDER_PAGE, {
-        data: { order: await getJson(`/api/orders/${order.id}`, alphaAdmin) },
+        data: {
+          order: await getJson(`/api/orders/${order.id}`, alphaAdmin),
+          methods: [],
+        },
       });
       const link = /href="(\/dashboard\/conversations\/[^"]+)"/.exec(page)?.[1];
       expect(link).toBeDefined();
@@ -1183,12 +1168,9 @@ describe("HTTP authorization", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          conversationPhone: SHARED_PHONE,
-          clientName: "Alpha Client",
-          clientDni: "12345678",
-          products: [],
-          totalAmount: 100,
-          deliveryAddress: "Lima",
+          customer: { name: "Alpha Client", phone: SHARED_PHONE },
+          lines: [{ name: "Terma", quantity: 1, unit_price_cents: 10000 }],
+          shipment: null,
         }),
       });
 

@@ -11,7 +11,7 @@ const sections = $derived.by(() => {
   const work: NavItem[] = [
     { href: "/dashboard", label: "Inicio", icon: "home" },
     { href: "/dashboard/conversations", label: "Conversaciones", icon: "chat" },
-    { href: "/dashboard/orders", label: "Órdenes", icon: "bag" },
+    { href: "/dashboard/orders", label: "Pedidos", icon: "bag" },
     { href: "/dashboard/catalog", label: "Catálogo", icon: "box" },
     { href: "/dashboard/inventario", label: "Inventario", icon: "warehouse" },
   ];

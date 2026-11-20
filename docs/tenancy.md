@@ -72,10 +72,19 @@ that tenant. Deactivating the account clears them in every tenant. The
 conversations go back to nobody, and a member who is added again or an account
 that is turned back on does not get them back. The assignment states and who
 changes them are in [Architecture](./architecture.md#who-holds-a-conversation).
-Order status changes allowed per role are in
-[`routes/orders.ts`](../apps/backend/src/routes/orders.ts). Role checks are
-`requireRole` in [`middleware/auth.ts`](../apps/backend/src/middleware/auth.ts)
-and the route files.
+Orders split three ways, in
+[`routes/orders.ts`](../apps/backend/src/routes/orders.ts):
+
+| Action                                                 | Roles                                       |
+| ------------------------------------------------------ | ------------------------------------------- |
+| Take an order, record a payment, edit the shipment     | admin, developer, supervisor, `sales_agent` |
+| Move an order to confirmed, packed, shipped, delivered | admin, developer, supervisor                |
+| Cancel an order, confirm or reject a payment           | admin, supervisor                           |
+
+Moving an order moves its stock, and cancelling or deciding a payment changes
+what the business is owed. Role checks are `requireRole` in
+[`middleware/auth.ts`](../apps/backend/src/middleware/auth.ts) and the route
+files.
 
 Authorization reads the membership role; a user has no role of their own. A user
 can belong to several tenants with a different role in each. Availability for

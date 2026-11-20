@@ -1,4 +1,4 @@
-import type { Order, OrderMetrics } from "@vendeya/types";
+import type { OrderMetrics, OrderSummary } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ url, cookies, fetch }) => {
@@ -7,16 +7,13 @@ export const load: PageServerLoad = async ({ url, cookies, fetch }) => {
     return { orders: [], metrics: null };
   }
 
-  const status = url.searchParams.get("status") || "";
-  const startDate = url.searchParams.get("startDate") || "";
-  const endDate = url.searchParams.get("endDate") || "";
+  const params = new URLSearchParams();
+  for (const key of ["status", "startDate", "endDate"]) {
+    const value = url.searchParams.get(key);
+    if (value) params.append(key, value);
+  }
 
   try {
-    const params = new URLSearchParams();
-    if (status) params.append("status", status);
-    if (startDate) params.append("startDate", startDate);
-    if (endDate) params.append("endDate", endDate);
-
     const [ordersRes, metricsRes] = await Promise.all([
       fetch(`/api/orders?${params.toString()}`, {
         headers: { cookie: `session=${sessionToken}` },
@@ -26,7 +23,7 @@ export const load: PageServerLoad = async ({ url, cookies, fetch }) => {
       }),
     ]);
 
-    const orders = ordersRes.ok ? await ordersRes.json<Order[]>() : [];
+    const orders = ordersRes.ok ? await ordersRes.json<OrderSummary[]>() : [];
     const metrics = metricsRes.ok
       ? await metricsRes.json<OrderMetrics>()
       : null;
