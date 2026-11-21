@@ -115,12 +115,7 @@ describe("a tenant's Cálidda login", () => {
     );
     const result = await handler.execute(DNI, tenant.ref("51999999999"));
 
-    expect(result.ok).toBe(true);
-    if (result.ok && result.value.type === "eligibility_result") {
-      expect(result.value.status).toBe("system_outage");
-    } else {
-      throw new Error("Expected an eligibility_result");
-    }
+    expect(result).toEqual({ ok: true, value: { status: "system_outage" } });
   });
 });
 

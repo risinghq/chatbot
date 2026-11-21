@@ -14,8 +14,6 @@ import {
 import { webhookRequest } from "./helpers/turn.ts";
 import { signedWebhookRequest } from "./helpers/webhook.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
-import { BundleService } from "../src/domains/catalog/bundles.ts";
-import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
 import { canAccessTenant } from "../src/platform/auth/scope.ts";
@@ -34,9 +32,7 @@ import {
 } from "../src/intelligence/tracker.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { MembershipService } from "../src/domains/tenants/index.ts";
-import { seedPeriods } from "../src/db/seeds/periods.ts";
 import { seedProducts } from "../src/db/seeds/products.ts";
-import { seedBundles } from "../src/db/seeds/bundles.ts";
 
 /**
  * The same customer phone number, messaging two different businesses. The
@@ -165,65 +161,6 @@ describe("tenant isolation", () => {
     });
 
     it("does not return another tenant's catalog", async () => {
-      const alphaPeriod = await PeriodService.create({
-        tenantId: alpha.tenantId,
-        name: "Septiembre",
-        year_month: "2026-09",
-        created_by: null,
-      });
-      // The same period name in another tenant must not collide.
-      const betaPeriod = await PeriodService.create({
-        tenantId: beta.tenantId,
-        name: "Septiembre",
-        year_month: "2026-09",
-        created_by: null,
-      });
-
-      expect(alphaPeriod.id).not.toBe(betaPeriod.id);
-      expect(
-        await PeriodService.getById(alpha.tenantId, betaPeriod.id),
-      ).toBeNull();
-      expect(await PeriodService.getAll(alpha.tenantId)).toHaveLength(1);
-
-      await PeriodService.updateStatus(
-        alpha.tenantId,
-        alphaPeriod.id,
-        "active",
-      );
-      await PeriodService.updateStatus(beta.tenantId, betaPeriod.id, "active");
-
-      // Publishing one tenant's period must not archive another's.
-      expect((await PeriodService.getActive(alpha.tenantId))?.id).toBe(
-        alphaPeriod.id,
-      );
-      expect((await PeriodService.getActive(beta.tenantId))?.id).toBe(
-        betaPeriod.id,
-      );
-
-      const betaBundle = await BundleService.create({
-        id: `bundle-${crypto.randomUUID()}`,
-        tenantId: beta.tenantId,
-        period_id: betaPeriod.id,
-        segment: "gaso",
-        name: "Beta Combo",
-        price: 500,
-        primary_category: "cocinas",
-        categories_json: "[]",
-        image_id: "beta-image",
-        composition_json: '{"fixed":[],"choices":[]}',
-        installments_json: "[]",
-        created_by: null,
-      });
-
-      expect(
-        await BundleService.getById(alpha.tenantId, betaBundle.id),
-      ).toBeNull();
-      expect(await BundleService.getAvailable(alpha.tenantId)).toHaveLength(0);
-      expect(await BundleService.getAvailable(beta.tenantId)).toHaveLength(1);
-      expect(
-        await BundleService.getByPeriod(alpha.tenantId, betaPeriod.id),
-      ).toHaveLength(0);
-
       await ProductService.create({
         tenantId: beta.tenantId,
         name: "Beta Product",
@@ -380,20 +317,11 @@ describe("tenant isolation", () => {
     });
   });
 
-  /**
-   * `products.id` is a global primary key, so the catalog seeds must give each
-   * tenant ids of its own.
-   */
+  /** SKUs are unique within a business, so two businesses can share them. */
   describe("seeding a second business", () => {
-    async function seedCatalog(tenantId: string) {
-      await seedPeriods(tenantId);
-      await seedProducts(tenantId);
-      await seedBundles(tenantId);
-    }
-
-    it("gives each tenant its own copy of the base catalog", async () => {
-      await seedCatalog(alpha.tenantId);
-      await seedCatalog(beta.tenantId);
+    it("gives each tenant its own copy of the demo catalog", async () => {
+      await seedProducts(alpha.tenantId);
+      await seedProducts(beta.tenantId);
 
       const alphaProducts = await ProductService.getAll(alpha.tenantId);
       const betaProducts = await ProductService.getAll(beta.tenantId);
@@ -403,26 +331,6 @@ describe("tenant isolation", () => {
 
       const alphaIds = new Set(alphaProducts.map((p) => p.id));
       expect(betaProducts.some((p) => alphaIds.has(p.id))).toBe(false);
-
-      const alphaBundles = await BundleService.getAvailable(alpha.tenantId);
-      expect(alphaBundles.length).toBeGreaterThan(0);
-      expect(await BundleService.getAvailable(beta.tenantId)).toHaveLength(
-        alphaBundles.length,
-      );
-    });
-
-    it("keeps each bundle's composition pointing at its own tenant's products", async () => {
-      await seedCatalog(alpha.tenantId);
-      await seedCatalog(beta.tenantId);
-
-      // getActiveBrands joins composition_json back to `products` inside the
-      // tenant, so brands only come out if the snapshotted ids are that
-      // tenant's own.
-      const brands = await ProductService.getActiveBrands(beta.tenantId);
-      expect(brands.length).toBeGreaterThan(0);
-      expect(await ProductService.getActiveBrands(alpha.tenantId)).toEqual(
-        brands,
-      );
     });
   });
 

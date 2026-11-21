@@ -7,9 +7,10 @@ import { TenantSecrets } from "../settings/tenant-secrets.ts";
  * What a business still needs before it can sell, in the order the dashboard
  * walks a new business through it. Each flag is read from the same rows the
  * feature itself checks, so the checklist and the running system can never
- * disagree: the assistant's OpenAI key, an active offer it can quote, a
- * conversation in the simulator, a number that can receive (app secret) and
- * answer (access token), and at least one member to work the conversations.
+ * disagree: the assistant's OpenAI key, an active product with an active
+ * variant it can sell, a conversation in the simulator, a number that can
+ * receive (app secret) and answer (access token), and at least one member to
+ * work the conversations.
  *
  * Cálidda credit is an optional integration, so its login is reported but
  * does not count toward `complete`.
@@ -32,7 +33,7 @@ export async function tenantSetupStatus(
 ): Promise<TenantSetupStatus> {
   const [
     openai,
-    offers,
+    products,
     simulated,
     numbers,
     members,
@@ -41,9 +42,11 @@ export async function tenantSetupStatus(
   ] = await Promise.all([
     hasOpenAiApiKey(tenantId),
     count(
-      `SELECT COUNT(*) as count FROM catalog_bundles b
-       JOIN catalog_periods p ON p.id = b.period_id
-       WHERE b.tenant_id = ? AND b.is_active = 1 AND p.status = 'active'`,
+      `SELECT COUNT(*) as count FROM products p
+       WHERE p.tenant_id = ? AND p.status = 'active'
+         AND EXISTS (SELECT 1 FROM product_variants v
+                     WHERE v.tenant_id = p.tenant_id AND v.product_id = p.id
+                       AND v.is_active = 1)`,
       tenantId,
     ),
     count(
@@ -70,7 +73,7 @@ export async function tenantSetupStatus(
 
   const required = {
     openai_configured: openai,
-    has_catalog: offers > 0,
+    has_catalog: products > 0,
     tried_simulator: simulated > 0,
     whatsapp_configured: numbers > 0,
     has_members: members > 0,

@@ -37,8 +37,8 @@ instructions are in [Get started](./docs/get-started.md).
 
 ## Features
 
-- A fixed Cálidda credit-eligibility flow backed by FNB and GASO providers.
-- Tenant-specific catalogs, bundles, conversations, orders, and staff roles.
+- An optional Cálidda credit check backed by the FNB and GASO providers.
+- Tenant-specific catalogs, stock, conversations, orders, and staff roles.
 - New tenants and their WhatsApp numbers are added with the `account` CLI,
   without a deploy.
 - A dashboard for conversations, catalog and order work, reports, and a provider

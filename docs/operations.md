@@ -296,9 +296,9 @@ image links use too, with any trailing slash removed (`publicOrigin` in
 ## The audit log
 
 Writes made through the API record who did what in `audit_log`: user, catalog,
-period, order, conversation, channel account, tenant and settings changes, and
-the eligibility retry sweep. Each row has the actor (`user:<id>` or
-`cli:<os user>`), the tenant, the action and the resource. The writer is
+order, conversation, channel account, tenant and settings changes. Each row has
+the actor (`user:<id>` or `cli:<os user>`), the tenant, the action and the
+resource. The writer is
 [`platform/audit/logger.ts`](../apps/backend/src/platform/audit/logger.ts).
 
 Admins read it at `/dashboard/admin/audit`, backed by `GET /api/admin/audit`. A

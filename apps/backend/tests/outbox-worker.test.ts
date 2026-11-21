@@ -440,7 +440,7 @@ describe("the outbox sender", () => {
       ref,
       "images/img-dear.jpg",
       "Cocina 4 hornillas\nPrecio: S/ 1200.00",
-      "bundle-1",
+      "product-1",
       { retry: true },
     );
     const row = (await rows())[0]!;

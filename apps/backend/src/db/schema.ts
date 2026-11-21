@@ -38,37 +38,6 @@ export interface AuditLogTable {
   created_at: Generated<number>;
 }
 
-export interface CatalogBundlesTable {
-  id: string;
-  tenant_id: string;
-  period_id: string;
-  segment: "gaso" | "fnb";
-  name: string;
-  price: number;
-  primary_category: string;
-  categories_json: string | null;
-  image_id: string;
-  composition_json: string;
-  installments_json: string;
-  notes: Generated<string | null>;
-  is_active: Generated<0 | 1 | null>;
-  stock_status: Generated<"in_stock" | "low_stock" | "out_of_stock" | null>;
-  created_by: string | null;
-  created_at: Generated<number>;
-  updated_at: Generated<number>;
-}
-
-export interface CatalogPeriodsTable {
-  id: string;
-  tenant_id: string;
-  name: string;
-  year_month: string;
-  status: Generated<"draft" | "active" | "archived" | null>;
-  published_at: number | null;
-  created_by: string | null;
-  created_at: Generated<number>;
-}
-
 export interface ChannelAccountsTable {
   id: string;
   tenant_id: string;
@@ -448,8 +417,6 @@ export interface Database {
   assets: AssetsTable;
   assistant_settings: AssistantSettingsTable;
   audit_log: AuditLogTable;
-  catalog_bundles: CatalogBundlesTable;
-  catalog_periods: CatalogPeriodsTable;
   channel_accounts: ChannelAccountsTable;
   channel_secrets: ChannelSecretsTable;
   conversations: ConversationsTable;
@@ -488,8 +455,6 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "assets",
   "assistant_settings",
   "audit_log",
-  "catalog_bundles",
-  "catalog_periods",
   "channel_accounts",
   "channel_secrets",
   "conversations",

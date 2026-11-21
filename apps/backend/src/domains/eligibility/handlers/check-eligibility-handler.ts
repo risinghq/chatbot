@@ -5,11 +5,7 @@ import type { FNBProvider } from "../providers/fnb-provider.ts";
 import type { PowerBIProvider } from "../providers/powerbi-provider.ts";
 import { evaluateResults } from "../strategy/eligibility-strategy.ts";
 import { createEvent } from "../../../shared/events/index.ts";
-import type { ConversationRef } from "@vendeya/types";
-import {
-  type EligibilityOutcome,
-  mapEligibilityToEnrichment,
-} from "../mapper.ts";
+import type { ConversationRef, CreditCheck } from "@vendeya/types";
 import { createLogger } from "../../../lib/logger.ts";
 
 const logger = createLogger("check-eligibility");
@@ -23,7 +19,7 @@ export class CheckEligibilityHandler {
   async execute(
     dni: string,
     ref?: ConversationRef,
-  ): Promise<Result<EligibilityOutcome>> {
+  ): Promise<Result<CreditCheck>> {
     const eventContext = ref
       ? { tenantId: ref.tenantId, channelAccountId: ref.channelAccountId }
       : undefined;
@@ -66,14 +62,7 @@ export class CheckEligibilityHandler {
         "System outage detected",
       );
 
-      return {
-        ok: true,
-        value: {
-          type: "eligibility_result",
-          status: "system_outage",
-          handoffReason: "both_providers_down",
-        },
-      };
+      return { ok: true, value: { status: "system_outage" } };
     }
 
     // 4. Success with potential warnings
@@ -102,35 +91,31 @@ export class CheckEligibilityHandler {
       );
     }
 
-    // 5. Log success
-    if (evaluation.value.result.eligible) {
-      logger.info(
-        {
-          dni,
-          tenantId: ref?.tenantId,
-          phoneNumber: ref?.phoneNumber,
-          source: evaluation.value.source,
-          credit: evaluation.value.result.credit,
-          name: evaluation.value.result.name,
-        },
-        "Customer eligible",
-      );
+    const { result, source } = evaluation.value;
+    if (!result.eligible) {
+      return { ok: true, value: { status: "not_eligible" } };
     }
 
-    // 6. Map to enrichment result. Bundles offered come from the tenant that
-    //    owns the conversation.
-    //    With no conversation (the lookup behind GET /api/providers/:dni) there
-    //    is no catalog to draw from, so the tenant is null. An empty string
-    //    would match no tenant and read as an empty catalog rather than as no
-    //    question.
-    const enrichmentResult = await mapEligibilityToEnrichment(
-      ref?.tenantId ?? null,
+    logger.info(
       {
-        ...evaluation.value.result,
-        needsHuman: false,
+        dni,
+        tenantId: ref?.tenantId,
+        phoneNumber: ref?.phoneNumber,
+        source,
+        credit: result.credit,
+        name: result.name,
       },
+      "Customer eligible",
     );
-
-    return { ok: true, value: enrichmentResult };
+    return {
+      ok: true,
+      value: {
+        status: "eligible",
+        source,
+        credit: result.credit || 0,
+        name: result.name,
+        nse: result.nse,
+      },
+    };
   }
 }

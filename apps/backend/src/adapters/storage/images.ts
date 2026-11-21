@@ -48,7 +48,7 @@ export const imageStorage = {
     return { imageId, byteSize: optimized.byteLength };
   },
 
-  /** Writes bytes that are already a JPEG of the right size, as the seed does. */
+  /** Writes bytes that are already a JPEG of the right size. */
   async put(
     tenantId: string,
     imageId: string,
@@ -69,10 +69,6 @@ export const imageStorage = {
   /** Key recorded on the `assets` row for this image. */
   storageKey(tenantId: string, imageId: string): string {
     return catalogImageKey(tenantId, imageId);
-  },
-
-  async delete(tenantId: string, imageId: string): Promise<void> {
-    await env.FILES.delete(catalogImageKey(tenantId, imageId));
   },
 
   /** Deletes by the key an asset row recorded. Refuses any non-image key. */

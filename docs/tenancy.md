@@ -33,8 +33,8 @@ curl -X POST -b "session=<token>" -H 'content-type: application/json' \
 The local seed creates a demo business with a sample catalog
 ([Get started](./get-started.md#the-seed)). Nothing seeds the deployed database.
 
-A new tenant has no catalog, no periods and no channel account. A platform
-operator creates one from `/dashboard/negocios` in the dashboard
+A new tenant has no catalog and no channel account. A platform operator creates
+one from `/dashboard/negocios` in the dashboard
 ([Dashboard](./dashboard.md#onboarding-a-business)); the CLI path stays for
 support (`account create`, `account channel create`,
 [Operations](./operations.md#accounts)). `GET /api/admin/setup-status` reports
@@ -51,12 +51,12 @@ database and the bucket with every other tenant, and nothing else.
 A user is one global account in `users`. A membership in `tenant_memberships`
 joins a user to a tenant with one role:
 
-| Role          | Adds                                                           |
-| ------------- | -------------------------------------------------------------- |
-| `admin`       | `/api/admin/*`: users, channel accounts, settings, audit       |
-| `developer`   | catalog and period writes, reports, system logs, the simulator |
-| `supervisor`  | catalog and period writes, reports, system logs                |
-| `sales_agent` | nothing beyond the base                                        |
+| Role          | Adds                                                     |
+| ------------- | -------------------------------------------------------- |
+| `admin`       | `/api/admin/*`: users, channel accounts, settings, audit |
+| `developer`   | catalog writes, reports, system logs, the simulator      |
+| `supervisor`  | catalog writes, reports, system logs                     |
+| `sales_agent` | nothing beyond the base                                  |
 
 The base is what every role can do: read the catalog, and read and work
 conversations and orders. A `sales_agent` is narrowed: they list, open and act

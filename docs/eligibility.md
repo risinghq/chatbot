@@ -14,10 +14,10 @@ runs only from [the DNI lookup](#looking-up-a-dni).
 
 ## The two providers
 
-| Segment | Source                                               | Client                                                                          |
-| ------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- |
-| FNB     | Cálidda's web API: a login, then a credit-line query | [`fnb-client.ts`](../apps/backend/src/adapters/providers/fnb-client.ts)         |
-| GASO    | A public Cálidda Power BI report: four queries       | [`powerbi-client.ts`](../apps/backend/src/adapters/providers/powerbi-client.ts) |
+| `source`  | Backend                                              | Client                                                                          |
+| --------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `fnb`     | Cálidda's web API: a login, then a credit-line query | [`fnb-client.ts`](../apps/backend/src/adapters/providers/fnb-client.ts)         |
+| `powerbi` | A public Cálidda Power BI report: four queries       | [`powerbi-client.ts`](../apps/backend/src/adapters/providers/powerbi-client.ts) |
 
 FNB answers with a credit line and a name. Power BI answers with a status, a
 name, a balance and an NSE (socio-economic stratum).
@@ -67,17 +67,11 @@ out, is switched off, or has its circuit breaker open.
 
 ## The result
 
-[`mapper.ts`](../apps/backend/src/domains/eligibility/mapper.ts) turns the
-winning answer into an eligibility result:
-
-- **Segment.** An approval with an NSE is `gaso`, any other approval is `fnb`.
-  FNB never sends an NSE, and a Power BI approval with an empty NSE also becomes
-  `fnb`.
-- **Catalog.** The tenant's active bundles for that segment. A GASO customer is
-  offered only bundles priced at or under their credit. An FNB customer is
-  offered bundles above it too.
-- **Status.** `eligible`, `not_eligible`, `system_outage`, or `needs_human` when
-  the check threw.
+The handler returns a `CreditCheck` (`@vendeya/types`): `eligible` with the
+`source` that approved (`fnb` or `powerbi`), the credit, the name and, from
+Power BI, the NSE; `not_eligible`; or `system_outage`. A check that throws
+returns an error instead. The result says nothing about the catalog: what the
+customer can buy with the credit is the assistant's call.
 
 ## Outages
 

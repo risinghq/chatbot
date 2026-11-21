@@ -33,7 +33,7 @@ const steps = $derived(
         {
           done: status.has_catalog,
           label: "Catálogo publicado",
-          hint: "Al menos una oferta activa en el período activo. Es lo que el asistente cotiza.",
+          hint: "Al menos un producto activo con precio. Es lo que el asistente cotiza.",
           action: "Abrir catálogo",
           href: "/dashboard/catalog",
         },

@@ -21,21 +21,16 @@ const outcomes = {
     variant: "warning",
     note: "Ningún proveedor respondió. Intenta de nuevo más tarde.",
   },
-  needs_human: {
-    label: "Revisión manual",
-    variant: "warning",
-    note: "La consulta necesita revisión de una persona.",
-  },
 } as const;
 
 // `error` is set when the backend could not run the check at all.
 const outcome = $derived(
-  result.error
+  "error" in result
     ? ({ label: "Error", variant: "error", note: result.error } as const)
-    : outcomes[result.status ?? "needs_human"],
+    : outcomes[result.status],
 );
 
-const segmentLabels = { fnb: "FNB (Retail)", gaso: "Gaso (Servicios)" };
+const sourceLabels = { fnb: "FNB (Cálidda)", powerbi: "Gaso (Power BI)" };
 </script>
 
 <section class="rounded-md border border-border bg-surface">
@@ -49,13 +44,13 @@ const segmentLabels = { fnb: "FNB (Retail)", gaso: "Gaso (Servicios)" };
 		<Badge variant={outcome.variant}>{outcome.label}</Badge>
 	</header>
 
-	{#if result.status === "eligible"}
+	{#if "status" in result && result.status === "eligible"}
 		<dl class="grid grid-cols-1 gap-x-6 gap-y-4 p-4 sm:grid-cols-2">
 			{@render item("Nombre del cliente", result.name || "N/A")}
-			{@render item("Segmento", result.segment ? segmentLabels[result.segment] : "N/A")}
+			{@render item("Proveedor", sourceLabels[result.source])}
 			<div>
 				<dt class="text-sm text-fg-muted">Línea aprobada</dt>
-				<dd class="mt-0.5 text-xl text-fg tabular-nums">S/ {formatPrice(result.credit ?? 0)}</dd>
+				<dd class="mt-0.5 text-xl text-fg tabular-nums">S/ {formatPrice(result.credit)}</dd>
 			</div>
 			{#if result.nse !== undefined}
 				{@render item("Nivel NSE", String(result.nse))}
