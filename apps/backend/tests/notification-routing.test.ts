@@ -53,7 +53,6 @@ describe("the link an alert carries", () => {
           agentId: "u-1",
           agentPhone: "51900000001",
           clientName: "Ana",
-          dni: "12345678",
         },
       }),
     ).toContain(expectedLink);
@@ -64,46 +63,7 @@ describe("the link an alert carries", () => {
       contentFor({
         ...base,
         type: "escalation_triggered",
-        payload: { phoneNumber: CUSTOMER, reason: "multiple_objections" },
-      }),
-    ).toContain(expectedLink);
-  });
-
-  it("names the thread when attention is required", async () => {
-    expect(
-      contentFor({
-        ...base,
-        type: "attention_required",
-        payload: {
-          phoneNumber: CUSTOMER,
-          clientName: "Ana",
-          dni: "12345678",
-          reason: "manual_review",
-        },
-      }),
-    ).toContain(expectedLink);
-  });
-
-  it("names the thread on a contract upload", async () => {
-    expect(
-      contentFor({
-        ...base,
-        type: "contract_uploaded",
-        payload: {
-          phoneNumber: CUSTOMER,
-          clientName: "Ana",
-          contractPath: "/api/assets/a-1",
-        },
-      }),
-    ).toContain(expectedLink);
-  });
-
-  it("names the thread on an enrichment loop alert", async () => {
-    expect(
-      contentFor({
-        ...base,
-        type: "enrichment_limit_exceeded",
-        payload: { phoneNumber: CUSTOMER, lastPhase: "offering_products" },
+        payload: { phoneNumber: CUSTOMER, reason: "asked_for_a_person" },
       }),
     ).toContain(expectedLink);
   });

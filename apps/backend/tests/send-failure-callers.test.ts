@@ -1,7 +1,7 @@
 /**
  * A send that WhatsApp did not accept must not be reported as one that went
- * out. The bundle images, the phase the executor persists and an agent's manual
- * reply each act on the outcome. The only fake is the network.
+ * out. The bundle images and an agent's manual reply each act on the outcome.
+ * The only fake is the network.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -16,11 +16,9 @@ import {
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import type { ConversationMetadata, ConversationPhase } from "@vendeya/core";
 import type { ConversationRef } from "@vendeya/types";
 
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
-import { executeCommands } from "../src/conversation/handler/command-executor.ts";
 import { sendBundleImages } from "../src/conversation/images.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
@@ -36,13 +34,6 @@ import conversationRoutes from "../src/routes/conversations.ts";
 const CUSTOMER = "51900888001";
 const IMAGE_CHEAP = "img-cheap";
 const IMAGE_DEAR = "img-dear";
-
-const OFFERING: ConversationPhase = {
-  phase: "offering_products",
-  segment: "fnb",
-  credit: 5000,
-  name: "Juan",
-};
 
 describe("a send WhatsApp did not accept", () => {
   let tenant: TenantFixture;
@@ -79,17 +70,6 @@ describe("a send WhatsApp did not accept", () => {
   }
   function textRequests() {
     return requests.filter((r) => r.type === "text");
-  }
-
-  async function storedPhase(): Promise<ConversationPhase> {
-    const row = (await getOne(
-      `SELECT context_data FROM conversations
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-    )) as {
-      context_data: string;
-    };
-    return JSON.parse(row.context_data).phase;
   }
 
   async function createBundle(
@@ -211,95 +191,6 @@ describe("a send WhatsApp did not accept", () => {
       expect(result.success).toBe(true);
       expect(result.products).toHaveLength(2);
       expect(requests).toHaveLength(0);
-    });
-  });
-
-  describe("when the executor records what the customer was shown", () => {
-    const metadata = {
-      createdAt: Date.now(),
-      lastActivityAt: Date.now(),
-    } as ConversationMetadata;
-
-    const images = {
-      type: "update" as const,
-      nextPhase: OFFERING,
-      commands: [{ type: "SEND_IMAGES" as const, category: "cocinas" }],
-    };
-    const bundle = () => ({
-      type: "update" as const,
-      nextPhase: OFFERING,
-      commands: [{ type: "SEND_BUNDLE" as const, bundleId: dearId }],
-    });
-
-    it("records sentProducts for an accepted category image", async () => {
-      await executeCommands(images, ref, metadata, false, "trace");
-
-      expect(await storedPhase()).toMatchObject({
-        phase: "offering_products",
-        sentProducts: [{ productId: cheapId }, { productId: dearId }],
-      });
-    });
-
-    it("records no sentProducts when every category image is refused", async () => {
-      answer = refusesEverything;
-
-      await executeCommands(images, ref, metadata, false, "trace");
-
-      const phase = await storedPhase();
-      expect(phase.phase).toBe("offering_products");
-      expect(phase).not.toHaveProperty("sentProducts");
-      expect(phase).not.toHaveProperty("lastAction");
-    });
-
-    it("records only the accepted products when one category image is refused", async () => {
-      answer = refusesImage(IMAGE_CHEAP);
-
-      await executeCommands(images, ref, metadata, false, "trace");
-
-      expect(await storedPhase()).toMatchObject({
-        sentProducts: [{ productId: dearId, position: 2 }],
-        lastAction: { type: "showed_products", productCount: 1 },
-      });
-    });
-
-    it("records sentProducts for an accepted single bundle", async () => {
-      await executeCommands(bundle(), ref, metadata, false, "trace");
-
-      expect(await storedPhase()).toMatchObject({
-        sentProducts: [{ productId: dearId, position: 1 }],
-      });
-    });
-
-    it("records no sentProducts when the single bundle image is refused", async () => {
-      answer = refusesEverything;
-
-      await executeCommands(bundle(), ref, metadata, false, "trace");
-
-      const phase = await storedPhase();
-      expect(phase.phase).toBe("offering_products");
-      expect(phase).not.toHaveProperty("sentProducts");
-      expect(phase).not.toHaveProperty("lastAction");
-    });
-
-    it("persists the phase after a text send that failed, and does not throw", async () => {
-      answer = refusesEverything;
-
-      await executeCommands(
-        {
-          type: "update",
-          nextPhase: OFFERING,
-          commands: [{ type: "SEND_MESSAGE", text: "hola" }],
-        },
-        ref,
-        metadata,
-        false,
-        "trace",
-      );
-
-      expect((await storedPhase()).phase).toBe("offering_products");
-      expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
-        status: "failed",
-      });
     });
   });
 

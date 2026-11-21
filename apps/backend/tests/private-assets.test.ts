@@ -11,7 +11,6 @@ import { Hono } from "hono";
 import {
   createMember,
   createTenantFixture,
-  insertConversation,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
@@ -22,10 +21,7 @@ import {
 } from "../src/platform/auth/session.ts";
 import assetRoutes from "../src/routes/assets.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
-import { uploadContract } from "../src/domains/conversations/media.ts";
 import { privateFileStorage } from "../src/adapters/storage/private-files.ts";
-
-const CUSTOMER = "51987651111";
 
 function buildApp() {
   const app = new Hono();
@@ -176,78 +172,5 @@ describe("serving a private asset", () => {
     );
 
     expect(disposition).toBe(`attachment; filename="${asset.id}.pdf"`);
-  });
-});
-
-describe("recording the content type of an upload", () => {
-  let tenant: TenantFixture;
-  let uploaderId: string;
-
-  beforeEach(async () => {
-    tenant = await createTenantFixture("upload-types");
-    uploaderId = (await createMember(tenant, "sales_agent")).userId;
-    await insertConversation(tenant.ref(CUSTOMER));
-  });
-
-  function upload(contract: File, audio: File) {
-    return uploadContract({
-      ref: tenant.ref(CUSTOMER),
-      userId: uploaderId,
-      contractFile: contract,
-      audioFile: audio,
-      userDisplayName: "Test User",
-    });
-  }
-
-  it("stores the declared type when the kind is served as it", async () => {
-    const result = await upload(
-      new File(["%PDF-1.4"], "contrato.pdf", { type: "application/pdf" }),
-      new File(["ID3"], "llamada.mp3", { type: "audio/mpeg" }),
-    );
-
-    expect(
-      (await AssetService.getById(tenant.tenantId, result.contractAssetId))
-        ?.content_type,
-    ).toBe("application/pdf");
-    expect(
-      (await AssetService.getById(tenant.tenantId, result.audioAssetId))
-        ?.content_type,
-    ).toBe("audio/mpeg");
-  });
-
-  it("keeps the file but not a type it will never be served as", async () => {
-    const result = await upload(
-      new File(["<script>alert(1)</script>"], "contrato.html", {
-        type: "text/html",
-      }),
-      new File(["ID3"], "llamada.mp3", { type: "audio/mpeg" }),
-    );
-
-    const contract = await AssetService.getById(
-      tenant.tenantId,
-      result.contractAssetId,
-    );
-
-    expect(contract?.content_type).toBeNull();
-    // The upload itself is not refused: it is somebody's file, and the header
-    // the browser wrote is not grounds for losing it.
-    expect(contract?.byte_size).toBe("<script>alert(1)</script>".length);
-    expect(
-      await new Response(
-        await privateFileStorage.read(contract!.storage_key),
-      ).text(),
-    ).toContain("<script>");
-  });
-
-  it("ignores the parameters a browser appends to the type", async () => {
-    const result = await upload(
-      new File(["%PDF-1.4"], "contrato.pdf", { type: "application/pdf" }),
-      new File(["webm"], "llamada.webm", { type: "audio/webm;codecs=opus" }),
-    );
-
-    expect(
-      (await AssetService.getById(tenant.tenantId, result.audioAssetId))
-        ?.content_type,
-    ).toBe("audio/webm");
   });
 });

@@ -199,9 +199,9 @@ describe("HTTP authorization", () => {
       betaAdmin,
     );
 
-    expect(fromAlpha.conversation.client_name).toBe("Alpha Client");
+    expect(fromAlpha.conversation.customer_name).toBe("Alpha Client");
     expect(fromAlpha.conversation.tenant_id).toBe(alpha.tenantId);
-    expect(fromBeta.conversation.client_name).toBe("Beta Client");
+    expect(fromBeta.conversation.customer_name).toBe("Beta Client");
     expect(fromBeta.conversation.tenant_id).toBe(beta.tenantId);
   });
 
@@ -1006,9 +1006,7 @@ describe("HTTP authorization", () => {
 
     beforeEach(async () => {
       second = await addChannelAccount(alpha);
-      await insertConversation(second.ref(SHARED_PHONE), {
-        clientName: "Alpha Client, second number",
-      });
+      await insertConversation(second.ref(SHARED_PHONE));
     });
 
     it("refuses to guess which thread is meant", async () => {
@@ -1039,13 +1037,12 @@ describe("HTTP authorization", () => {
         alphaAdmin,
       );
 
-      expect(first.conversation.client_name).toBe("Alpha Client");
+      expect(first.conversation.customer_name).toBe("Alpha Client");
       expect(first.conversation.channel_account_id).toBe(
         alpha.channelAccountId,
       );
-      expect(other.conversation.client_name).toBe(
-        "Alpha Client, second number",
-      );
+      // A customer is one phone number in a business, so both threads name them.
+      expect(other.conversation.customer_name).toBe("Alpha Client");
       expect(other.conversation.channel_account_id).toBe(
         second.channelAccountId,
       );
@@ -1096,7 +1093,7 @@ describe("HTTP authorization", () => {
         `/api/conversations/${onlyOnce}`,
         alphaAdmin,
       );
-      expect(detail.conversation.client_name).toBe("Single");
+      expect(detail.conversation.customer_name).toBe("Single");
     });
 
     /**
@@ -1865,13 +1862,12 @@ describe("HTTP authorization", () => {
 
     async function conversationRow(phone: string, tenantId: string) {
       return (await getOne(
-        `SELECT status, assigned_agent, agent_notes FROM conversations
+        `SELECT status, assigned_agent FROM conversations
            WHERE tenant_id = ? AND phone_number = ?`,
         [tenantId, phone],
       )) as {
         status: string;
         assigned_agent: string | null;
-        agent_notes: string | null;
       };
     }
 
@@ -1895,16 +1891,9 @@ describe("HTTP authorization", () => {
         }),
         write("/release", operator),
         write("/decline-assignment", operator),
-        write("/agent-data", operator, {
-          method: "PATCH",
-          body: JSON.stringify({ agentNotes: "written from nowhere" }),
-        }),
-        write("/upload-contract", operator, { body: new FormData() }),
       ]);
 
-      expect(responses.map((r) => r.status)).toEqual([
-        403, 403, 403, 403, 403, 403,
-      ]);
+      expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403]);
       expect(await responses[0]!.json()).toMatchObject({
         error: "No active tenant",
       });
@@ -1914,17 +1903,13 @@ describe("HTTP authorization", () => {
       const before = await conversationRow(BETA_ONLY, beta.tenantId);
 
       await write("/takeover", operator);
-      await write("/agent-data", operator, {
-        method: "PATCH",
-        body: JSON.stringify({ agentNotes: "written from nowhere" }),
-      });
 
       expect(await conversationRow(BETA_ONLY, beta.tenantId)).toEqual(before);
     });
 
     it("still reads across tenants while unpinned", async () => {
       const detail = await getJson(`/api/conversations/${BETA_ONLY}`, operator);
-      expect(detail.conversation.client_name).toBe("Beta Only");
+      expect(detail.conversation.customer_name).toBe("Beta Only");
     });
 
     it("writes once a tenant is pinned", async () => {
@@ -2052,7 +2037,7 @@ describe("HTTP authorization", () => {
         `/api/conversations/${SHARED_PHONE}`,
         session,
       );
-      expect(detail.conversation.client_name).toBe("Beta Client");
+      expect(detail.conversation.customer_name).toBe("Beta Client");
     });
 
     it("lets a platform operator pin to a tenant and unpin again", async () => {

@@ -2,14 +2,14 @@
 
 A customer's WhatsApp message becomes a reply in one bot turn. This document
 follows the message from Meta's webhook to the reply on the customer's phone,
-then describes the phases a conversation moves through and how a person takes it
-over.
+then describes how the assistant hands a conversation to a person and how a
+person takes it over.
 
 ```text
 webhook -> message_inbox -> wake the conversation's object
   object (holds the lock): send due replies -> answer the pending group -> handoff
-  turn:  idle reset -> mark read -> enrichment loop (core transition) ->
-         pacing delay -> execute commands (send, persist) -> emit events
+  turn:  idle release -> mark read -> assistant (model + tools) ->
+         pacing delay -> send -> record -> emit events
   send failure -> outbox -> the object's alarm -> handoff to a person
 ```
 
@@ -76,19 +76,19 @@ pending -> processing -> processed    the turn recorded its result
                       -> failed       the turn failed for the second time
 ```
 
-A row becomes `processed` only in the batch that records the turn: the phase,
-the analytics rows and the row's own status commit together in one D1 `batch()`
-(see [the executor](#the-executor)). A turn that throws before that, anywhere in
-the reply step, leaves the rows unsettled. The object counts the failure in
-`message_inbox.attempts` and keeps the error in `last_error`. Attempts belong to
-the conversation, not the row: a message that arrives after the first failure
-joins the retry and fails with the older ones. After the first failure the group
-goes back to `pending` and the next pass runs its turn again. After the second,
-every row of the group ends `failed`, and so does every `pending` row of the
-conversation, including one that arrived while the second attempt ran.
-[The handoff](#the-handoff) then gives the conversation to a person with reason
-`turn_failed`, and no row is left to be answered after it. A turn refused
-because the number was switched off counts no attempt.
+A row becomes `processed` only in the batch that records the turn: the
+conversation's activity or handoff and the row's own status commit together in
+one D1 `batch()` (see [the turn](#the-turn)). A turn that throws before that,
+anywhere in the reply step, leaves the rows unsettled. The object counts the
+failure in `message_inbox.attempts` and keeps the error in `last_error`.
+Attempts belong to the conversation, not the row: a message that arrives after
+the first failure joins the retry and fails with the older ones. After the first
+failure the group goes back to `pending` and the next pass runs its turn again.
+After the second, every row of the group ends `failed`, and so does every
+`pending` row of the conversation, including one that arrived while the second
+attempt ran. [The handoff](#the-handoff) then gives the conversation to a person
+with reason `turn_failed`, and no row is left to be answered after it. A turn
+refused because the number was switched off counts no attempt.
 
 An object that ends mid-turn, by a crash, an exceeded limit or a restart of the
 Worker, leaves its rows `processing`. The write that records a turn's outcome
@@ -137,112 +137,88 @@ A manual message from an agent does not take the lock.
 [`handler/orchestrator.ts`](../apps/backend/src/conversation/handler/orchestrator.ts)
 runs one turn for one grouped message:
 
-1. Load the conversation. If it has been idle 3 hours, reset it (see
-   [the idle reset](#the-idle-reset)).
-2. Mark the message read. Show the typing indicator unless the conversation is
-   `escalated`, because the bot sends no reply while a person holds it.
-3. Run the enrichment loop, which calls core until it has a final result.
-4. Wait out the rest of the pacing delay: `BOT_RESPONSE_DELAY_MS`, default 2300
-   ms, counted from the customer's message. A message older than 10 minutes gets
-   no delay.
-5. Execute the commands.
-6. Emit the transition's events. If the turn moved the conversation into
-   `escalated`, assign an agent ([Escalation](#escalation)) and emit
-   `escalation_triggered`. Core and the enrichment loop never put
-   `escalation_triggered` in the events, and a turn on an already escalated
-   conversation never emits it, so an escalation alerts once. Such a turn may
-   emit `customer_message_received` ([Escalation](#escalation)).
+1. Load the conversation, or create it on the first message. Release it if a
+   person has held it 3 hours with no activity (see
+   [the idle release](#the-idle-release)).
+2. Mark the message read. Show the typing indicator unless a person holds the
+   conversation (`human_takeover`).
+3. If a person holds it, record the turn and stop. The assistant sends nothing.
+   The message may alert the agent holding it ([Escalation](#escalation)).
+4. Ask [the assistant](#the-assistant) for the turn: a reply, and the effects of
+   the tools it called.
+5. Wait out the rest of the pacing delay: `BOT_RESPONSE_DELAY_MS`, default 2300
+   ms, counted from the customer's message. A message older than 10 minutes, or
+   a turn with nothing to send, gets no delay.
+6. Send the reply, then the product photos a tool asked for
+   ([the send](#the-send)).
+7. Record the turn. One D1 `batch()` writes the conversation's
+   `last_activity_at`, or the handoff if the assistant handed off, and marks the
+   turn's inbox rows `processed`. A batch commits whole or not at all.
+8. Emit `order_created` for each order the turn filed. If the assistant handed
+   off, assign an agent, raise the unread alert and emit `escalation_triggered`
+   ([Escalation](#escalation)).
+
+Events go out after the record. A turn that throws before it goes back to its
+queue, so an event emitted earlier would be emitted twice.
+
+If a send throws `ChannelUnavailableError` (the number was switched off
+mid-turn), nothing after it runs and the inbox rows go back to `pending`. The
+retry answers the message again, and a reply sent before the throw goes out
+again. A turn that filed an order is the exception: it is recorded without its
+reply, because a retry would file a second order.
 
 The simulator calls the same `answerMessage`, through the conversation's object,
 at once and with no inbox rows. Its conversations live on the business's
 simulator channel (`channel_type = 'simulator'`), one per business, which
 `ChannelAccountService.simulatorFor` creates on first use. The number listings
-and the default account leave that channel out. A simulated turn marks nothing
-read and skips the events, the escalation's agent assignment and the staff
-alerts, so a test conversation never reaches a person. A failed simulated turn
-answers the simulator with the error instead of retrying.
+and the default account leave that channel out. A simulated turn reads the
+business's real data and writes none: it writes each reply to `messages` as
+`sent` and sends nothing, `create_order` answers with the order it would file,
+and the turn marks nothing read and skips the events, the agent assignment and
+the staff alerts. A failed simulated turn answers the simulator with the error
+instead of retrying.
 
-## Core's transition
+## The assistant
 
-[`transition()`](../packages/core/src/conversation/transition.ts) dispatches to
-one function per phase in
-[`phases/`](../packages/core/src/conversation/phases/). Its contract is in
-[`types.ts`](../packages/core/src/conversation/types.ts):
+[`domains/assistant/agent.ts`](../apps/backend/src/domains/assistant/agent.ts)
+answers a turn with an OpenAI model and a set of tools. The business shapes it
+on the Asistente page: its instructions, FAQ and policies, the model
+(`gpt-5-mini` by default) and the stock location it sells from. Each model call
+sends the system prompt
+([`prompt.ts`](../apps/backend/src/domains/assistant/prompt.ts)), which holds
+those texts, the business's name and the customer the business has on file with
+the conversation's phone number. It also sends up to the last 30 messages of the
+last 24 hours. A reply that failed to send is left out, because the customer
+never saw it.
 
-```ts
-transition({ phase, message, metadata, enrichment?, quotedContext?, context? })
-  => { type: "update", nextPhase, commands, events? }
-   | { type: "need_enrichment", enrichment, pendingPhase?, events? }
-```
+The tools are in [`tools/`](../apps/backend/src/domains/assistant/tools/). Each
+one checks its arguments and reads or writes through the business's own domains,
+so the model cannot state a price or a stock level it did not read:
 
-It matches the message with regexes and keyword lists
-([`validation/`](../packages/core/src/validation/),
-[`matching/`](../packages/core/src/matching/)) and picks copy from
-[`templates/`](../packages/core/src/templates/). It performs no I/O. It is not
-deterministic: copy variants are chosen at random.
+| Tool                   | Does                                                        |
+| ---------------------- | ----------------------------------------------------------- |
+| `search_products`      | Finds active products by text or category.                  |
+| `get_product`          | Reads a product's variants, prices and stock.               |
+| `send_product_photos`  | Sends a product's photos after the reply.                   |
+| `list_delivery_zones`  | Reads the delivery zones and their fees.                    |
+| `list_payment_methods` | Reads the payment methods and their instructions.           |
+| `get_customer`         | Reads the customer's saved record and addresses.            |
+| `quote`                | Prices a cart with delivery.                                |
+| `create_order`         | Files the order, and the customer if the business has none. |
+| `hand_off`             | Passes the conversation to a person, with a reason.         |
 
-The commands:
+A tool never sends a message or alerts anyone. It returns effects (photos to
+send, an order filed, a handoff), and the turn carries them out. A turn makes at
+most 6 tool calls; the next call allows none, so the model must answer in text.
+Every model call is a row in `llm_calls`, whether it answers or throws.
 
-| Command                                      | What the executor does                                                                                                      |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `SEND_MESSAGE { text }`                      | Sends one text. Consecutive texts are 1 s apart.                                                                            |
-| `SEND_IMAGES { category?, offset?, query? }` | Sends up to 3 of the tenant's active, in-stock bundles, cheapest first, as images with captions, then a follow-up question. |
-| `SEND_BUNDLE { bundleId }`                   | Sends one bundle's image. No phase produces it.                                                                             |
-| `TRACK_EVENT { event, metadata? }`           | Writes an `analytics_events` row after the sends.                                                                           |
-
-## The enrichment loop
-
-When core needs something it cannot compute, it returns `need_enrichment`.
-[`handler/enrichment-loop.ts`](../apps/backend/src/conversation/handler/enrichment-loop.ts)
-runs the matching handler from
-[`conversation/enrichment/handlers/`](../apps/backend/src/conversation/enrichment/handlers/),
-folds the result into metadata, and calls core again with it.
-
-Core requests five kinds:
-
-| Request                    | Handler calls                                       |
-| -------------------------- | --------------------------------------------------- |
-| `check_eligibility`        | FNB and GASO. See [Eligibility](./eligibility.md).  |
-| `detect_question`          | The LLM: is this a question?                        |
-| `should_escalate`          | The LLM: does this need a person?                   |
-| `answer_question`          | The LLM: answer it from the catalog and the credit. |
-| `recover_unclear_response` | The LLM: a reply that asks again.                   |
-
-The LLM is OpenAI `gpt-5-nano-2025-08-07`, set in
-[`packages/intelligence/src/config.ts`](../packages/intelligence/src/config.ts).
-No environment variable switches it off or to a mock.
-
-A `pendingPhase` is the phase core is re-called with once the handler answers.
-It stays in memory. The database holds the phase the turn started from until
-[the executor](#the-executor) writes the final one after the sends, so a
-customer mid-eligibility-check still shows `collecting_dni` in the dashboard.
-
-The loop stops after 10 rounds and escalates with reason
-`enrichment_loop_exceeded`. A handler that throws ends the turn with no reply:
-the error is logged as "Message processing failed", a `system_error_occurred`
-alert goes to the dev group, and the turn is retried and then handed off (see
-[the inbox](#the-inbox-and-the-aggregator)). The bot calls OpenAI with the
-tenant's own key, stored encrypted as the `openai_api_key` tenant secret; a
-tenant with no key — like an OpenAI outage — ends every message the regexes do
-not recognize this way.
-
-## The executor
-
-[`handler/command-executor.ts`](../apps/backend/src/conversation/handler/command-executor.ts)
-runs the commands in order, then in one D1 `batch()` writes the new phase if it
-changed, the analytics rows, and marks the turn's inbox rows `processed`. A
-batch commits whole or not at all.
-
-A simulated conversation (`is_simulation = 1`) writes each reply to `messages`
-as `sent` and sends nothing. A send that reaches the adapter on the simulator
-channel is refused as `not_whatsapp` without calling Meta.
-
-The phase is written whatever the sends returned. A reply that failed for good
-is logged and the conversation moves on. An image that was neither sent nor
-queued is not recorded as shown. If a send throws `ChannelUnavailableError` (the
-number was switched off mid-turn), nothing after it runs, the phase is not
-written, and the inbox rows go back to `pending`. The retry replays the turn
-from the old phase, and a message sent before the throw goes out again.
+The assistant calls OpenAI with the tenant's own key, stored encrypted as the
+`openai_api_key` tenant secret. A real conversation of a business with no key is
+handed off with reason `no_openai_key`, since no retry can answer it. The
+simulator answers 409 instead. A model call that fails throws, and the turn is
+retried and then handed off (see [the inbox](#the-inbox-and-the-aggregator)). If
+the turn had already filed an order, it is handed off at once with reason
+`assistant_unavailable` instead, because a retry would file the order again.
 
 ## The send
 
@@ -336,98 +312,56 @@ worked out, and `reply_undeliverable` when only outbox rows failed. The event's
 `context.lastReason` carries the last error. A crash between steps 3 and 4
 alerts twice. The customer is not told anything.
 
-## Phases
+## The idle release
 
-A conversation is in one of 12 phases, stored as `context_data.phase`. Most
-conversations run:
+A person's hold on a conversation lasts while the conversation is active. At the
+start of a turn, a conversation in `human_takeover` whose `last_activity_at` is
+3 hours or more in the past is released
+([`store.ts`](../apps/backend/src/conversation/store.ts)): `status` goes back to
+`active`, the handover reason and the assigned agent are cleared, and the
+assistant answers the message. It happens only when the customer writes again.
 
-```text
-greeting -> confirming_client -> collecting_dni -> checking_eligibility
-  -> (gaso) collecting_age
-  -> offering_products <-> handling_objection
-  -> confirming_selection -> closing
-```
+`last_activity_at` moves when a turn is recorded, when a person takes the
+conversation over or releases it, and when an agent sends a manual message. A
+customer message to a held conversation also records a turn, so the hold ends
+only after 3 hours in which neither side wrote.
 
-| Phase                  | Waits for                                            | Moves to                                                                                                    |
-| ---------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `greeting`             | any message                                          | `confirming_client`, after the greeting                                                                     |
-| `confirming_client`    | yes, no, or a DNI                                    | `collecting_dni`; `closing` on no; `checking_eligibility` on a DNI                                          |
-| `collecting_dni`       | an 8-digit DNI                                       | `checking_eligibility`                                                                                      |
-| `checking_eligibility` | the provider result                                  | `offering_products`, `collecting_age`, `offering_dni_retry`, `closing`, `waiting_for_recovery`, `escalated` |
-| `offering_dni_retry`   | yes, no, or a DNI                                    | `collecting_dni`; `closing` on no; `checking_eligibility` on a new DNI                                      |
-| `collecting_age`       | an age                                               | `offering_products`; `closing` below 25                                                                     |
-| `offering_products`    | a category, a product, a question, a price complaint | `confirming_selection`, `handling_objection`, `closing`, `escalated`                                        |
-| `handling_objection`   | a reply to the objection                             | `offering_products`; `escalated` after a second rejection, or on a question for a person                    |
-| `confirming_selection` | yes or no                                            | `closing` with a confirmed purchase; `offering_products`                                                    |
-| `closing`              | anything                                             | answers questions; `offering_products` on a new purchase intent                                             |
-| `escalated`            | nothing: the bot stays silent                        | `greeting` on release or the idle reset                                                                     |
-| `waiting_for_recovery` | an operator's eligibility retry                      | the result of the retry, or `greeting` on the idle reset                                                    |
-
-A reply to an objection that the regexes do not recognize costs one LLM call to
-ask whether it is a question. A question is answered or escalated. Anything else
-gets "¿Te gustaría ver alguna otra opción?" and the phase stays.
-
-A confirmed selection emits `purchase_confirmed`. That finds or creates the
-customer by phone and files a pending order with one free line, the chosen
-product at its price, and no shipment
-([`bootstrap/event-bus-setup.ts`](../apps/backend/src/bootstrap/event-bus-setup.ts)).
-The bot tells the customer a colleague will call. That colleague sets the
-variant, address and payment. The bot does not close the sale.
-
-`escalated` and `waiting_for_recovery` are terminal inside core. While a
-conversation is `escalated`, the bot still runs a turn for each message, marks
-it read, and sends nothing.
-
-## The idle reset
-
-At the start of a turn, a conversation whose `metadata.lastActivityAt` is 3
-hours or more in the past is reset to `greeting`
-([`store.ts`](../apps/backend/src/conversation/store.ts)). The reset clears the
-metadata except the last category, sets `status` back to `active` and clears the
-handover reason. It happens only when the customer writes again.
-
-`lastActivityAt` moves when the phase is written and when an agent sends a
-manual message. It does not move on every customer message, so a customer whose
-phase has not changed in 3 hours is reset even mid-conversation. A conversation
-a person took over is reset too, once 3 hours pass without a manual message.
+The assistant needs no reset of its own. It reads the messages of the last 24
+hours, not a stored state.
 
 ## Escalation
 
-The bot escalates when:
+The conversation goes to a person when:
 
-- the customer turns down the offer again after a price objection
-  (`multiple_objections`),
-- the LLM says a question needs a person (`customer_question_requires_human`,
-  `customer_question_during_objection`),
-- the eligibility check throws (`eligibility_check_error`),
-- the enrichment loop runs out (`enrichment_loop_exceeded`),
+- the assistant calls `hand_off`, with the reason it gives,
+- the business has no OpenAI key (`no_openai_key`),
+- the model fails after the turn filed an order (`assistant_unavailable`),
 - a reply cannot be delivered (`reply_undeliverable`),
 - a turn fails twice (`turn_failed`).
 
-Escalating sets the phase to `escalated`, `conversations.status` to
-`human_takeover` and `handover_reason` to the reason, and emits
-`escalation_triggered`. Only the eligibility escalation sends the customer a
-holding message. The others send nothing.
+Handing off sets `conversations.status` to `human_takeover` and
+`handover_reason` to the reason, and emits `escalation_triggered`. The assistant
+tells the customer someone will write soon. The other reasons send nothing.
 
 The alert goes to the conversation's assigned agent if it has one, else to the
 tenant's sales target, the `whatsapp_group_sales` tenant setting. A tenant
 without it gets no group alert; there is no platform fallback
 ([`notifications/resolver.ts`](../apps/backend/src/domains/notifications/resolver.ts)).
-The turn that escalates a conversation also assigns it before the alert goes
+The turn that hands a conversation off also assigns it before the alert goes
 out, so the alert reaches the assigned agent. The round-robin in
 [`conversations/assignment.ts`](../apps/backend/src/domains/conversations/assignment.ts)
 picks the next available `sales_agent` of the tenant, stamps
 `assignment_notified_at`, and notifies the agent (`agent_assigned`). With no
 available agent the conversation stays unassigned and the alert goes to the
-sales target. The undeliverable-reply handoff escalates and assigns the same
+sales target. The undeliverable-reply handoff hands off and assigns the same
 way.
 
-A conversation escalates once. While it stays `escalated`, a later customer
+A conversation hands off once. While it stays `human_takeover`, a later customer
 message neither emits `escalation_triggered` nor assigns again. It can emit
 `customer_message_received`, which goes to the assigned agent only, never to the
 sales target, with its own text ("escribió en la conversación que atiendes") and
-the conversation link. The agent has to be able to hear it: the conversation is
-`human_takeover` and the agent has a phone number.
+the conversation link. The agent has to be able to hear it: the agent has a
+phone number.
 
 Whoever holds the conversation gets at most one alert until they answer. The
 `unread_alerts` row and its transitions are in
@@ -441,31 +375,31 @@ An assignment waits for the agent to take the conversation over, which clears
 passes the conversation to the next available agent. The agent can also decline
 (`POST /api/conversations/:phone/decline-assignment`), which does the same at
 once. Both run under the conversation lock, and decline answers 409 while the
-conversation is busy. Assigning always leaves the conversation `escalated`, so
-the bot stays silent while an agent holds it.
+conversation is busy. Assigning leaves the conversation `human_takeover`, so the
+assistant stays silent while an agent holds it.
 
-An agent also becomes assigned by taking the conversation over (below) or by
-saving agent data on an unassigned one
-(`PATCH /api/conversations/:phone/agent-data`).
+An agent also becomes assigned by taking the conversation over (below).
 
 ## Takeover and release
 
 An agent takes a conversation from the dashboard:
 
-- **Takeover** (`POST /api/conversations/:phone/takeover`) sets the phase to
-  `escalated` with reason "Manual takeover by agent" and cancels the replies the
-  bot still owed. A turn already running may still send what it had ready. It
-  also assigns the conversation to the person who takes it and accepts a pending
-  assignment (it clears `assignment_notified_at`). A conversation already
-  assigned to someone else is refused with 409, and the same person may repeat
-  the takeover.
+- **Takeover** (`POST /api/conversations/:phone/takeover`) sets the conversation
+  to `human_takeover` with reason "Manual takeover by agent" and cancels the
+  replies the bot still owed. A turn already running may still send what it had
+  ready. It also assigns the conversation to the person who takes it and accepts
+  a pending assignment (it clears `assignment_notified_at`). A conversation
+  already assigned to someone else is refused with 409, and the same person may
+  repeat the takeover.
 - **Manual message** (`POST /api/conversations/:phone/message`) sends once and
-  moves `lastActivityAt`. It works whether or not the bot is silenced.
-- **Release** (`POST /api/conversations/:phone/release`) resets a taken-over
-  conversation to `greeting`, as the idle reset does. The customer's next
-  message starts over. Both also clear the assigned agent of a conversation a
-  person held, so another agent can take it. An agent assigned to a conversation
-  the bot owns keeps it through the idle reset.
+  moves `last_activity_at`. It works whether or not a person holds the
+  conversation.
+- **Release** (`POST /api/conversations/:phone/release`) gives a held
+  conversation back to the assistant, as the idle release does. The customer's
+  next message is answered by the assistant, which reads the whole recent
+  conversation, including what the person wrote. A release clears the assigned
+  agent of a conversation a person held, so another agent can take it. Releasing
+  a conversation the assistant owns does nothing.
 
 These are in
 [`domains/conversations/write.ts`](../apps/backend/src/domains/conversations/write.ts).

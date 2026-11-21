@@ -25,20 +25,15 @@ import {
   lookupConversation,
 } from "../src/domains/conversations/read.ts";
 import {
+  ensureConversation,
   findConversation,
-  getOrCreateConversation,
 } from "../src/conversation/store.ts";
-import {
-  trackEventStatement,
-  getRecentEvents,
-} from "../src/domains/analytics/index.ts";
 import {
   getRecentLLMCalls,
   trackLLMCall,
 } from "../src/intelligence/tracker.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { MembershipService } from "../src/domains/tenants/index.ts";
-import { PersonasService } from "../src/domains/personas/index.ts";
 import { seedPeriods } from "../src/db/seeds/periods.ts";
 import { seedProducts } from "../src/db/seeds/products.ts";
 import { seedBundles } from "../src/db/seeds/bundles.ts";
@@ -65,11 +60,11 @@ describe("tenant isolation", () => {
 
   describe("the same phone number in two tenants", () => {
     it("creates two independent conversations", async () => {
-      const a = await getOrCreateConversation(alphaRef);
-      const b = await getOrCreateConversation(betaRef);
+      const a = await ensureConversation(alphaRef);
+      const b = await ensureConversation(betaRef);
 
-      expect(a.ref.tenantId).toBe(alpha.tenantId);
-      expect(b.ref.tenantId).toBe(beta.tenantId);
+      expect(a.tenant_id).toBe(alpha.tenantId);
+      expect(b.tenant_id).toBe(beta.tenantId);
 
       const rows = (await getAll(
         "SELECT tenant_id FROM conversations WHERE phone_number = ? AND tenant_id IN (?, ?)",
@@ -82,15 +77,11 @@ describe("tenant isolation", () => {
     });
 
     it("keeps conversation state separate", async () => {
-      await insertConversation(alphaRef, { clientName: "Alpha Client" });
-      await insertConversation(betaRef, { clientName: "Beta Client" });
+      await insertConversation(alphaRef, { status: "human_takeover" });
+      await insertConversation(betaRef);
 
-      expect((await findConversation(alphaRef))?.client_name).toBe(
-        "Alpha Client",
-      );
-      expect((await findConversation(betaRef))?.client_name).toBe(
-        "Beta Client",
-      );
+      expect((await findConversation(alphaRef))?.status).toBe("human_takeover");
+      expect((await findConversation(betaRef))?.status).toBe("active");
     });
 
     it("keeps message history separate", async () => {
@@ -108,22 +99,6 @@ describe("tenant isolation", () => {
       expect(betaMessages).toHaveLength(1);
       expect(betaMessages[0]!.content).toBe("hola beta");
     });
-
-    it("keeps analytics events separate", async () => {
-      await insertConversation(alphaRef);
-      await insertConversation(betaRef);
-
-      await trackEventStatement(alphaRef, "session_start").run();
-      await trackEventStatement(betaRef, "session_start").run();
-
-      const alphaEvents = await getRecentEvents(alpha.tenantId, 50);
-      const betaEvents = await getRecentEvents(beta.tenantId, 50);
-
-      expect(alphaEvents).toHaveLength(1);
-      expect(betaEvents).toHaveLength(1);
-      expect(alphaEvents[0]!.tenant_id).toBe(alpha.tenantId);
-      expect(betaEvents[0]!.tenant_id).toBe(beta.tenantId);
-    });
   });
 
   describe("reads outside the caller's tenant", () => {
@@ -132,10 +107,10 @@ describe("tenant isolation", () => {
       await insertConversation(betaRef, { clientName: "Beta Client" });
 
       const alphaAdmin = await createMember(alpha, "admin");
-      const rows = await listConversations(alphaAdmin.scope, null);
+      const rows = await listConversations(alphaAdmin.scope, undefined);
 
       expect(rows.every((r) => r.tenant_id === alpha.tenantId)).toBe(true);
-      expect(rows.map((r) => r.client_name)).not.toContain("Beta Client");
+      expect(rows.map((r) => r.customer_name)).not.toContain("Beta Client");
     });
 
     it("does not resolve another tenant's conversation by phone number", async () => {
@@ -164,7 +139,7 @@ describe("tenant isolation", () => {
         assignedAgent: betaAgent.userId,
       });
 
-      const rows = await listConversations(alphaAgent.scope, null);
+      const rows = await listConversations(alphaAgent.scope, undefined);
 
       expect(rows).toHaveLength(1);
       expect(rows[0]!.tenant_id).toBe(alpha.tenantId);
@@ -334,7 +309,7 @@ describe("tenant isolation", () => {
         isPlatformOperator: true,
       };
 
-      const acrossTenants = (await listConversations(unpinned, null))
+      const acrossTenants = (await listConversations(unpinned, undefined))
         .filter((r) => [alpha.tenantId, beta.tenantId].includes(r.tenant_id))
         .map((r) => r.tenant_id);
 
@@ -343,7 +318,7 @@ describe("tenant isolation", () => {
       );
 
       const pinned = { ...unpinned, tenantId: alpha.tenantId };
-      const scoped = await listConversations(pinned, null);
+      const scoped = await listConversations(pinned, undefined);
 
       expect(scoped.every((r) => r.tenant_id === alpha.tenantId)).toBe(true);
     });
@@ -448,74 +423,6 @@ describe("tenant isolation", () => {
       expect(await ProductService.getActiveBrands(alpha.tenantId)).toEqual(
         brands,
       );
-    });
-  });
-
-  /**
-   * A persona id is typed in by a tenant's own users, so it is unique only
-   * within its tenant.
-   */
-  describe("simulator personas", () => {
-    const PERSONA_ID = "cliente_moroso";
-
-    function persona(clientName: string) {
-      return {
-        id: PERSONA_ID,
-        name: "Cliente moroso",
-        description: "Deuda vigente",
-        segment: "gaso" as const,
-        clientName,
-        dni: "12345678",
-        creditLine: 3000,
-      };
-    }
-
-    it("lets two tenants use the same persona id", async () => {
-      const alphaAuthor = (await createMember(alpha)).userId;
-      const betaAuthor = (await createMember(beta)).userId;
-
-      await PersonasService.create(alpha.tenantId, persona("Ana"), alphaAuthor);
-      await PersonasService.create(beta.tenantId, persona("Beto"), betaAuthor);
-
-      expect(
-        (await PersonasService.getById(alpha.tenantId, PERSONA_ID))?.clientName,
-      ).toBe("Ana");
-      expect(
-        (await PersonasService.getById(beta.tenantId, PERSONA_ID))?.clientName,
-      ).toBe("Beto");
-    });
-
-    it("keeps an edit inside the tenant that made it", async () => {
-      const alphaAuthor = (await createMember(alpha)).userId;
-      const betaAuthor = (await createMember(beta)).userId;
-
-      await PersonasService.create(alpha.tenantId, persona("Ana"), alphaAuthor);
-      await PersonasService.create(beta.tenantId, persona("Beto"), betaAuthor);
-
-      await PersonasService.update(alpha.tenantId, PERSONA_ID, {
-        clientName: "Ana María",
-      });
-
-      expect(
-        (await PersonasService.getById(alpha.tenantId, PERSONA_ID))?.clientName,
-      ).toBe("Ana María");
-      expect(
-        (await PersonasService.getById(beta.tenantId, PERSONA_ID))?.clientName,
-      ).toBe("Beto");
-    });
-
-    it("keeps a deletion inside the tenant that made it", async () => {
-      const alphaAuthor = (await createMember(alpha)).userId;
-      const betaAuthor = (await createMember(beta)).userId;
-
-      await PersonasService.create(alpha.tenantId, persona("Ana"), alphaAuthor);
-      await PersonasService.create(beta.tenantId, persona("Beto"), betaAuthor);
-
-      await PersonasService.delete(alpha.tenantId, PERSONA_ID);
-
-      expect(
-        (await PersonasService.getById(beta.tenantId, PERSONA_ID))?.clientName,
-      ).toBe("Beto");
     });
   });
 

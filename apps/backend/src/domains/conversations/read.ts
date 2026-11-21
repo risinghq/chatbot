@@ -1,55 +1,61 @@
-import { tenantPredicate } from "../../db/query.ts";
-import { refOf } from "../../conversation/store.ts";
-import type { Binding } from "../../db/index.ts";
-import type { Conversation } from "@vendeya/types";
+import type {
+  Conversation,
+  ConversationStatus,
+  ReplayData,
+  ReplayMetadata,
+} from "@vendeya/types";
 import { WhatsAppService } from "../../adapters/whatsapp/index.ts";
-import { getEventsByConversation } from "../../domains/analytics/index.ts";
+import { refOf } from "../../conversation/store.ts";
+import { db, tenantScope } from "../../db/index.ts";
 import { logAction } from "../../platform/audit/logger.ts";
 import {
   assignedAgentScope,
   type AuthScope,
 } from "../../platform/auth/scope.ts";
-import type { ReplayData, ReplayMetadata } from "@vendeya/types";
-import { getAll } from "../../db/index.ts";
 
 /**
- * A sales agent reaches a conversation assigned to them or to nobody, never one
- * assigned to another agent. Nothing assigns conversations yet, so an agent who
- * follows an escalation alert must still reach the unassigned conversation.
+ * The conversations `scope` may see, each with the name of the business's
+ * customer who has its phone number. A sales agent reaches a conversation
+ * assigned to them or to nobody, never one assigned to another agent. Nothing
+ * assigns conversations yet, so an agent who follows an escalation alert must
+ * still reach the unassigned conversation.
  */
-const AGENT_CONVERSATIONS = "(assigned_agent = ? OR assigned_agent IS NULL)";
+function visibleConversations(scope: AuthScope) {
+  const agent = assignedAgentScope(scope);
+  return db
+    .selectFrom("conversations as cv")
+    .selectAll("cv")
+    .select((eb) =>
+      eb
+        .selectFrom("customers as c")
+        .select("c.name")
+        .whereRef("c.tenant_id", "=", "cv.tenant_id")
+        .whereRef("c.phone", "=", "cv.phone_number")
+        .limit(1)
+        .as("customer_name"),
+    )
+    .where(tenantScope(scope.tenantId, "cv.tenant_id"))
+    .$if(Boolean(agent), (q) =>
+      q.where((eb) =>
+        eb.or([
+          eb("cv.assigned_agent", "=", agent!),
+          eb("cv.assigned_agent", "is", null),
+        ]),
+      ),
+    );
+}
 
-/**
- * Every tenant role may list conversations. A sales agent sees the ones
- * assigned to them or to nobody, the rule `lookupConversation` applies to one.
- */
+/** Every tenant role may list conversations; `visibleConversations` says which. */
 export async function listConversations(
   scope: AuthScope,
-  status: string | null | undefined,
-) {
-  const conditions = ["is_simulation = 0"];
-  const params: Binding[] = [];
-
-  // A caller pinned to a tenant sees only that tenant's rows, whatever the role.
-  conditions.push(tenantPredicate(scope.tenantId));
-  if (scope.tenantId) params.push(scope.tenantId);
-
-  const agent = assignedAgentScope(scope);
-  if (agent) {
-    conditions.push(AGENT_CONVERSATIONS);
-    params.push(agent);
-  }
-
-  if (status) {
-    conditions.push("status = ?");
-    params.push(status);
-  }
-
-  return await getAll<Conversation>(
-    `SELECT * FROM conversations WHERE ${conditions.join(" AND ")}
-     ORDER BY last_activity_at DESC LIMIT 100`,
-    params,
-  );
+  status: ConversationStatus | undefined,
+): Promise<Conversation[]> {
+  return (await visibleConversations(scope)
+    .where("cv.is_simulation", "=", 0)
+    .$if(Boolean(status), (q) => q.where("cv.status", "=", status!))
+    .orderBy("cv.last_activity_at", "desc")
+    .limit(100)
+    .execute()) as Conversation[];
 }
 
 /**
@@ -63,66 +69,41 @@ export type ConversationLookup =
   | { status: "ambiguous"; candidates: Conversation[] };
 
 /**
- * Resolve a conversation the caller is allowed to see. A caller pinned to a
- * tenant gets another tenant's conversation reported as not found, and a sales
- * agent gets one assigned to another agent reported the same way. An unpinned
- * platform operator can find a conversation in any open tenant.
+ * Resolve a conversation the caller is allowed to see. One in another tenant,
+ * or assigned to another agent, is reported as not found, so every route that
+ * resolves `:phone` applies the rule. An unpinned platform operator can find a
+ * conversation in any open tenant.
  */
 export async function lookupConversation(
   scope: AuthScope,
   phoneNumber: string,
   channelAccountId: string | null,
 ): Promise<ConversationLookup> {
-  const conditions = ["phone_number = ?"];
-  const params: Binding[] = [phoneNumber];
-
+  // Neither pinned to a tenant nor platform staff: nothing is visible.
   if (!scope.tenantId && !scope.isPlatformOperator) {
-    // Neither pinned to a tenant nor platform staff: nothing is visible.
     return { status: "not_found" };
   }
 
-  conditions.push(tenantPredicate(scope.tenantId));
-  if (scope.tenantId) params.push(scope.tenantId);
+  const matches = (await visibleConversations(scope)
+    .where("cv.phone_number", "=", phoneNumber)
+    .$if(Boolean(channelAccountId), (q) =>
+      q.where("cv.channel_account_id", "=", channelAccountId!),
+    )
+    .orderBy("cv.last_activity_at", "desc")
+    .execute()) as Conversation[];
 
-  // A conversation assigned to another agent is not found, like one in another
-  // tenant, so every route that resolves `:phone` applies the rule.
-  const agent = assignedAgentScope(scope);
-  if (agent) {
-    conditions.push(AGENT_CONVERSATIONS);
-    params.push(agent);
-  }
-
-  if (channelAccountId) {
-    conditions.push("channel_account_id = ?");
-    params.push(channelAccountId);
-  }
-
-  const matches = await getAll<Conversation>(
-    `SELECT * FROM conversations WHERE ${conditions.join(" AND ")}
-     ORDER BY last_activity_at DESC`,
-    params,
-  );
-
-  if (matches.length === 0) {
-    return { status: "not_found" };
-  }
-
-  if (matches.length > 1) {
-    return { status: "ambiguous", candidates: matches };
-  }
-
+  if (matches.length === 0) return { status: "not_found" };
+  if (matches.length > 1) return { status: "ambiguous", candidates: matches };
   return { status: "found", conversation: matches[0]! };
 }
 
 export async function getConversationDetail(conv: Conversation) {
   const ref = refOf(conv);
   const messages = await WhatsAppService.getMessageHistory(ref, 100);
-  const events = await getEventsByConversation(ref);
 
   return {
     conversation: conv,
     messages: messages.reverse(),
-    events,
   };
 }
 
@@ -132,14 +113,10 @@ export async function getReplayData(
 ): Promise<ReplayData | null> {
   const ref = refOf(conv);
   const messages = await WhatsAppService.getMessageHistory(ref, 1000);
-  const initialContext = JSON.parse(conv.context_data || "{}");
 
   const metadata: ReplayMetadata = {
     conversationId: conv.phone_number,
-    clientName: conv.client_name,
-    segment: conv.segment,
-    creditLine: conv.credit_line,
-    finalState: conv.current_state,
+    customerName: conv.customer_name,
     messageCount: messages.length,
     timestamp: new Date().toISOString(),
   };
@@ -154,7 +131,6 @@ export async function getReplayData(
   return {
     conversation: conv,
     messages: messages.reverse(),
-    initialContext,
     metadata,
   };
 }

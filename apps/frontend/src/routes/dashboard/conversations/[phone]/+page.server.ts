@@ -1,15 +1,10 @@
-import type {
-  AnalyticsEvent,
-  Conversation,
-  ConversationMessage,
-  Order,
-} from "@vendeya/types";
+import type { Conversation, ConversationMessage, Order } from "@vendeya/types";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
   const sessionToken = cookies.get("session");
   if (!sessionToken) {
-    return { conversation: null, messages: [], events: [], user: null };
+    return { conversation: null, messages: [], user: null };
   }
 
   // A conversation is (tenant, channel account, phone number). The inbox links
@@ -36,7 +31,6 @@ export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
       return {
         conversation: null,
         messages: [],
-        events: [],
         order: null,
         user: userData.user,
       };
@@ -45,7 +39,6 @@ export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
     const data = await convRes.json<{
       conversation: Conversation | null;
       messages: ConversationMessage[];
-      events: AnalyticsEvent[];
     }>();
 
     // Load order if conversation exists
@@ -64,7 +57,6 @@ export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
     return {
       conversation: data.conversation,
       messages: data.messages,
-      events: data.events,
       order: orderData,
       user: userData.user,
     };
@@ -72,7 +64,6 @@ export const load: PageServerLoad = async ({ params, url, cookies, fetch }) => {
     return {
       conversation: null,
       messages: [],
-      events: [],
       order: null,
       user: null,
     };

@@ -109,10 +109,13 @@ export async function simulatorRef(
 }
 
 /** Insert a conversation row directly, bypassing the handler. */
+/**
+ * A conversation. `clientName` also files the tenant's customer with the
+ * conversation's phone number, which is where a conversation's name comes from.
+ */
 export async function insertConversation(
   ref: ConversationRef,
   overrides: {
-    contextData?: unknown;
     status?: string;
     clientName?: string | null;
     assignedAgent?: string | null;
@@ -121,24 +124,24 @@ export async function insertConversation(
 ): Promise<void> {
   await run(
     `INSERT INTO conversations
-       (tenant_id, channel_account_id, phone_number, context_data, status, client_name, assigned_agent, is_simulation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, channel_account_id, phone_number, status, assigned_agent, is_simulation)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     [
       ref.tenantId,
       ref.channelAccountId,
       ref.phoneNumber,
-      JSON.stringify(
-        overrides.contextData ?? {
-          phase: { phase: "greeting" },
-          metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-        },
-      ),
       overrides.status ?? "active",
-      overrides.clientName ?? null,
       overrides.assignedAgent ?? null,
       overrides.isSimulation ? 1 : 0,
     ],
   );
+  if (overrides.clientName) {
+    await run(
+      `INSERT INTO customers (id, tenant_id, name, phone) VALUES (?, ?, ?, ?)
+       ON CONFLICT DO NOTHING`,
+      [newId(), ref.tenantId, overrides.clientName, ref.phoneNumber],
+    );
+  }
 }
 
 /** An active tenant with no number. Returns its id. */

@@ -1,8 +1,7 @@
 export { answerMessage, type IncomingMessage } from "./handler/index.ts";
 export {
-  getOrCreateConversation,
-  updateConversation,
-  escalateConversation,
-  resetSession,
-  isSessionTimedOut,
+  ensureConversation,
+  findConversation,
+  handOff,
+  release,
 } from "./store.ts";

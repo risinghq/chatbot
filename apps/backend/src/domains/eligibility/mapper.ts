@@ -1,11 +1,12 @@
-import type { EnrichmentResult } from "@vendeya/core";
 import { BundleService } from "../catalog/index.ts";
 import { getCategoryDisplayNames } from "../../adapters/catalog/display.ts";
 import { CATEGORIES, CATEGORY_GROUPS } from "@vendeya/types";
 import type {
+  Bundle,
   CategoryGroup,
   CategoryKey,
   ProviderCheckResult,
+  Segment,
 } from "@vendeya/types";
 
 type EligibilityResult = ProviderCheckResult & {
@@ -15,10 +16,30 @@ type EligibilityResult = ProviderCheckResult & {
   nse?: number;
 };
 
+export type EligibilityOutcome = {
+  type: "eligibility_result";
+  status: "eligible" | "not_eligible" | "needs_human" | "system_outage";
+  segment?: Segment;
+  credit?: number;
+  name?: string;
+  nse?: number;
+  requiresAge?: boolean;
+  handoffReason?: string;
+  affordableCategories?: string[];
+  affordableBundles?: Bundle[];
+  categoryDisplayNames?: string[];
+  groupDisplayNames?: string[];
+  /**
+   * Set on `eligible` only. False means no tenant owned the check, so the
+   * affordable* fields are absent because no catalog was consulted.
+   */
+  catalogChecked?: boolean;
+};
+
 export async function mapEligibilityToEnrichment(
   tenantId: string | null,
   result: EligibilityResult,
-): Promise<Extract<EnrichmentResult, { type: "eligibility_result" }>> {
+): Promise<EligibilityOutcome> {
   if (result.needsHuman) {
     if (result.handoffReason === "both_providers_down") {
       return {

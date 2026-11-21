@@ -138,48 +138,28 @@ export {
   TENANT_SECRET_SETTING_KEYS,
 } from "./settings.ts";
 
-export type ConversationState =
-  | "INIT"
-  | "CONFIRM_CLIENT"
-  | "COLLECT_DNI"
-  | "WAITING_PROVIDER"
-  | "COLLECT_AGE"
-  | "OFFER_PRODUCTS"
-  | "HANDLE_OBJECTION"
-  | "CLOSING"
-  | "ESCALATED";
+export const CONVERSATION_STATUSES = [
+  "active",
+  "human_takeover",
+  "closed",
+] as const;
+export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
 
-export type ConversationStatus = "active" | "human_takeover" | "closed";
-export type SaleStatus = "pending" | "confirmed" | "rejected" | "no_answer";
+/**
+ * A conversation as the API returns it. `customer_name` is the name of the
+ * business's customer with the conversation's phone number, if there is one.
+ */
 export type Conversation = {
   tenant_id: string;
   channel_account_id: string;
   phone_number: string;
-  client_name: string | null;
-  dni: string | null;
-  is_calidda_client: number;
-  segment: Segment | null;
-  credit_line: number | null;
-  nse: number | null;
-  current_state: ConversationState;
   status: ConversationStatus;
-  last_activity_at: number;
-  context_data: string;
   handover_reason: string | null;
   is_simulation: number;
-  persona_id: string | null;
-  // Agent workflow fields
-  products_interested: string;
-  delivery_address: string | null;
-  delivery_reference: string | null;
+  last_activity_at: number;
   assigned_agent: string | null;
-  agent_notes: string | null;
-  sale_status: SaleStatus;
-  // Contract recording fields
-  recording_contract_asset_id: string | null;
-  recording_audio_asset_id: string | null;
-  recording_uploaded_at: number | null;
   assignment_notified_at: number | null;
+  customer_name: string | null;
 };
 
 export type CatalogPeriod = {
@@ -216,17 +196,6 @@ export type User = {
   is_active: number;
   created_at: number;
   created_by: string | null;
-};
-
-export type AnalyticsEvent = {
-  id: string;
-  tenant_id: string;
-  channel_account_id: string;
-  phone_number: string;
-  event_type: string;
-  metadata: string;
-  is_simulation: number;
-  created_at: number;
 };
 
 export type AuditLog = {
@@ -267,25 +236,9 @@ export type ProviderCheckResult = {
   reason?: string;
 };
 
-export type TestPersona = {
-  id: string;
-  tenant_id: string;
-  name: string;
-  description: string;
-  segment: "fnb" | "gaso" | "not_eligible";
-  clientName: string;
-  dni: string;
-  creditLine: number;
-  nse?: number;
-  isActive: boolean;
-};
-
 export type ReplayMetadata = {
   conversationId: string;
-  clientName: string | null;
-  segment: Segment | null;
-  creditLine: number | null;
-  finalState: ConversationState;
+  customerName: string | null;
   messageCount: number;
   timestamp: string;
 };
@@ -293,7 +246,6 @@ export type ReplayMetadata = {
 export type ReplayData = {
   conversation: Conversation;
   messages: ConversationMessage[];
-  initialContext: Record<string, any>;
   metadata: ReplayMetadata;
 };
 

@@ -6,7 +6,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type {
-  AnalyticsEvent,
   AuditLog,
   Bundle,
   CatalogPeriod,
@@ -36,7 +35,6 @@ import conversationRoutes from "../src/routes/conversations.ts";
 import catalogRoutes from "../src/routes/catalog.ts";
 import periodRoutes from "../src/routes/periods.ts";
 import orderRoutes from "../src/routes/orders.ts";
-import analyticsRoutes from "../src/routes/analytics.ts";
 import adminUserRoutes from "../src/routes/admin/users.ts";
 import adminSystemRoutes from "../src/routes/admin/system.ts";
 import { BundleService } from "../src/domains/catalog/bundles.ts";
@@ -44,8 +42,6 @@ import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { OrderWrites } from "../src/domains/orders/index.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
-import { uploadContract } from "../src/domains/conversations/media.ts";
-import { trackEventStatement } from "../src/domains/analytics/index.ts";
 import { logAction } from "../src/platform/audit/logger.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 
@@ -68,7 +64,6 @@ function buildApp() {
   app.route("/api/catalog", catalogRoutes);
   app.route("/api/periods", periodRoutes);
   app.route("/api/orders", orderRoutes);
-  app.route("/api/analytics", analyticsRoutes);
   app.use("/api/admin/*", requireRole("admin"));
   app.route("/api/admin/users", adminUserRoutes);
   app.route("/api/admin", adminSystemRoutes);
@@ -186,27 +181,18 @@ describe("created_at over HTTP", () => {
     expectMilliseconds(detail.messages[0]!.created_at);
   });
 
-  it("returns Conversation.assignment_notified_at and recording_uploaded_at as null until they are set", async () => {
+  it("returns Conversation.last_activity_at as a number and assignment_notified_at as null until it is set", async () => {
     const { conversation } = await getJson<{ conversation: Conversation }>(
       `/api/conversations/${PHONE}`,
     );
 
+    expectMilliseconds(conversation.last_activity_at);
     expect(conversation.assignment_notified_at).toBeNull();
-    expect(conversation.recording_uploaded_at).toBeNull();
   });
 
-  it("returns Conversation.assignment_notified_at and recording_uploaded_at as numbers once set", async () => {
-    const agent = await createMember(tenant, "sales_agent");
+  it("returns Conversation.assignment_notified_at as a number once set", async () => {
+    await createMember(tenant, "sales_agent");
     await assignNextAgentHeld(tenant.ref(PHONE));
-    await uploadContract({
-      ref: tenant.ref(PHONE),
-      userId: agent.userId,
-      contractFile: new File(["%PDF-1.4"], "contrato.pdf", {
-        type: "application/pdf",
-      }),
-      audioFile: new File(["ID3"], "llamada.mp3", { type: "audio/mpeg" }),
-      userDisplayName: "Test User",
-    });
 
     const detail = await getJson<{ conversation: Conversation }>(
       `/api/conversations/${PHONE}`,
@@ -215,24 +201,7 @@ describe("created_at over HTTP", () => {
 
     for (const conversation of [detail.conversation, listed!]) {
       expectMilliseconds(conversation.assignment_notified_at!);
-      expectMilliseconds(conversation.recording_uploaded_at!);
     }
-  });
-
-  it("returns AnalyticsEvent.created_at as a number", async () => {
-    await trackEventStatement(tenant.ref(PHONE), "greeting_sent").run();
-
-    const { events } = await getJson<{ events: AnalyticsEvent[] }>(
-      "/api/analytics/events",
-    );
-    const inDetail = await getJson<{ events: AnalyticsEvent[] }>(
-      `/api/conversations/${PHONE}`,
-    );
-
-    expect(events).toHaveLength(1);
-    expectMilliseconds(events[0]!.created_at);
-    expect(inDetail.events).toHaveLength(1);
-    expectMilliseconds(inDetail.events[0]!.created_at);
   });
 
   it("returns Order.created_at as a number", async () => {

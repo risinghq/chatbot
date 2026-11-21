@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getAll, getOne, run } from "../src/db/index.ts";
+import { getAll, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   insertConversation,
@@ -16,12 +16,9 @@ import {
 } from "./helpers/tenancy.ts";
 import { customerWrites, wakeAt } from "./helpers/turn.ts";
 
-import type { ConversationMetadata, ConversationPhase } from "@vendeya/core";
 import type { ConversationRef } from "@vendeya/types";
 
-import { executeCommands } from "../src/conversation/handler/command-executor.ts";
 import type { OutboxRow } from "../src/conversation/outbox.ts";
-import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { ProductImageService } from "../src/domains/catalog/images.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
@@ -29,13 +26,6 @@ import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
 
 const CUSTOMER = "51900666001";
 const HOUR = 60 * 60 * 1000;
-
-const OFFERING: ConversationPhase = {
-  phase: "offering_products",
-  segment: "fnb",
-  credit: 5000,
-  name: "Juan",
-};
 
 describe("a turn whose first reply could not be sent", () => {
   let tenant: TenantFixture;
@@ -46,7 +36,6 @@ describe("a turn whose first reply could not be sent", () => {
   /** Sends refused so far, and how many to refuse before accepting. */
   let refused: number;
   let toRefuse: number;
-  let bundleIds: string[];
   let model: FakeModel;
 
   async function rows(): Promise<OutboxRow[]> {
@@ -81,21 +70,10 @@ describe("a turn whose first reply could not be sent", () => {
     ).map((row) => row.status);
   }
 
-  async function phase(): Promise<ConversationPhase> {
-    const row = (await getOne(
-      `SELECT context_data FROM conversations
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-    )) as {
-      context_data: string;
-    };
-    return JSON.parse(row.context_data).phase;
-  }
-
   async function goIdle(): Promise<void> {
     await run(
       `UPDATE conversations
-       SET context_data = json_set(context_data, '$.metadata.lastActivityAt', ?)
+       SET last_activity_at = ?
        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
       [
         Date.now() - 4 * HOUR,
@@ -136,35 +114,6 @@ describe("a turn whose first reply could not be sent", () => {
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-
-    const periodId = `per-${crypto.randomUUID()}`;
-    await run(
-      `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
-       VALUES (?, ?, 'Enero', '2026-01', 'active')`,
-      [periodId, tenant.tenantId],
-    );
-    bundleIds = [];
-    for (const [name, price, imageId] of [
-      ["Cocina 2 hornillas", 800, "img-cheap"],
-      ["Cocina 4 hornillas", 1200, "img-dear"],
-    ]) {
-      const id = `bundle-${crypto.randomUUID()}`;
-      await BundleService.create({
-        id,
-        tenantId: tenant.tenantId,
-        period_id: periodId,
-        segment: "fnb",
-        name: name as string,
-        price: price as number,
-        primary_category: "cocinas",
-        categories_json: JSON.stringify(["cocinas"]),
-        image_id: imageId as string,
-        composition_json: JSON.stringify({ fixed: [], choices: [] }),
-        installments_json: JSON.stringify([{ months: 12, monthlyAmount: 110 }]),
-        created_by: null,
-      });
-      bundleIds.push(id);
-    }
 
     delivered = [];
     refused = 0;
@@ -290,44 +239,5 @@ describe("a turn whose first reply could not be sent", () => {
 
     expect(delivered).toEqual(order);
     expect((await rows()).map((row) => row.status)).toEqual(["sent", "sent"]);
-  });
-
-  it("records a single bundle as shown once its image is queued", async () => {
-    await insertConversation(ref, {
-      contextData: {
-        phase: OFFERING,
-        metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-      },
-    });
-    toRefuse = 1;
-
-    await executeCommands(
-      {
-        type: "update",
-        nextPhase: OFFERING,
-        commands: [{ type: "SEND_BUNDLE", bundleId: bundleIds[1]! }],
-      },
-      ref,
-      {
-        createdAt: Date.now(),
-        lastActivityAt: Date.now(),
-      } as ConversationMetadata,
-      false,
-      "trace",
-    );
-
-    expect(await rows()).toHaveLength(1);
-    expect((await rows())[0]).toMatchObject({
-      type: "image",
-      status: "pending",
-    });
-    expect(await phase()).toMatchObject({
-      sentProducts: [{ productId: bundleIds[1], position: 1 }],
-      lastAction: { type: "showed_products", productCount: 1 },
-    });
-
-    await drainOutbox();
-
-    expect(delivered).toEqual([`${tenant.tenantId}/images/img-dear.jpg`]);
   });
 });

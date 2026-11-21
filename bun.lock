@@ -19,7 +19,6 @@
       "dependencies": {
         "@oslojs/crypto": "^1.0.1",
         "@oslojs/encoding": "^1.1.0",
-        "@vendeya/core": "workspace:*",
         "@vendeya/intelligence": "workspace:*",
         "@vendeya/types": "workspace:*",
         "@vendeya/utils": "workspace:*",
@@ -69,19 +68,10 @@
         "wrangler": "^4.163.0",
       },
     },
-    "packages/core": {
-      "name": "@vendeya/core",
-      "version": "1.0.0",
-      "dependencies": {
-        "@vendeya/types": "workspace:*",
-        "@vendeya/utils": "workspace:*",
-      },
-    },
     "packages/intelligence": {
       "name": "@vendeya/intelligence",
       "version": "0.1.0",
       "dependencies": {
-        "@vendeya/core": "workspace:*",
         "@vendeya/types": "workspace:*",
         "openai": "^7.57.0",
       },
@@ -455,8 +445,6 @@
     "@vendeya/backend": ["@vendeya/backend@workspace:apps/backend"],
 
     "@vendeya/cli": ["@vendeya/cli@workspace:apps/cli"],
-
-    "@vendeya/core": ["@vendeya/core@workspace:packages/core"],
 
     "@vendeya/frontend": ["@vendeya/frontend@workspace:apps/frontend"],
 

@@ -17,10 +17,8 @@ import {
   setChannelStatus,
 } from "./helpers/tenancy.ts";
 
-import type { ConversationMetadata, ConversationPhase } from "@vendeya/core";
 import type { ConversationMessage, ConversationRef } from "@vendeya/types";
 
-import { executeCommands } from "../src/conversation/handler/command-executor.ts";
 import { CloudApiAdapter } from "../src/adapters/whatsapp/cloud-api.ts";
 import { WhatsAppService } from "../src/adapters/whatsapp/index.ts";
 import {
@@ -30,6 +28,7 @@ import {
   purgeFinishedOutbox,
   type OutboxRow,
 } from "../src/conversation/outbox.ts";
+import { handOff } from "../src/conversation/store.ts";
 import { conversationStub } from "../src/conversation/stub.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { takeoverConversation } from "../src/domains/conversations/write.ts";
@@ -591,42 +590,24 @@ describe("the outbox sender", () => {
     });
   });
 
-  describe("when the bot escalates", () => {
-    const metadata = {
-      createdAt: Date.now(),
-      lastActivityAt: Date.now(),
-    } as ConversationMetadata;
-
-    const escalating = {
-      type: "update" as const,
-      nextPhase: {
-        phase: "escalated",
-        reason: "multiple_objections",
-      } as ConversationPhase,
-      commands: [
-        {
-          type: "SEND_MESSAGE" as const,
-          text: "Un asesor te contactará en breve",
-        },
-      ],
-    };
-
-    it("keeps the advisor message queued, because nobody took the conversation over", async () => {
+  describe("when the bot hands off", () => {
+    it("keeps its goodbye queued, because nobody took the conversation over", async () => {
       answer = unreachable;
 
-      await executeCommands(escalating, ref, metadata, false, "trace");
+      await queue("Te paso con una persona del equipo.");
+      await handOff(ref, "asked_for_a_person");
 
       const queued = await rows();
       expect(queued).toHaveLength(1);
       expect(queued[0]).toMatchObject({
         status: "pending",
-        content: "Un asesor te contactará en breve",
+        content: "Te paso con una persona del equipo.",
       });
 
       answer = accepted;
       await wakeAt(ref, queued[0]!.next_attempt_at);
 
-      expect(textSends).toEqual(["Un asesor te contactará en breve"]);
+      expect(textSends).toEqual(["Te paso con una persona del equipo."]);
       expect((await rows())[0]!.status).toBe("sent");
     });
   });

@@ -2,7 +2,6 @@
   "extends": "@vendeya/tsconfig/backend.json",
   "compilerOptions": {
     "paths": {
-      "@vendeya/core": ["../core/src"],
       "@vendeya/types": ["../types/src"]
     }
   },

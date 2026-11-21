@@ -18,17 +18,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 let startDate = $state(limaDateString());
 let endDate = $state(limaDateString());
-let segments = $state<Record<string, boolean>>({
-  fnb: true,
-  gaso: true,
-  none: true,
-});
-// No status picked means every status.
-let saleStatuses = $state<Record<string, boolean>>({
-  confirmed: false,
-  pending: false,
-  rejected: false,
-});
 let generating = $state(false);
 
 let orderStartDate = $state("");
@@ -36,16 +25,6 @@ let orderEndDate = $state("");
 let orderStatus = $state("");
 let generatingOrders = $state(false);
 
-const segmentLabels: Record<string, string> = {
-  fnb: "FNB",
-  gaso: "GASO",
-  none: "Sin segmento",
-};
-const saleStatusLabels: Record<string, string> = {
-  confirmed: "Confirmados",
-  pending: "Pendientes",
-  rejected: "Rechazados",
-};
 const orderStatusItems = Object.entries(orderStatusLabels).map(
   ([value, label]) => ({ value, label }),
 );
@@ -63,10 +42,6 @@ function applyPreset(from: number, to: number) {
   endDate = limaDateString(now - to * DAY_MS);
 }
 
-function picked(set: Record<string, boolean>): string[] {
-  return Object.keys(set).filter((key) => set[key]);
-}
-
 // The API answers with the workbook; the browser saves it under `filename`.
 async function download(url: string, filename: string) {
   const res = await fetch(url);
@@ -81,13 +56,7 @@ async function download(url: string, filename: string) {
 
 async function generateActivity(e: Event) {
   e.preventDefault();
-  const statuses = picked(saleStatuses);
-  const params = new URLSearchParams({
-    startDate,
-    endDate,
-    segments: picked(segments).join(","),
-    saleStatuses: statuses.length ? statuses.join(",") : "all",
-  });
+  const params = new URLSearchParams({ startDate, endDate });
   generating = true;
   try {
     await download(
@@ -133,43 +102,23 @@ async function generateOrders(e: Event) {
 		<form onsubmit={generateActivity}>
 			<SectionShell
 				title="Actividad"
-				description="Cada cliente que escribió al bot, con los datos que dio, haya comprado o no."
+				description="Cada cliente que escribió en esas fechas, quién lo atiende y su última actividad."
 			>
-				<div class="flex flex-col gap-5 p-4">
-					<div>
-						<div class="mb-3 flex flex-wrap gap-1.5">
-							{#each presets as preset (preset.label)}
-								<Button size="sm" variant="secondary" onclick={() => applyPreset(preset.from, preset.to)}>
-									{preset.label}
-								</Button>
-							{/each}
-						</div>
-						{@render dateRange("activity", startDate, endDate, (v) => (startDate = v), (v) => (endDate = v))}
+				<div class="p-4">
+					<div class="mb-3 flex flex-wrap gap-1.5">
+						{#each presets as preset (preset.label)}
+							<Button size="sm" variant="secondary" onclick={() => applyPreset(preset.from, preset.to)}>
+								{preset.label}
+							</Button>
+						{/each}
 					</div>
-
-					<fieldset>
-						<legend class="mb-1.5 text-sm text-fg-muted">Segmento</legend>
-						<div class="flex flex-wrap gap-1.5">
-							{#each Object.entries(segmentLabels) as [key, label] (key)}
-								{@render chip(label, segments[key] ?? false, (v) => (segments[key] = v))}
-							{/each}
-						</div>
-					</fieldset>
-
-					<fieldset>
-						<legend class="mb-1.5 text-sm text-fg-muted">Estado de venta · ninguno marcado incluye todos</legend>
-						<div class="flex flex-wrap gap-1.5">
-							{#each Object.entries(saleStatusLabels) as [key, label] (key)}
-								{@render chip(label, saleStatuses[key] ?? false, (v) => (saleStatuses[key] = v))}
-							{/each}
-						</div>
-					</fieldset>
+					{@render dateRange("activity", startDate, endDate, (v) => (startDate = v), (v) => (endDate = v))}
 				</div>
 				<footer class="flex items-center justify-between gap-3 border-t border-border-subtle px-4 py-3">
 					<p class="text-sm text-fg-muted">
 						Contactos de hoy: <span class="text-fg tabular-nums">{data.todayCount}</span>
 					</p>
-					<Button type="submit" disabled={generating || picked(segments).length === 0}>
+					<Button type="submit" disabled={generating}>
 						{generating ? "Generando…" : "Descargar Excel"}
 					</Button>
 				</footer>
@@ -216,13 +165,4 @@ async function generateOrders(e: Event) {
 			<Input id="{id}-to" type="date" value={to} oninput={(e) => setTo(e.currentTarget.value)} />
 		</FormField>
 	</div>
-{/snippet}
-
-{#snippet chip(label: string, checked: boolean, set: (value: boolean) => void)}
-	<label
-		class="flex h-7 cursor-pointer items-center rounded-sm border border-border px-2.5 text-sm text-fg-muted transition-colors duration-150 ease-out hover:bg-hover has-checked:border-accent has-checked:bg-accent-soft has-checked:text-accent-text has-focus-visible:outline-2 has-focus-visible:outline-ring"
-	>
-		<input type="checkbox" {checked} onchange={(e) => set(e.currentTarget.checked)} class="sr-only" />
-		{label}
-	</label>
 {/snippet}

@@ -1,14 +1,13 @@
 /**
  * Each business brings its own OpenAI key, stored encrypted in tenant_secrets
- * and entered on the dashboard. The turn's provider is built from that key:
- * the request goes out with the tenant's key, a tenant with none takes the
- * unavailable path, and a tenant admin writes only its own.
+ * and entered on the dashboard. The turn's model calls go out with that key,
+ * and a tenant admin writes only its own.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { Hono } from "hono";
-import { createProvider } from "@vendeya/intelligence";
+import { createCompletion } from "@vendeya/intelligence";
 import { TenantSecrets } from "../src/domains/settings/tenant-secrets.ts";
 import {
   hasOpenAiApiKey,
@@ -45,7 +44,7 @@ function fakeOpenAI(keys: (string | null)[]) {
         choices: [
           {
             index: 0,
-            message: { role: "assistant", content: '{"isQuestion": true}' },
+            message: { role: "assistant", content: "Hola" },
             finish_reason: "stop",
           },
         ],
@@ -92,29 +91,23 @@ describe("the tenant's OpenAI key", () => {
     }
   });
 
-  it("authenticates the turn's provider with the tenant's key", async () => {
+  it("authenticates the turn's model calls with the tenant's key", async () => {
     const tenant = await createTenantFixture("openai-call");
     await TenantSecrets.set(tenant.tenantId, "openai_api_key", SECRET);
 
     const keys: (string | null)[] = [];
     globalThis.fetch = fakeOpenAI(keys);
 
-    const provider = createProvider(await openAiApiKey(tenant.tenantId));
-    expect(await provider.isQuestion("do you deliver?")).toBe(true);
+    const complete = createCompletion((await openAiApiKey(tenant.tenantId))!);
+    const reply = await complete({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: "hola" }],
+      tools: [],
+      allowTools: false,
+    });
+    expect(reply.content).toBe("Hola");
 
     expect(keys).toEqual([SECRET]);
-  });
-
-  it("takes the unavailable path when the tenant has no key", async () => {
-    const tenant = await createTenantFixture("openai-none");
-    const fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy;
-
-    const provider = createProvider(await openAiApiKey(tenant.tenantId));
-
-    // The SDK throws for a missing key, the same failure an outage produces.
-    expect(() => provider.isQuestion("do you deliver?")).toThrow();
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

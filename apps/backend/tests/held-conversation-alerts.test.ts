@@ -2,12 +2,12 @@
  * What the person holding a conversation hears when the customer keeps
  * writing. Each test sends real inbound messages through `answerMessage` and
  * reads what reaches the network: staff alerts, read receipts and typing
- * indicators. The only fake is the network.
+ * indicators. The only fakes are the network and the model, which hands the
+ * conversation off when the customer asks for a person.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import type { ConversationPhase } from "@vendeya/core";
 import type { ConversationRef } from "@vendeya/types";
 
 import { getOne, run } from "../src/db/index.ts";
@@ -24,6 +24,7 @@ import {
 } from "../src/platform/auth/session.ts";
 import conversationRoutes from "../src/routes/conversations.ts";
 import { TenantSettings } from "../src/domains/settings/system.ts";
+import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
 import {
   createMember,
   createTenantFixture,
@@ -36,14 +37,6 @@ const CUSTOMER = "51900777001";
 const AGENT_PHONE = "51911000001";
 const SALES_GROUP = "120363000000000001@g.us";
 
-const SECOND_OBJECTION: ConversationPhase = {
-  phase: "handling_objection",
-  segment: "fnb",
-  credit: 3000,
-  name: "Ana",
-  objectionCount: 2,
-};
-
 type StaffMessage = { to: string; body: string };
 type ReadReceipt = { messageId: string; typing: boolean };
 
@@ -55,6 +48,7 @@ describe("writing to a conversation a person holds", () => {
   let staffMessages: StaffMessage[];
   let receipts: ReadReceipt[];
   let staffSendsFail: boolean;
+  let model: FakeModel;
 
   async function conversationFetch(
     _url: unknown,
@@ -91,6 +85,16 @@ describe("writing to a conversation a person holds", () => {
     return messageId;
   }
 
+  /** The customer asks for a person and the model hands the chat off. */
+  async function asksForAPerson(): Promise<void> {
+    model.calls({
+      name: "hand_off",
+      arguments: { reason: "asked_for_a_person" },
+    });
+    model.says("Te paso con una persona del equipo.");
+    await customerWrites("quiero hablar con una persona");
+  }
+
   const sentTo = (to: string, containing: string) =>
     staffMessages.filter((m) => m.to === to && m.body.includes(containing));
 
@@ -122,12 +126,8 @@ describe("writing to a conversation a person holds", () => {
       channelAccountId: account.id,
       phoneNumber: CUSTOMER,
     };
-    await insertConversation(ref, {
-      contextData: {
-        phase: SECOND_OBJECTION,
-        metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-      },
-    });
+    await insertConversation(ref);
+    await withOpenAiKey(tenant.tenantId);
     agent = (await createMember(tenant, "sales_agent")).userId;
     await TenantSettings.set(
       tenant.tenantId,
@@ -142,9 +142,11 @@ describe("writing to a conversation a person holds", () => {
     originalFetch = globalThis.fetch;
     globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
       conversationFetch(url, init)) as unknown as typeof fetch;
+    model = fakeModel();
   });
 
   afterEach(async () => {
+    model.restore();
     globalThis.fetch = originalFetch;
     await run("DELETE FROM audit_log WHERE user_id = ?", [agent]);
   });
@@ -153,7 +155,7 @@ describe("writing to a conversation a person holds", () => {
     beforeEach(async () => giveAgentAPhone());
 
     it("alerts the agent once, however long the customer keeps writing", async () => {
-      await customerWrites("no");
+      await asksForAPerson();
       expect(agentEscalationAlerts()).toHaveLength(1);
 
       await customerWrites("hola?");
@@ -165,7 +167,7 @@ describe("writing to a conversation a person holds", () => {
 
     it("alerts about the next message when the escalation alert did not go out", async () => {
       staffSendsFail = true;
-      await customerWrites("no");
+      await asksForAPerson();
       expect(agentEscalationAlerts()).toEqual([]);
 
       staffSendsFail = false;
@@ -183,7 +185,7 @@ describe("writing to a conversation a person holds", () => {
         other,
       ]);
 
-      await customerWrites("no");
+      await asksForAPerson();
       const holder = (await getOne(
         "SELECT assigned_agent FROM conversations WHERE tenant_id = ? AND phone_number = ?",
         [tenant.tenantId, CUSTOMER],
@@ -213,7 +215,7 @@ describe("writing to a conversation a person holds", () => {
     });
 
     it("alerts again about a message once the agent has answered", async () => {
-      await customerWrites("no");
+      await asksForAPerson();
       await sendManualMessage(ref, "Hola Ana, te atiendo", agent);
       staffMessages.length = 0;
 
@@ -267,7 +269,7 @@ describe("writing to a conversation a person holds", () => {
 
   describe("while nobody is assigned", () => {
     it("leaves the sales group with the escalation alert alone", async () => {
-      await customerWrites("no");
+      await asksForAPerson();
       await customerWrites("hola?");
       await customerWrites("¿alguien me atiende?");
 
@@ -280,7 +282,7 @@ describe("writing to a conversation a person holds", () => {
 
   describe("while the bot owns the conversation", () => {
     it("shows the customer the typing indicator", async () => {
-      const messageId = await customerWrites("no");
+      const messageId = await customerWrites("hola");
 
       expect(receipts).toEqual([{ messageId, typing: true }]);
     });

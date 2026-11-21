@@ -1,9 +1,10 @@
-/** Range queries and writes on the millisecond columns: the funnel, the daily report, `last_activity_at`. */
+/** Range queries and writes on the millisecond columns: a report's range, the activity report, `last_activity_at`. */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as XLSX from "xlsx";
 
 import { getOne, run } from "../src/db/index.ts";
+import { limaDayBounds, limaRangeEdge } from "../src/db/query.ts";
 import {
   createTenantFixture,
   insertConversation,
@@ -11,30 +12,11 @@ import {
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import { getFunnelStats } from "../src/domains/analytics/index.ts";
 import { ReportService } from "../src/domains/reports/index.ts";
-import { resetSession, updateConversation } from "../src/conversation/store.ts";
+import { refreshLastActivity, release } from "../src/conversation/store.ts";
 import { takeoverConversation } from "../src/domains/conversations/write.ts";
 
 const CUSTOMER = "51900111222";
-
-async function insertEvent(
-  fixture: TenantFixture,
-  createdAt: number,
-): Promise<void> {
-  await run(
-    `INSERT INTO analytics_events
-       (id, tenant_id, channel_account_id, phone_number, event_type, created_at)
-     VALUES (?, ?, ?, ?, 'session_start', ?)`,
-    [
-      crypto.randomUUID(),
-      fixture.tenantId,
-      fixture.channelAccountId,
-      CUSTOMER,
-      createdAt,
-    ],
-  );
-}
 
 async function setLastActivity(
   fixture: TenantFixture,
@@ -56,12 +38,21 @@ async function lastActivity(fixture: TenantFixture): Promise<unknown> {
   ).last_activity_at;
 }
 
-async function dailyReportRows(
+async function activityReport(
   tenantId: string,
-  date?: string,
-): Promise<number> {
-  const buffer = await ReportService.generateDailyReport(tenantId, date);
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+  [start, end]: [number, number],
+): Promise<XLSX.WorkBook> {
+  const buffer = await ReportService.generateActivityReport({
+    tenantId,
+    startDate: new Date(start),
+    endDate: new Date(end),
+  });
+  return XLSX.read(buffer, { type: "buffer" });
+}
+
+/** Rows in the activity report for the Lima day `date`, or today's. */
+async function dayRows(tenantId: string, date?: string): Promise<number> {
+  const workbook = await activityReport(tenantId, limaDayBounds(date));
   const [name] = workbook.SheetNames;
   return XLSX.utils.sheet_to_json(workbook.Sheets[name ?? ""] ?? {}).length;
 }
@@ -72,149 +63,56 @@ describe("date ranges over millisecond columns", () => {
 
   beforeEach(async () => {
     tenant = await createTenantFixture("date-bounds");
-    await insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
+    await insertConversation(tenant.ref(CUSTOMER));
   });
 
   afterEach(async () => {
     vi.useRealTimers();
   });
 
-  describe("the funnel", () => {
-    it("counts an event inside an explicit range", async () => {
-      const at = Date.parse("2026-03-10T15:00:00.000Z");
-      await insertEvent(tenant, at);
-
-      const stats = await getFunnelStats(
-        tenant.tenantId,
-        "2026-03-10T00:00:00.000Z",
-        "2026-03-10T23:59:59.999Z",
+  describe("a range edge", () => {
+    it("closes a date-only end on the last millisecond of that Lima day", () => {
+      expect(limaRangeEdge("2026-03-10", "end", "endDate")).toBe(
+        Date.parse("2026-03-10T23:59:59.999-05:00"),
       );
-
-      expect(stats.sessions_started).toBe(1);
     });
 
-    it("leaves out an event outside the range", async () => {
-      await insertEvent(tenant, Date.parse("2026-03-11T00:00:01.000Z"));
-
-      const stats = await getFunnelStats(
-        tenant.tenantId,
-        "2026-03-10T00:00:00.000Z",
-        "2026-03-10T23:59:59.999Z",
+    it("opens a date-only start at Lima midnight", () => {
+      expect(limaRangeEdge("2026-03-10", "start", "startDate")).toBe(
+        Date.parse("2026-03-10T00:00:00.000-05:00"),
       );
-
-      expect(stats.sessions_started).toBe(0);
     });
 
-    it("counts a recent event when no range is given", async () => {
-      await insertEvent(tenant, Date.now() - 60_000);
-
-      expect((await getFunnelStats(tenant.tenantId)).sessions_started).toBe(1);
-    });
-
-    describe("a date-only end", () => {
-      it("covers the whole Lima day, including its evening", async () => {
-        await insertEvent(tenant, Date.parse("2026-03-10T15:00:00.000Z"));
-        await insertEvent(tenant, Date.parse("2026-03-10T23:30:00-05:00"));
-
-        const stats = await getFunnelStats(
-          tenant.tenantId,
-          "2026-03-01",
-          "2026-03-10",
-        );
-
-        expect(stats.sessions_started).toBe(2);
-      });
-
-      it("stops at the next Lima midnight", async () => {
-        await insertEvent(tenant, Date.parse("2026-03-11T00:00:00-05:00"));
-
-        const stats = await getFunnelStats(
-          tenant.tenantId,
-          "2026-03-01",
-          "2026-03-10",
-        );
-
-        expect(stats.sessions_started).toBe(0);
-      });
-    });
-
-    describe("a date-only start", () => {
-      it("starts at Lima midnight", async () => {
-        await insertEvent(tenant, Date.parse("2026-03-10T00:00:00-05:00"));
-
-        const stats = await getFunnelStats(
-          tenant.tenantId,
-          "2026-03-10",
-          "2026-03-10",
-        );
-
-        expect(stats.sessions_started).toBe(1);
-      });
-
-      it("leaves out the last moment of the day before", async () => {
-        await insertEvent(tenant, Date.parse("2026-03-09T23:59:59.999-05:00"));
-
-        const stats = await getFunnelStats(
-          tenant.tenantId,
-          "2026-03-10",
-          "2026-03-10",
-        );
-
-        expect(stats.sessions_started).toBe(0);
-      });
-    });
-
-    describe("a timestamp with a zone", () => {
-      it("keeps its exact instant at the start", async () => {
-        await insertEvent(tenant, Date.parse("2026-03-10T11:59:59.999Z"));
-        await insertEvent(tenant, Date.parse("2026-03-10T12:00:00.000Z"));
-
-        const stats = await getFunnelStats(
-          tenant.tenantId,
-          "2026-03-10T12:00:00.000Z",
-          "2026-03-10T23:59:59.999Z",
-        );
-
-        expect(stats.sessions_started).toBe(1);
-      });
-
-      it("keeps its exact instant at the end", async () => {
-        await insertEvent(tenant, Date.parse("2026-03-10T12:00:00.000Z"));
-        await insertEvent(tenant, Date.parse("2026-03-10T12:00:00.001Z"));
-
-        const stats = await getFunnelStats(
-          tenant.tenantId,
-          "2026-03-10T00:00:00.000Z",
-          "2026-03-10T12:00:00.000Z",
-        );
-
-        expect(stats.sessions_started).toBe(1);
-      });
-    });
-
-    it("refuses a bound that is not a date", async () => {
-      await expect(getFunnelStats(tenant.tenantId, "garbage")).rejects.toThrow(
-        "start must be YYYY-MM-DD or an ISO timestamp with a zone",
+    it("keeps the exact instant of a timestamp with a zone", () => {
+      expect(limaRangeEdge("2026-03-10T12:00:00.000Z", "start", "s")).toBe(
+        Date.parse("2026-03-10T12:00:00.000Z"),
       );
-      await expect(
-        getFunnelStats(tenant.tenantId, "2026-02-01", "2026-02-30"),
-      ).rejects.toThrow(
-        "end must be YYYY-MM-DD or an ISO timestamp with a zone",
+      expect(limaRangeEdge("2026-03-10T12:00:00.000Z", "end", "e")).toBe(
+        Date.parse("2026-03-10T12:00:00.000Z"),
+      );
+    });
+
+    it("refuses a bound that is not a date", () => {
+      expect(() => limaRangeEdge("garbage", "start", "startDate")).toThrow(
+        "startDate must be YYYY-MM-DD or an ISO timestamp with a zone",
+      );
+      expect(() => limaRangeEdge("2026-02-30", "end", "endDate")).toThrow(
+        "endDate must be YYYY-MM-DD or an ISO timestamp with a zone",
       );
     });
   });
 
-  describe("the daily report", () => {
+  describe("the activity report", () => {
     it("lists a conversation active that day", async () => {
       await setLastActivity(tenant, Date.parse("2026-03-10T12:00:00-05:00"));
 
-      expect(await dailyReportRows(tenant.tenantId, "2026-03-10")).toBe(1);
+      expect(await dayRows(tenant.tenantId, "2026-03-10")).toBe(1);
     });
 
     it("leaves out a conversation active on another day", async () => {
       await setLastActivity(tenant, Date.parse("2026-03-11T12:00:00-05:00"));
 
-      expect(await dailyReportRows(tenant.tenantId, "2026-03-10")).toBe(0);
+      expect(await dayRows(tenant.tenantId, "2026-03-10")).toBe(0);
     });
 
     it("opens at Lima midnight", async () => {
@@ -223,7 +121,7 @@ describe("date ranges over millisecond columns", () => {
         Date.parse("2026-09-19T00:00:00.000-05:00"),
       );
 
-      expect(await dailyReportRows(tenant.tenantId, "2026-09-19")).toBe(1);
+      expect(await dayRows(tenant.tenantId, "2026-09-19")).toBe(1);
     });
 
     it("leaves out the last moment of the Lima day before", async () => {
@@ -232,7 +130,7 @@ describe("date ranges over millisecond columns", () => {
         Date.parse("2026-09-18T23:59:59.999-05:00"),
       );
 
-      expect(await dailyReportRows(tenant.tenantId, "2026-09-19")).toBe(0);
+      expect(await dayRows(tenant.tenantId, "2026-09-19")).toBe(0);
     });
 
     it("closes on the last millisecond of the Lima day", async () => {
@@ -241,7 +139,7 @@ describe("date ranges over millisecond columns", () => {
         Date.parse("2026-09-19T23:59:59.999-05:00"),
       );
 
-      expect(await dailyReportRows(tenant.tenantId, "2026-09-19")).toBe(1);
+      expect(await dayRows(tenant.tenantId, "2026-09-19")).toBe(1);
     });
 
     it("leaves out Lima midnight of the next day", async () => {
@@ -250,31 +148,16 @@ describe("date ranges over millisecond columns", () => {
         Date.parse("2026-09-20T00:00:00.000-05:00"),
       );
 
-      expect(await dailyReportRows(tenant.tenantId, "2026-09-19")).toBe(0);
+      expect(await dayRows(tenant.tenantId, "2026-09-19")).toBe(0);
     });
 
-    it("is today's Lima day when no date is given", async () => {
-      vi.setSystemTime(new Date("2026-09-20T03:00:00.000Z"));
-      await setLastActivity(tenant, Date.parse("2026-09-19T08:00:00-05:00"));
-
-      expect(await dailyReportRows(tenant.tenantId)).toBe(1);
-    });
-
-    it("names its sheet for the Lima date", async () => {
-      const buffer = await ReportService.generateDailyReport(
+    it("names its sheet for the Lima date the range opens on", async () => {
+      const workbook = await activityReport(
         tenant.tenantId,
-        "2026-09-19",
+        limaDayBounds("2026-09-19"),
       );
 
-      expect(XLSX.read(buffer, { type: "buffer" }).SheetNames).toEqual([
-        "2026-09-19",
-      ]);
-    });
-
-    it("refuses a date that is not a calendar day", async () => {
-      await expect(
-        ReportService.generateDailyReport(tenant.tenantId, "garbage"),
-      ).rejects.toThrow("date must be YYYY-MM-DD");
+      expect(workbook.SheetNames).toEqual(["2026-09-19"]);
     });
   });
 
@@ -298,18 +181,18 @@ describe("date ranges over millisecond columns", () => {
   });
 
   describe("the activity timestamp a conversation is written with", () => {
-    it("is an integer after its state is saved", async () => {
+    it("is an integer after a turn refreshes it", async () => {
       const before = Date.now();
-      await updateConversation(tenant.ref(CUSTOMER), { phase: "greeting" }, {});
+      await refreshLastActivity(tenant.ref(CUSTOMER));
 
       const stored = await lastActivity(tenant);
       expect(typeof stored).toBe("number");
       expect(stored as number).toBeGreaterThanOrEqual(before);
     });
 
-    it("is an integer after the session is reset", async () => {
+    it("is an integer after the conversation is released", async () => {
       const before = Date.now();
-      await resetSession(tenant.ref(CUSTOMER));
+      await release(tenant.ref(CUSTOMER));
 
       const stored = await lastActivity(tenant);
       expect(typeof stored).toBe("number");
@@ -334,10 +217,11 @@ describe("date ranges over millisecond columns", () => {
       await run("DELETE FROM users WHERE id = ?", [agent]);
     });
 
-    it("lands inside today's daily report", async () => {
-      await updateConversation(tenant.ref(CUSTOMER), { phase: "greeting" }, {});
+    it("lands inside today's activity report", async () => {
+      await setLastActivity(tenant, 0);
+      await refreshLastActivity(tenant.ref(CUSTOMER));
 
-      expect(await dailyReportRows(tenant.tenantId)).toBe(1);
+      expect(await dayRows(tenant.tenantId)).toBe(1);
     });
   });
 });

@@ -68,8 +68,7 @@ These pages check the role on the server:
 - [`dashboard/admin/+layout.server.ts`](../apps/frontend/src/routes/dashboard/admin/+layout.server.ts)
   sends anyone but `admin` to `/dashboard`.
 - `reports/+page.server.ts` allows `admin`, `developer`, `supervisor`.
-- `simulator/+page.server.ts` and `personas/+page.server.ts` allow `admin`,
-  `developer`.
+- `simulator/+page.server.ts` allows `admin`, `developer`.
 - `negocios/+page.server.ts` allows platform operators only.
 
 Other pages have no role guard. When the backend refuses their load with 403,
@@ -90,18 +89,21 @@ routes/
     +page.svelte                    home: setup checklist and warnings
     +layout.svelte                  sidebar, a drawer below md
     conversations/  [phone]/        inbox and one conversation
+    asistente/                      the assistant's instructions, model and tools
+    clientes/  [customerId]/        customers and one customer
     catalog/  bundles/[id]/  inventory/[id]/   products and offers; one product and its variants
     inventario/                     stock per variant and the movement ledger
     orders/  [orderId]/
+    envios/                         delivery zones and shipments
     reports/                        admin, developer, supervisor
     activity/                       system activity
     simulator/                      admin, developer
-    personas/  create/              admin, developer
     providers/                      DNI lookup, platform operators
     negocios/                       business management, platform operators
+    cuenta/                         the signed-in user's account
     admin/                          admin only
       users/  [userId]/  create/
-      periods/  audit/  settings/
+      channels/  orders/  periods/  audit/  settings/
 ```
 
 ## Adding a page
@@ -273,11 +275,10 @@ supervisor.
 
 ## What has no page
 
-The API has endpoints the dashboard does not reach: registering channel
-accounts, retrying eligibility, the analytics endpoints.
-[Tenancy](./tenancy.md), [Connecting WhatsApp](./whatsapp.md) and
-[Eligibility](./eligibility.md) show the ones an operator needs as `curl`
-commands.
+The API has endpoints the dashboard does not reach: registering channel accounts
+and the operator's DNI lookup. [Tenancy](./tenancy.md),
+[Connecting WhatsApp](./whatsapp.md) and [Eligibility](./eligibility.md) show
+the ones an operator needs as `curl` commands.
 
 ## Onboarding a business
 

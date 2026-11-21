@@ -2,29 +2,24 @@
 import { onMount } from "svelte";
 import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
-import { phaseLabel } from "#lib/utils/conversation-phase.js";
-import { formatPhone, formatPrice } from "#lib/utils/formatters.js";
+import { formatPhone } from "#lib/utils/formatters.js";
 import Button from "#lib/components/ui/button.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
 import Banner from "#lib/components/ui/banner.svelte";
 import EmptyState from "#lib/components/ui/empty-state.svelte";
 import Icon from "#lib/components/ui/icon.svelte";
-import Modal from "#lib/components/ui/modal.svelte";
 import Textarea from "#lib/components/ui/textarea.svelte";
 import MessageBubble from "#lib/components/conversations/message-bubble.svelte";
 import MessageInput from "#lib/components/conversations/message-input.svelte";
 import ConversationItem from "#lib/components/conversations/conversation-item.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
-import type { ReplayData, Conversation, TestPersona } from "@vendeya/types";
+import type { Conversation, ReplayData, ReplayMetadata } from "@vendeya/types";
 import type { PageData } from "./$types";
 
 let { data }: { data: PageData } = $props();
 
 let testConversations = $state<Conversation[]>([]);
-let personas = $state<TestPersona[]>([]);
-let selectedPersonaId = $state<string | null>(null);
 let selectedPhone = $state<string | null>(null);
-let showPersonaDialog = $state(false);
 let messages = $state<any[]>([]);
 let currentInput = $state("");
 let conversation = $state<any>(null);
@@ -33,7 +28,7 @@ let messagesContainer = $state<HTMLDivElement>();
 let polling: ReturnType<typeof setInterval> | null = null;
 
 let replayMode = $state(false);
-let replayMetadata = $state<any>(null);
+let replayMetadata = $state<ReplayMetadata | null>(null);
 let editingMessageIndex = $state<number | null>(null);
 let editedContent = $state("");
 
@@ -41,10 +36,6 @@ async function loadTestConversations() {
   testConversations = await fetchApi<Conversation[]>(
     "/api/simulator/conversations",
   );
-}
-
-async function loadPersonas() {
-  personas = await fetchApi<TestPersona[]>("/api/simulator/personas");
 }
 
 async function loadConversation(phone: string) {
@@ -60,15 +51,6 @@ function scrollToBottom() {
   }
 }
 
-function openPersonaDialog() {
-  showPersonaDialog = true;
-}
-
-function closePersonaDialog() {
-  showPersonaDialog = false;
-  selectedPersonaId = null;
-}
-
 async function createNewConversation() {
   loading = true;
   try {
@@ -76,14 +58,11 @@ async function createNewConversation() {
       "/api/simulator/conversations",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ personaId: selectedPersonaId }),
       },
     );
 
     await loadTestConversations();
     selectedPhone = created.phone_number;
-    closePersonaDialog();
   } catch (error) {
     console.error("Failed to create conversation:", error);
     toast.error("No se pudo crear la simulación.");
@@ -306,8 +285,6 @@ $effect(() => {
 });
 
 onMount(() => {
-  loadPersonas();
-
   if (data.loadPhone) {
     loadReplayConversation(data.loadPhone, data.loadChannel);
   } else {
@@ -331,24 +308,6 @@ onMount(() => {
 
 <PageTitle title="Simulador" />
 
-{#snippet personaOption(name: string, description: string, segment: string | null, personaId: string | null)}
-	<button
-		type="button"
-		disabled={loading}
-		onclick={() => {
-			selectedPersonaId = personaId;
-			createNewConversation();
-		}}
-		class="block w-full rounded-md border border-border px-3 py-2.5 text-left transition-colors hover:border-border-strong hover:bg-hover disabled:opacity-60"
-	>
-		<span class="flex items-center gap-2">
-			<span class="text-base font-medium text-fg">{name}</span>
-			{#if segment}<Badge>{segment}</Badge>{/if}
-		</span>
-		<span class="mt-0.5 block text-sm text-fg-muted">{description}</span>
-	</button>
-{/snippet}
-
 <!-- 3rem is the mobile top bar in the dashboard layout. -->
 <div class="flex h-[calc(100dvh-3rem)] overflow-hidden md:h-dvh">
 	<div
@@ -358,12 +317,7 @@ onMount(() => {
 	>
 		<div class="flex h-12 shrink-0 items-center gap-1 border-b border-border-subtle pr-2 pl-4">
 			<h1 class="flex-1 text-md font-medium text-fg">Simulador</h1>
-			{#if data.user.role === "admin" || data.user.role === "developer"}
-				<Button variant="ghost" size="sm" href="/dashboard/personas" aria-label="Gestionar personas">
-					<Icon name="users" />
-				</Button>
-			{/if}
-			<Button variant="ghost" size="sm" onclick={openPersonaDialog} disabled={loading} aria-label="Nueva simulación">
+			<Button variant="ghost" size="sm" onclick={createNewConversation} disabled={loading} aria-label="Nueva simulación">
 				<Icon name="plus" />
 			</Button>
 		</div>
@@ -383,7 +337,7 @@ onMount(() => {
 					description="Crea una para probar al bot sin escribir desde WhatsApp."
 				>
 					{#snippet action()}
-						<Button size="sm" onclick={openPersonaDialog}>Nueva simulación</Button>
+						<Button size="sm" onclick={createNewConversation} disabled={loading}>Nueva simulación</Button>
 					{/snippet}
 				</EmptyState>
 			{/if}
@@ -392,7 +346,6 @@ onMount(() => {
 
 	<div class="min-w-0 flex-1 flex-col bg-canvas md:flex {selectedPhone ? 'flex' : 'hidden'}">
 		{#if selectedPhone && conversation}
-			{@const persona = personas.find((p) => p.id === conversation.persona_id)}
 			<header class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle bg-surface px-4 py-2 md:min-h-12">
 				<Button
 					variant="ghost"
@@ -405,12 +358,17 @@ onMount(() => {
 				</Button>
 				<div class="min-w-0 flex-1">
 					<h2 class="truncate text-md font-medium text-fg">
-						{conversation.client_name || formatPhone(selectedPhone)}
+						{conversation.customer_name || formatPhone(selectedPhone)}
 					</h2>
-					{#if conversation.client_name}
+					{#if conversation.customer_name}
 						<p class="font-mono text-sm text-fg-muted">{formatPhone(selectedPhone)}</p>
 					{/if}
 				</div>
+				{#if conversation.status === "human_takeover"}
+					<Badge variant="error">
+						<span title={conversation.handover_reason || undefined}>Intervención activa</span>
+					</Badge>
+				{/if}
 				{#if replayMode}
 					<Button variant="secondary" size="sm" onclick={exitReplayMode}>Salir de depuración</Button>
 				{:else}
@@ -422,31 +380,11 @@ onMount(() => {
 			{#if replayMode && replayMetadata}
 				<div class="shrink-0 border-b border-border-subtle p-3">
 					<Banner tone="warning" title="Modo depuración">
-						Copia de <span class="font-mono">{replayMetadata.conversationId}</span>, terminó en
-						«{phaseLabel(replayMetadata.finalState)}». Edita un mensaje del cliente
-						para volver a ejecutar desde ahí.
+						Copia de <span class="font-mono">{replayMetadata.customerName || formatPhone(replayMetadata.conversationId)}</span>.
+						Edita un mensaje del cliente para volver a ejecutar desde ahí.
 					</Banner>
 				</div>
 			{/if}
-
-			<dl class="flex shrink-0 flex-wrap gap-x-6 gap-y-1 border-b border-border-subtle bg-surface px-4 py-2 text-sm">
-				{#each [
-					["Persona", persona ? persona.name : "—"],
-					["Segmento", conversation.segment || "—"],
-					["Crédito", conversation.credit_line ? `S/ ${formatPrice(conversation.credit_line)}` : "—"],
-					["Estado", conversation.current_state ? phaseLabel(conversation.current_state) : "—"],
-				] as [term, value] (term)}
-					<div class="flex gap-1.5">
-						<dt class="text-fg-muted">{term}</dt>
-						<dd class="text-fg">{value}</dd>
-					</div>
-				{/each}
-				{#if conversation.status === "human_takeover"}
-					<Badge variant="error">
-						<span title={conversation.handover_reason || undefined}>Intervención activa</span>
-					</Badge>
-				{/if}
-			</dl>
 
 			<div bind:this={messagesContainer} class="flex flex-1 flex-col gap-2 overflow-y-auto p-4 md:p-6">
 				{#if messages.length === 0}
@@ -499,20 +437,3 @@ onMount(() => {
 		{/if}
 	</div>
 </div>
-
-<Modal
-	open={showPersonaDialog}
-	title="Nueva simulación"
-	subtitle="Elige la persona de prueba que hará de cliente."
-	onClose={closePersonaDialog}
->
-	<div class="flex max-h-96 flex-col gap-2 overflow-y-auto">
-		{@render personaOption("Sin persona", "Usa los proveedores FNB y GASO reales.", null, null)}
-		{#each personas as persona (persona.id)}
-			{@render personaOption(persona.name, persona.description, persona.segment, persona.id)}
-		{/each}
-	</div>
-	{#snippet footer()}
-		<Button variant="secondary" onclick={closePersonaDialog}>Cancelar</Button>
-	{/snippet}
-</Modal>

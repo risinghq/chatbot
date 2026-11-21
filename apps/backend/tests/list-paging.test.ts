@@ -19,7 +19,6 @@ import {
 import { logAction } from "../src/platform/audit/logger.ts";
 import { batch, stmt } from "../src/db/index.ts";
 import adminRoutes from "../src/routes/admin.ts";
-import analyticsRoutes from "../src/routes/analytics.ts";
 import orderRoutes from "../src/routes/orders.ts";
 import systemLogRoutes from "../src/routes/system-logs.ts";
 
@@ -93,29 +92,6 @@ const ROUTES: Route[] = [
     count: (body) => (body as unknown[]).length,
   },
   {
-    name: "analytics events",
-    path: "/api/analytics/events",
-    fallback: 50,
-    async seed(tenant, _userId, count) {
-      await batch(
-        Array.from({ length: count }, () =>
-          stmt(
-            `INSERT INTO analytics_events
-           (id, tenant_id, channel_account_id, phone_number, event_type)
-         VALUES (?, ?, ?, ?, 'session_start')`,
-            [
-              crypto.randomUUID(),
-              tenant.tenantId,
-              tenant.channelAccountId,
-              CUSTOMER,
-            ],
-          ),
-        ),
-      );
-    },
-    count: (body) => (body as { events: unknown[] }).events.length,
-  },
-  {
     name: "system logs",
     path: "/api/system/logs",
     fallback: 100,
@@ -166,8 +142,6 @@ describe("limit and offset on the list routes", () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/orders", orderRoutes);
-    app.use("/api/analytics/*", requireRole("admin"));
-    app.route("/api/analytics", analyticsRoutes);
     app.use("/api/system/logs/*", requireRole("admin"));
     app.route("/api/system/logs", systemLogRoutes);
     app.use("/api/admin/*", requireRole("admin"));
@@ -175,7 +149,7 @@ describe("limit and offset on the list routes", () => {
     app.onError(errorHandler);
 
     tenant = await createTenantFixture("list-paging");
-    await insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
+    await insertConversation(tenant.ref(CUSTOMER));
 
     ({ userId } = await createMember(tenant, "admin"));
     const token = generateSessionToken();

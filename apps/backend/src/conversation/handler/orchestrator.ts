@@ -1,4 +1,5 @@
 import { createCompletion } from "@vendeya/intelligence";
+import type { Compilable } from "kysely";
 import type { ConversationRef, QuotedMessageContext } from "@vendeya/types";
 import {
   ChannelUnavailableError,
@@ -11,6 +12,7 @@ import {
   runAgent,
 } from "../../domains/assistant/agent.ts";
 import type { ToolEffect } from "../../domains/assistant/tools/index.ts";
+import { CustomerService } from "../../domains/customers/index.ts";
 import { assignNextAgentHeld } from "../../domains/conversations/assignment.ts";
 import { openAiApiKey } from "../../domains/settings/openai.ts";
 import { createLogger } from "../../lib/logger.ts";
@@ -18,10 +20,10 @@ import { createEvent, eventBus } from "../../shared/events/index.ts";
 import { markAsProcessed } from "../message-inbox.ts";
 import {
   activityUpdate,
-  conversationUpdate,
-  getOrCreateConversation,
-  isSessionTimedOut,
-  resetSession,
+  ensureConversation,
+  findConversation,
+  handOffUpdate,
+  releaseIfIdle,
 } from "../store.ts";
 import { claimMessageAlert, raiseUnreadAlert } from "../unread-alerts.ts";
 import { calculateResponseDelay } from "./response-timing.ts";
@@ -57,14 +59,10 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
     message;
   const { tenantId, channelAccountId, phoneNumber } = ref;
 
-  let conversation = await getOrCreateConversation(ref);
-
-  if (isSessionTimedOut(conversation.metadata)) {
-    logger.info({ tenantId, phoneNumber }, "Session timeout reset");
-    await resetSession(ref, conversation.metadata.lastCategory);
-    // Reload the reset state so the turn cannot write the timed-out state
-    // back when it records its result.
-    conversation = await getOrCreateConversation(ref);
+  let conversation = await ensureConversation(ref);
+  if (await releaseIfIdle(ref)) {
+    logger.info({ tenantId, phoneNumber }, "Idle hold released");
+    conversation = (await findConversation(ref))!;
   }
 
   const traceId = crypto.randomUUID();
@@ -73,10 +71,10 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
   // A simulated turn answers like a real one but touches nothing outside the
   // conversation: no read receipt, order, notification, assigned agent or
   // unread alert.
-  const real = !conversation.isSimulation;
+  const real = conversation.is_simulation !== 1;
 
   // A person holds the conversation, so the assistant stays out of it.
-  const held = conversation.phase.phase === "escalated";
+  const held = conversation.status === "human_takeover";
   if (real) {
     await WhatsAppService.markAsRead(ref, messageId, { typing: !held });
   }
@@ -95,7 +93,12 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
         await eventBus.emit(
           createEvent(
             "customer_message_received",
-            { phoneNumber, clientName: conversation.metadata.name },
+            {
+              phoneNumber,
+              clientName: (
+                await CustomerService.getByPhone(tenantId, phoneNumber)
+              )?.name,
+            },
             eventContext,
           ),
         );
@@ -347,14 +350,8 @@ async function recordTurn(
   handOff: HandOff | null,
   inboxIds: string | undefined,
 ): Promise<void> {
-  const statements = [
-    handOff
-      ? await conversationUpdate(
-          ref,
-          { phase: "escalated", reason: handOff.reason },
-          {},
-        )
-      : activityUpdate(ref),
+  const statements: (D1PreparedStatement | Compilable)[] = [
+    handOff ? handOffUpdate(ref, handOff.reason) : activityUpdate(ref),
   ];
   if (inboxIds) statements.push(markAsProcessed(inboxIds));
   await batch(statements);

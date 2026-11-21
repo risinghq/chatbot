@@ -269,10 +269,8 @@ describe("a suspended tenant", () => {
         await ReportService.generateActivityReport({
           tenantId: null,
           ...range,
-          segments: ["all"],
-          saleStatuses: ["all"],
         }),
-      ).map((row) => row.Nombre);
+      ).map((row) => row.Cliente);
 
       expect(names).toContain("Open Client");
       expect(names).not.toContain("Closed Client");

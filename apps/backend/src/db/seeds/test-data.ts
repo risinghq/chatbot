@@ -1,5 +1,5 @@
 import { newId } from "@vendeya/utils";
-import type { ConversationStatus, SaleStatus, Segment } from "@vendeya/types";
+import type { ConversationStatus } from "@vendeya/types";
 import { batch, getOne, stmt } from "../index.ts";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -15,12 +15,9 @@ export type TestConversation = {
   phoneNumber: string;
   clientName: string;
   dni: string;
-  segment: Segment;
-  creditLine: number;
   status: ConversationStatus;
   messages: TestMessage[];
   assignedAgent?: string;
-  saleStatus?: SaleStatus;
   assignmentNotifiedAt?: number;
 };
 
@@ -29,8 +26,6 @@ export const TEST_CONVERSATIONS: TestConversation[] = [
     phoneNumber: "+51999888777",
     clientName: "Juan Pérez",
     dni: "12345678",
-    segment: "fnb" as const,
-    creditLine: 5000,
     status: "active" as const,
     messages: [
       { role: "incoming" as const, text: "Hola", offsetMs: -60 * MINUTE_MS },
@@ -61,11 +56,8 @@ export const TEST_CONVERSATIONS: TestConversation[] = [
     phoneNumber: "+51999888888",
     clientName: "Ana Torres",
     dni: "87654321",
-    segment: "gaso" as const,
-    creditLine: 2500,
     status: "closed" as const,
     assignedAgent: "agent-001",
-    saleStatus: "confirmed" as const,
     messages: [
       {
         role: "incoming" as const,
@@ -101,34 +93,6 @@ export const TEST_CONVERSATIONS: TestConversation[] = [
   },
 ];
 
-export function testContextData(
-  conversation: TestConversation,
-  now: number,
-  lastActivityAt: number,
-) {
-  const finished =
-    conversation.status === "human_takeover" ||
-    conversation.status === "closed";
-
-  return {
-    phase: {
-      phase: finished ? "closing" : "offering_products",
-      segment: conversation.segment,
-      credit: conversation.creditLine,
-      name: conversation.clientName,
-      ...(finished ? { purchaseConfirmed: true } : {}),
-    },
-    metadata: {
-      dni: conversation.dni,
-      name: conversation.clientName,
-      segment: conversation.segment,
-      credit: conversation.creditLine,
-      createdAt: now,
-      lastActivityAt,
-    },
-  };
-}
-
 export async function seedTestData(tenantId: string, channelAccountId: string) {
   const exists = await getOne(
     "SELECT 1 FROM conversations WHERE tenant_id = ? LIMIT 1",
@@ -151,8 +115,6 @@ export async function seedTestData(tenantId: string, channelAccountId: string) {
       ? now + conversation.assignmentNotifiedAt
       : null;
 
-    const contextData = testContextData(conversation, now, lastActivityAt);
-
     const assignedAgent =
       conversation.assignedAgent &&
       (await agentExists(conversation.assignedAgent))
@@ -161,26 +123,30 @@ export async function seedTestData(tenantId: string, channelAccountId: string) {
 
     statements.push(
       stmt(
+        `INSERT INTO customers (id, tenant_id, name, phone, document_type, document_number)
+         VALUES (?, ?, ?, ?, 'dni', ?)`,
+        [
+          newId(),
+          tenantId,
+          conversation.clientName,
+          conversation.phoneNumber,
+          conversation.dni,
+        ],
+      ),
+      stmt(
         `INSERT INTO conversations (
-          tenant_id, channel_account_id, phone_number, client_name, dni, segment,
-          credit_line, status, assigned_agent, assignment_notified_at, is_simulation,
-          last_activity_at, context_data, sale_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          tenant_id, channel_account_id, phone_number, status, assigned_agent,
+          assignment_notified_at, is_simulation, last_activity_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           tenantId,
           channelAccountId,
           conversation.phoneNumber,
-          conversation.clientName,
-          conversation.dni,
-          conversation.segment,
-          conversation.creditLine,
           conversation.status,
           assignedAgent,
           assignmentNotifiedAt,
           0,
           lastActivityAt,
-          JSON.stringify(contextData),
-          conversation.saleStatus || "pending",
         ],
       ),
     );

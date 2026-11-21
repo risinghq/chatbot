@@ -1,9 +1,7 @@
 import { activeChannelAccountsOnly, openTenantsOnly } from "../../db/query.ts";
 import { conversationStub } from "../../conversation/stub.ts";
-import {
-  findConversation,
-  updateConversation,
-} from "../../conversation/store.ts";
+import { findConversation, handOff } from "../../conversation/store.ts";
+import { CustomerService } from "../customers/index.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { eventBus, createEvent } from "../../shared/events/index.ts";
 import { TenantSettings } from "../settings/system.ts";
@@ -52,17 +50,9 @@ export async function assignNextAgentHeld(
 
   // Whoever gives up a conversation, or a turn that escalates it, is asking for
   // a person. That holds when no agent is free, so the bot must stay silent
-  // either way. `updateConversation` sets the status and the reason with the
-  // phase. An escalated conversation keeps its own reason.
-  if (!isEscalated(conversation.context_data)) {
-    await updateConversation(
-      ref,
-      {
-        phase: "escalated",
-        reason: conversation.handover_reason ?? ASSIGNED_REASON,
-      },
-      {},
-    );
+  // either way. A held conversation keeps its own reason.
+  if (conversation.status !== "human_takeover") {
+    await handOff(ref, conversation.handover_reason ?? ASSIGNED_REASON);
   }
 
   // Agents are found through membership, so a sales agent in tenant A is never
@@ -120,10 +110,11 @@ export async function assignNextAgentHeld(
         "agent_assigned",
         {
           phoneNumber: ref.phoneNumber,
-          clientName: conversation.client_name,
+          clientName:
+            (await CustomerService.getByPhone(ref.tenantId, ref.phoneNumber))
+              ?.name ?? null,
           agentId: assignedAgent.id,
           agentPhone: assignedAgent.phone_number,
-          dni: conversation.dni,
         },
         { tenantId: ref.tenantId, channelAccountId: ref.channelAccountId },
       ),
@@ -131,14 +122,6 @@ export async function assignNextAgentHeld(
   }
 
   return assignedAgent.id;
-}
-
-function isEscalated(contextData: string | null): boolean {
-  try {
-    return JSON.parse(contextData ?? "{}").phase?.phase === "escalated";
-  } catch {
-    return false;
-  }
 }
 
 /**

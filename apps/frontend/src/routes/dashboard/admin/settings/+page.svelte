@@ -6,7 +6,6 @@ import Banner from "#lib/components/ui/banner.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
-import Modal from "#lib/components/ui/modal.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 
 let settings = $state<Record<string, string>>({});
@@ -19,10 +18,6 @@ let saving = $state(false);
 // posts it only when the admin typed a new one.
 let caliddaPassword = $state("");
 let openaiKey = $state("");
-
-let waitingCount = $state<number | null>(null);
-let confirmRetry = $state(false);
-let retrying = $state(false);
 
 const hasChanges = $derived(
   JSON.stringify(settings) !== JSON.stringify(initialSettings) ||
@@ -61,41 +56,6 @@ async function loadSettings() {
     console.error(e);
   } finally {
     loading = false;
-  }
-  await loadOutage();
-}
-
-// Loaded client-side like the rest: an `{#await}` on this fetch runs during
-// SSR, where a relative URL cannot resolve and the rejection 500s the page.
-async function loadOutage() {
-  try {
-    const outage = await fetchApi<{ waitingCount: number }>(
-      "/api/admin/outage-status",
-    );
-    waitingCount = outage.waitingCount;
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-async function retryEligibility() {
-  retrying = true;
-  try {
-    const res = await fetchApi<{ message: string }>(
-      "/api/admin/retry-eligibility",
-      { method: "POST" },
-    );
-    toast.success(res.message);
-    confirmRetry = false;
-    await loadOutage();
-  } catch (e) {
-    toast.error(
-      e instanceof ApiError
-        ? e.message
-        : "Error al reintentar las verificaciones",
-    );
-  } finally {
-    retrying = false;
   }
 }
 
@@ -176,12 +136,12 @@ onMount(loadSettings);
 		{:else}
 			<SectionShell
 				title="OpenAI"
-				description="La clave de API de OpenAI de este negocio. El bot la usa para entender y responder mensajes."
+				description="La clave de API de OpenAI de este negocio. El asistente la usa para responder a los clientes."
 			>
 				<div class="p-4">
 					{#if settings._has_openai_api_key !== "true"}
 						<Banner tone="warning" class="mb-4">
-							Sin clave, el bot solo entiende los mensajes que siguen sus patrones.
+							Sin clave, el asistente no responde: cada conversación pasa a una persona.
 						</Banner>
 					{/if}
 					<FormField label="Clave de API" for="openai-api-key" class="mb-0!">
@@ -235,20 +195,6 @@ onMount(loadSettings);
 					"Suspender GASO (Power BI)",
 					"La verificación deja de consultar el reporte de Power BI.",
 				)}
-				<div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-					<div class="min-w-0">
-						<p class="text-base text-fg">Clientes en espera</p>
-						<p class="text-sm text-fg-muted">
-							Quedan en espera cuando un proveedor falla durante su verificación.
-						</p>
-					</div>
-					<div class="flex items-center gap-3">
-						<span class="text-md text-fg tabular-nums">{waitingCount ?? "—"}</span>
-						<Button size="sm" variant="secondary" disabled={!waitingCount} onclick={() => (confirmRetry = true)}>
-							Reintentar
-						</Button>
-					</div>
-				</div>
 			</div>
 		</SectionShell>
 
@@ -281,16 +227,3 @@ onMount(loadSettings);
 		</span>
 	</label>
 {/snippet}
-
-<Modal open={confirmRetry} onClose={() => (confirmRetry = false)} title="Reintentar verificaciones">
-	<p class="text-base text-fg">
-		Se vuelve a verificar la elegibilidad de los {waitingCount} clientes en espera.
-	</p>
-
-	{#snippet footer()}
-		<Button variant="ghost" onclick={() => (confirmRetry = false)}>Cancelar</Button>
-		<Button onclick={retryEligibility} disabled={retrying}>
-			{retrying ? "Reintentando…" : "Reintentar"}
-		</Button>
-	{/snippet}
-</Modal>

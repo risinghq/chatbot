@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { db, getAll, getOne, run } from "../src/db/index.ts";
+import { db, getAll, run } from "../src/db/index.ts";
 import {
   createTenantFixture,
   insertConversation,
@@ -15,19 +15,11 @@ import {
   setChannelStatus,
 } from "./helpers/tenancy.ts";
 
-import type {
-  ConversationMetadata,
-  ConversationPhase,
-  TransitionResult,
-} from "@vendeya/core";
 import type { ChannelAccount, ConversationRef } from "@vendeya/types";
 
 import { conversationStub } from "../src/conversation/stub.ts";
-import { executeCommands } from "../src/conversation/handler/command-executor.ts";
-import { ChannelUnavailableError } from "../src/adapters/whatsapp/index.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
-import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { VariantService } from "../src/domains/catalog/variants.ts";
 import { StockService } from "../src/domains/stock/index.ts";
@@ -41,7 +33,7 @@ import {
 
 const CUSTOMER = "51900777001";
 
-describe("a send refused partway through a transition", () => {
+describe("a send refused partway through a turn", () => {
   let tenant: TenantFixture;
   /** A number that genuinely sends: active, with a token behind it. */
   let account: ChannelAccount;
@@ -98,27 +90,6 @@ describe("a send refused partway through a transition", () => {
         [account.id],
       )) as Array<{ status: string }>
     ).map((row) => row.status);
-  }
-
-  async function storedPhase(): Promise<ConversationPhase> {
-    const row = (await getOne(
-      `SELECT context_data FROM conversations
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-    )) as {
-      context_data: string;
-    };
-    return JSON.parse(row.context_data).phase;
-  }
-
-  async function analytics(eventType: string): Promise<number> {
-    return (
-      (await getOne(
-        `SELECT COUNT(*) as c FROM analytics_events
-           WHERE channel_account_id = ? AND phone_number = ? AND event_type = ?`,
-        [account.id, CUSTOMER, eventType],
-      )) as { c: number }
-    ).c;
   }
 
   async function outbound(): Promise<
@@ -286,120 +257,6 @@ describe("a send refused partway through a transition", () => {
       expect(model.requests.length).toBe(calls);
       expect(await orders()).toBe(1);
       expect(announced).toBe(1);
-    });
-  });
-
-  describe("in executeCommands itself", () => {
-    const metadata = {
-      createdAt: Date.now(),
-      lastActivityAt: Date.now(),
-    } as ConversationMetadata;
-
-    /**
-     * A message sent before the refusal is not retracted and is sent again on
-     * the retry. The phase and the analytics are written once, after the last
-     * send, and never for a batch that did not finish.
-     */
-    it("repeats a message that went out before the refusal, and records nothing until the batch completes", async () => {
-      await insertConversation(ref);
-
-      const batch: TransitionResult = {
-        type: "update",
-        nextPhase: { phase: "confirming_client" },
-        commands: [
-          { type: "SEND_MESSAGE", text: "uno" },
-          { type: "TRACK_EVENT", event: "session_start" },
-          { type: "SEND_MESSAGE", text: "dos" },
-        ],
-      };
-
-      // The first message goes out, and the number is switched off before the
-      // second.
-      onSend = async (count) => {
-        if (count === 1) await setStatus("disabled");
-      };
-
-      await expect(
-        executeCommands(batch, ref, metadata, false, "trace-1"),
-      ).rejects.toThrow(ChannelUnavailableError);
-
-      expect(await outbound()).toEqual([
-        { content: "uno", status: "sent" },
-        { content: "dos", status: "failed" },
-      ]);
-      // The TRACK_EVENT sat *between* the two sends and still was not written.
-      expect(await analytics("session_start")).toBe(0);
-      expect(await storedPhase()).toEqual({ phase: "greeting" });
-
-      onSend = async () => {};
-      await setStatus("active");
-
-      await executeCommands(batch, ref, metadata, false, "trace-2");
-
-      expect(await outbound()).toEqual([
-        { content: "uno", status: "sent" },
-        { content: "dos", status: "failed" },
-        // The accepted duplicate.
-        { content: "uno", status: "sent" },
-        { content: "dos", status: "sent" },
-      ]);
-      expect(await analytics("session_start")).toBe(1);
-      expect(await storedPhase()).toEqual({ phase: "confirming_client" });
-    });
-
-    /**
-     * Image and bundle commands add `sentProducts` to the phase. Persisting the
-     * plain `nextPhase` after the last send would overwrite them, and the next
-     * message could not be matched against the products the customer was shown.
-     */
-    it("keeps the products a bundle command showed on the phase it persists", async () => {
-      const periodId = `per-${crypto.randomUUID()}`;
-      await run(
-        `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
-         VALUES (?, ?, 'Enero', '2026-01', 'active')`,
-        [periodId, tenant.tenantId],
-      );
-
-      const bundleId = `bundle-${crypto.randomUUID()}`;
-      await BundleService.create({
-        id: bundleId,
-        tenantId: tenant.tenantId,
-        period_id: periodId,
-        segment: "fnb",
-        name: "Cocina 4 hornillas",
-        price: 1200,
-        primary_category: "cocinas",
-        categories_json: JSON.stringify(["cocinas"]),
-        image_id: "abcdef0123456789",
-        composition_json: JSON.stringify({ fixed: [], choices: [] }),
-        installments_json: JSON.stringify([{ months: 12, monthlyAmount: 110 }]),
-        created_by: null,
-      });
-
-      await insertConversation(ref);
-
-      await executeCommands(
-        {
-          type: "update",
-          nextPhase: {
-            phase: "offering_products",
-            segment: "fnb",
-            credit: 5000,
-            name: "Juan",
-          },
-          commands: [{ type: "SEND_BUNDLE", bundleId }],
-        },
-        ref,
-        metadata,
-        false,
-        "trace-bundle",
-      );
-
-      expect(await storedPhase()).toMatchObject({
-        phase: "offering_products",
-        sentProducts: [{ productId: bundleId, position: 1, price: 1200 }],
-        lastAction: { type: "showed_products", productCount: 1 },
-      });
     });
   });
 });

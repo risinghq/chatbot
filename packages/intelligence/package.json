@@ -9,7 +9,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@vendeya/core": "workspace:*",
     "@vendeya/types": "workspace:*",
     "openai": "^7.57.0"
   }

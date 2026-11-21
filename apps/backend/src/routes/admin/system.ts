@@ -63,12 +63,11 @@ system.get("/llm-errors", async (c) => {
     operation: string;
     error_type: string | null;
     error_message: string | null;
-    conversation_phase: string | null;
     context_metadata: string | null;
     created_at: string;
   }>(
     `SELECT id, phone_number, operation, error_type, error_message,
-            conversation_phase, context_metadata, created_at
+            context_metadata, created_at
      FROM llm_calls
      WHERE ${conditions.join(" AND ")}
      ORDER BY created_at DESC LIMIT ?`,

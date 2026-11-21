@@ -12,8 +12,8 @@ repeating it.
    dashboard page. [Dashboard design](./design.md) holds its visual rules.
 4. [Tenancy](./tenancy.md): manage tenant scope, roles, channel accounts, and
    encrypted credentials.
-5. [Eligibility](./eligibility.md): understand the Cálidda providers, result
-   selection, recovery, and simulator personas.
+5. [Eligibility](./eligibility.md): understand the optional Cálidda credit
+   check, its providers and their outages.
 6. [Connecting WhatsApp](./whatsapp.md): register a number and configure Meta's
    callback.
 7. [Deploy](./deploy.md): create the Cloudflare resources, set the secrets,

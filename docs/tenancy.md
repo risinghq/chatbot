@@ -51,12 +51,12 @@ database and the bucket with every other tenant, and nothing else.
 A user is one global account in `users`. A membership in `tenant_memberships`
 joins a user to a tenant with one role:
 
-| Role          | Adds                                                                      |
-| ------------- | ------------------------------------------------------------------------- |
-| `admin`       | `/api/admin/*`: users, channel accounts, settings, audit                  |
-| `developer`   | catalog and period writes, reports, analytics, system logs, the simulator |
-| `supervisor`  | catalog and period writes, reports, analytics, system logs                |
-| `sales_agent` | nothing beyond the base                                                   |
+| Role          | Adds                                                           |
+| ------------- | -------------------------------------------------------------- |
+| `admin`       | `/api/admin/*`: users, channel accounts, settings, audit       |
+| `developer`   | catalog and period writes, reports, system logs, the simulator |
+| `supervisor`  | catalog and period writes, reports, system logs                |
+| `sales_agent` | nothing beyond the base                                        |
 
 The base is what every role can do: read the catalog, and read and work
 conversations and orders. A `sales_agent` is narrowed: they list, open and act

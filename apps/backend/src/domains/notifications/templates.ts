@@ -48,15 +48,6 @@ export const templates = {
     ].join("\n");
   },
 
-  contractUploaded(ctx: NotificationContext): string {
-    const ident = b(ctx.clientName || ctx.phoneNumber);
-
-    return [
-      `${ident} subió su contrato.`,
-      ctx.urlSuffix ? formatLink(ctx.urlSuffix) : conversationLink(ctx),
-    ].join("\n");
-  },
-
   newOrder(
     ctx: NotificationContext,
     orderNumber: string,
@@ -91,25 +82,6 @@ export const templates = {
     return [
       `${ident} escribió en la conversación que atiendes.`,
       ctx.urlSuffix ? formatLink(ctx.urlSuffix) : conversationLink(ctx),
-    ].join("\n");
-  },
-
-  attention(ctx: NotificationContext): string {
-    const ident = b(ctx.clientName || ctx.phoneNumber);
-    const dniContext = ctx.dni ? ` (${ctx.dni})` : "";
-
-    return [
-      `${ident}${dniContext} requiere revisión manual. Revisa la conversación.`,
-      ctx.urlSuffix ? formatLink(ctx.urlSuffix) : conversationLink(ctx),
-    ].join("\n");
-  },
-
-  enrichmentLoop(ctx: NotificationContext): string {
-    const ident = b(ctx.phoneNumber);
-    return [
-      `El ${ident} ha excedido el límite de bucles de enriquecimiento.`,
-      `Conversación: ${conversationLink(ctx)}`,
-      `Actividad: ${formatLink("/activity")}`,
     ].join("\n");
   },
 
