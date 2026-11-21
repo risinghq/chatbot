@@ -1,8 +1,8 @@
 /**
  * A person's takeover stops the bot, and releasing the conversation hands it
  * back. Every test runs the real path: the webhook stores the inbound message,
- * the conversation's object answers it, and the only fake is the network.
-
+ * the conversation's object answers it, and the only fakes are the network and
+ * the model.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -23,7 +23,6 @@ import {
   customerWrites as writeIn,
 } from "./helpers/turn.ts";
 
-import type { ConversationPhase } from "@vendeya/core";
 import type { ConversationRef } from "@vendeya/types";
 
 import { ConversationBusyError } from "../src/conversation/locks.ts";
@@ -52,13 +51,8 @@ import {
 
 const CUSTOMER = "51900555001";
 const HOUR = 60 * 60 * 1000;
-
-const OFFERING: ConversationPhase = {
-  phase: "offering_products",
-  segment: "fnb",
-  credit: 5000,
-  name: "Juan",
-};
+const TAKEOVER_REASON = "Manual takeover by agent";
+const BOT_REASON = "asked_for_a_person";
 
 describe("a person takes over a conversation", () => {
   let tenant: TenantFixture;
@@ -72,36 +66,19 @@ describe("a person takes over a conversation", () => {
   let model: FakeModel;
 
   async function insert(
-    phase: ConversationPhase,
     options: {
       status?: string;
       handoverReason?: string | null;
       lastActivityAt?: number;
-      metadata?: Record<string, unknown>;
-      columns?: { client_name?: string; dni?: string; credit_line?: number };
     } = {},
   ): Promise<void> {
-    const now = Date.now();
-    await insertConversation(ref, {
-      status: options.status,
-      contextData: {
-        phase,
-        metadata: {
-          createdAt: now,
-          lastActivityAt: options.lastActivityAt ?? now,
-          ...options.metadata,
-        },
-      },
-    });
+    await insertConversation(ref, { status: options.status });
     await run(
-      `UPDATE conversations
-       SET handover_reason = ?, client_name = ?, dni = ?, credit_line = ?
+      `UPDATE conversations SET handover_reason = ?, last_activity_at = ?
        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
       [
         options.handoverReason ?? null,
-        options.columns?.client_name ?? null,
-        options.columns?.dni ?? null,
-        options.columns?.credit_line ?? null,
+        options.lastActivityAt ?? Date.now(),
         ref.tenantId,
         ref.channelAccountId,
         ref.phoneNumber,
@@ -111,30 +88,38 @@ describe("a person takes over a conversation", () => {
 
   async function conversation() {
     const row = (await getOne(
-      `SELECT status, handover_reason, context_data, client_name, dni, credit_line
+      `SELECT status, handover_reason, last_activity_at, assigned_agent
          FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
       [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
     )) as {
       status: string;
       handover_reason: string | null;
-      context_data: string;
-      client_name: string | null;
-      dni: string | null;
-      credit_line: number | null;
+      last_activity_at: number;
+      assigned_agent: string | null;
     };
-    const context = JSON.parse(row.context_data);
     return {
       status: row.status,
       handoverReason: row.handover_reason,
-      phase: context.phase as ConversationPhase,
-      metadata: context.metadata as Record<string, unknown>,
-      columns: {
-        client_name: row.client_name,
-        dni: row.dni,
-        credit_line: row.credit_line,
-      },
+      lastActivityAt: row.last_activity_at,
+      assignedAgent: row.assigned_agent,
     };
+  }
+
+  async function setLastActivity(at: number): Promise<void> {
+    await run(
+      `UPDATE conversations SET last_activity_at = ?
+       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
+      [at, ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    );
+  }
+
+  async function rawRow() {
+    return await getOne(
+      `SELECT * FROM conversations
+         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
+      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+    );
   }
 
   async function customerWrites(text: string): Promise<void> {
@@ -252,7 +237,7 @@ describe("a person takes over a conversation", () => {
 
   describe("while the bot is answering", () => {
     it("keeps the bot silent on the next message and still stores it", async () => {
-      await insert(OFFERING);
+      await insert();
 
       await takeoverConversation(ref, agent);
       await customerWrites("quiero el segundo");
@@ -262,13 +247,12 @@ describe("a person takes over a conversation", () => {
       expect(await inboxStatuses()).toEqual(["processed"]);
 
       const after = await conversation();
-      expect(after.phase.phase).toBe("escalated");
       expect(after.status).toBe("human_takeover");
-      expect(after.handoverReason).toBe("Manual takeover by agent");
+      expect(after.handoverReason).toBe(TAKEOVER_REASON);
     });
 
-    it("waits for a bot turn in flight and leaves the conversation escalated", async () => {
-      await insert({ phase: "greeting" });
+    it("waits for a bot turn in flight and leaves the conversation held", async () => {
+      await insert();
       await customerWritesAndWaits("hola");
 
       await insideObject(async (object) => {
@@ -290,47 +274,21 @@ describe("a person takes over a conversation", () => {
       });
 
       const after = await conversation();
-      expect(after.phase.phase).toBe("escalated");
       expect(after.status).toBe("human_takeover");
-      expect(after.handoverReason).toBe("Manual takeover by agent");
-    });
-
-    it("keeps the customer's name, DNI and credit line", async () => {
-      await insert(OFFERING, {
-        metadata: { name: "Juan", dni: "12345678", credit: 5000 },
-        columns: { client_name: "Juan", dni: "12345678", credit_line: 5000 },
-      });
-
-      await takeoverConversation(ref, agent);
-
-      const after = await conversation();
-      expect(after.metadata).toMatchObject({
-        name: "Juan",
-        dni: "12345678",
-        credit: 5000,
-      });
-      expect(after.columns).toEqual({
-        client_name: "Juan",
-        dni: "12345678",
-        credit_line: 5000,
-      });
+      expect(after.handoverReason).toBe(TAKEOVER_REASON);
     });
 
     it("refreshes the activity time, and so does an agent's reply", async () => {
       const stale = Date.now() - 2 * HOUR;
-      await insert(OFFERING, { lastActivityAt: stale });
+      await insert({ lastActivityAt: stale });
 
       const beforeTakeover = Date.now();
       await takeoverConversation(ref, agent);
-      const takenAt = (await conversation()).metadata.lastActivityAt as number;
-      expect(takenAt).toBeGreaterThanOrEqual(beforeTakeover);
-
-      await run(
-        `UPDATE conversations
-         SET context_data = json_set(context_data, '$.metadata.lastActivityAt', ?)
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        [stale, ref.tenantId, ref.channelAccountId, ref.phoneNumber],
+      expect((await conversation()).lastActivityAt).toBeGreaterThanOrEqual(
+        beforeTakeover,
       );
+
+      await setLastActivity(stale);
 
       const beforeReply = Date.now();
       const result = await sendManualMessage(ref, "Hola, soy Ana", agent);
@@ -338,51 +296,27 @@ describe("a person takes over a conversation", () => {
       expect(result).toEqual({ success: true });
       expect(textSends).toEqual(["Hola, soy Ana"]);
       const after = await conversation();
-      expect(after.metadata.lastActivityAt as number).toBeGreaterThanOrEqual(
-        beforeReply,
-      );
-      expect(after.phase.phase).toBe("escalated");
+      expect(after.lastActivityAt).toBeGreaterThanOrEqual(beforeReply);
+      expect(after.status).toBe("human_takeover");
     });
 
     it("does not refresh the activity time when nothing was sent", async () => {
       const stale = Date.now() - 2 * HOUR;
-      await insert(OFFERING, { lastActivityAt: stale });
+      await insert({ lastActivityAt: stale });
 
       const result = await sendManualMessage(ref, "", agent);
 
       expect(result.success).toBe(false);
-      expect((await conversation()).metadata.lastActivityAt).toBe(stale);
+      expect((await conversation()).lastActivityAt).toBe(stale);
     });
   });
 
   describe("when an agent replies", () => {
-    async function rawRow() {
-      return await getOne(
-        `SELECT * FROM conversations
-           WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-      );
-    }
-
-    async function setContextData(value: string | null): Promise<void> {
-      await run(
-        `UPDATE conversations SET context_data = ?
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        [value, ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-      );
-    }
-
-    it("leaves the phase and status alone while a bot turn is in flight", async () => {
-      // An escalated phase with an active status. Writing this phase back
-      // would set the status to human_takeover.
-      await insert(
-        { phase: "escalated", reason: "multiple_objections" },
-        { status: "active", lastActivityAt: Date.now() - 2 * HOUR },
-      );
+    it("leaves the status alone while a bot turn is in flight", async () => {
+      await insert({ lastActivityAt: Date.now() - 2 * HOUR });
 
       await customerWritesAndWaits("hola");
 
-      let before!: Awaited<ReturnType<typeof conversation>>;
       let during!: Awaited<ReturnType<typeof conversation>>;
       let result!: Awaited<ReturnType<typeof sendManualMessage>>;
       let beforeReply!: number;
@@ -390,7 +324,6 @@ describe("a person takes over a conversation", () => {
         const send = holdFirstSend();
         const turn = object.wake(ref);
         await send.reached;
-        before = await conversation();
 
         beforeReply = Date.now();
         result = await sendManualMessage(ref, "Hola, soy Ana", agent);
@@ -400,62 +333,27 @@ describe("a person takes over a conversation", () => {
       });
 
       expect(result).toEqual({ success: true });
-
-      expect(textSends).toEqual(["Hola, soy Ana"]);
-      expect(during.phase).toEqual(before.phase);
+      expect(textSends).toContain("Hola, soy Ana");
       expect(during.status).toBe("active");
       expect(during.handoverReason).toBeNull();
-      expect(during.metadata.lastActivityAt as number).toBeGreaterThanOrEqual(
-        beforeReply,
-      );
+      expect(during.lastActivityAt).toBeGreaterThanOrEqual(beforeReply);
       expect((await conversation()).status).toBe("active");
     });
 
     it("refreshes only the activity time", async () => {
-      await insert(OFFERING, {
-        lastActivityAt: Date.now() - 2 * HOUR,
-        metadata: { name: "Juan", dni: "12345678" },
-        columns: { client_name: "Juan", dni: "12345678", credit_line: 5000 },
-      });
-      const before = await conversation();
+      await insert({ lastActivityAt: Date.now() - 2 * HOUR });
+      const before = (await rawRow()) as Record<string, unknown>;
 
       await sendManualMessage(ref, "Hola, soy Ana", agent);
 
-      const after = await conversation();
-      expect(after.metadata.lastActivityAt as number).toBeGreaterThan(
-        before.metadata.lastActivityAt as number,
+      const after = (await rawRow()) as Record<string, unknown>;
+      expect(after.last_activity_at as number).toBeGreaterThan(
+        before.last_activity_at as number,
       );
-      expect({
-        ...after,
-        metadata: { ...after.metadata, lastActivityAt: 0 },
-      }).toEqual({
+      expect({ ...after, last_activity_at: 0 }).toEqual({
         ...before,
-        metadata: { ...before.metadata, lastActivityAt: 0 },
+        last_activity_at: 0,
       });
-    });
-
-    it("leaves a conversation with no context data as it was", async () => {
-      await insert(OFFERING);
-      await setContextData(null);
-      const before = await rawRow();
-
-      const result = await sendManualMessage(ref, "Hola, soy Ana", agent);
-
-      expect(result).toEqual({ success: true });
-      expect(textSends).toEqual(["Hola, soy Ana"]);
-      expect(await rawRow()).toEqual(before);
-    });
-
-    it("does not write a phase into context data that has none", async () => {
-      await insert(OFFERING);
-      await setContextData("{}");
-
-      await sendManualMessage(ref, "Hola, soy Ana", agent);
-
-      const stored = JSON.parse(
-        ((await rawRow()) as { context_data: string }).context_data,
-      );
-      expect(stored.phase).toBeUndefined();
     });
   });
 
@@ -464,17 +362,16 @@ describe("a person takes over a conversation", () => {
       const released = await conversation();
       expect(released.status).toBe("active");
       expect(released.handoverReason).toBeNull();
-      expect(released.phase).toEqual({ phase: "greeting" });
 
       await customerWrites("hola");
 
       expect(textSends.length).toBeGreaterThan(0);
       expect(await inboxStatuses()).toEqual(["processed"]);
-      expect((await conversation()).phase.phase).not.toBe("escalated");
+      expect((await conversation()).status).toBe("active");
     }
 
     it("after a takeover, the bot answers the next message", async () => {
-      await insert(OFFERING);
+      await insert();
 
       await takeoverConversation(ref, agent);
       await releaseConversation(ref, agent);
@@ -482,62 +379,39 @@ describe("a person takes over a conversation", () => {
       await expectBotAnswersAgain();
     });
 
-    it("after the bot escalated, the bot answers the next message", async () => {
-      await insert(
-        { phase: "escalated", reason: "multiple_objections" },
-        { status: "human_takeover", handoverReason: "multiple_objections" },
-      );
+    it("after the bot handed it off, the bot answers the next message", async () => {
+      await insert({ status: "human_takeover", handoverReason: BOT_REASON });
 
       await releaseConversation(ref, agent);
 
       await expectBotAnswersAgain();
     });
-
-    async function assignedAgent(): Promise<string | null> {
-      return (
-        (await getOne(
-          `SELECT assigned_agent FROM conversations
-             WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-          [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-        )) as {
-          assigned_agent: string | null;
-        }
-      ).assigned_agent;
-    }
 
     it("no longer assigns the agent who released it", async () => {
-      await insert(OFFERING);
+      await insert();
 
       await takeoverConversation(ref, agent);
-      expect(await assignedAgent()).toBe(agent);
+      expect((await conversation()).assignedAgent).toBe(agent);
       await releaseConversation(ref, agent);
 
-      expect(await assignedAgent()).toBeNull();
+      expect((await conversation()).assignedAgent).toBeNull();
     });
 
-    it("no longer assigns the agent when the session times out", async () => {
-      await insert(OFFERING);
+    it("no longer assigns the agent when the hold goes idle", async () => {
+      await insert();
       await takeoverConversation(ref, agent);
-      await run(
-        `UPDATE conversations
-         SET context_data = json_set(context_data, '$.metadata.lastActivityAt', ?)
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        [
-          Date.now() - 4 * HOUR,
-          ref.tenantId,
-          ref.channelAccountId,
-          ref.phoneNumber,
-        ],
-      );
+      await setLastActivity(Date.now() - 4 * HOUR);
 
       await customerWrites("hola");
 
-      expect((await conversation()).status).toBe("active");
-      expect(await assignedAgent()).toBeNull();
+      expect(await conversation()).toMatchObject({
+        status: "active",
+        assignedAgent: null,
+      });
     });
 
-    it("keeps the agent of a conversation the bot owns when the session times out", async () => {
-      await insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
+    it("keeps the agent of a conversation the bot owns when it goes idle", async () => {
+      await insert({ lastActivityAt: Date.now() - 4 * HOUR });
       await run(
         `UPDATE conversations SET assigned_agent = ?
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
@@ -546,51 +420,23 @@ describe("a person takes over a conversation", () => {
 
       await customerWrites("hola");
 
-      expect(await assignedAgent()).toBe(agent);
-    });
-
-    it("starts over with the customer as a returning user", async () => {
-      await insert(OFFERING, {
-        metadata: { lastCategory: "cocinas", name: "Juan", dni: "12345678" },
-      });
-
-      await takeoverConversation(ref, agent);
-      await releaseConversation(ref, agent);
-
-      expect((await conversation()).metadata).toMatchObject({
-        isReturningUser: true,
-        lastCategory: "cocinas",
-      });
-      expect((await conversation()).metadata.dni).toBeUndefined();
+      expect((await conversation()).assignedAgent).toBe(agent);
     });
   });
 
   describe("when the person releases a conversation the bot already owns", () => {
-    async function rawRow() {
-      return await getOne(
-        `SELECT * FROM conversations
-           WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-        [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-      );
-    }
-
     async function botOwned(): Promise<void> {
-      await insert(OFFERING, {
-        lastActivityAt: Date.now() - HOUR,
-        metadata: { name: "Juan", dni: "12345678", lastCategory: "cocinas" },
-        columns: { client_name: "Juan", dni: "12345678", credit_line: 5000 },
-      });
+      await insert({ lastActivityAt: Date.now() - HOUR });
     }
 
     it("changes nothing and answers success", async () => {
       await botOwned();
-      const before = { row: await rawRow(), state: await conversation() };
+      const before = await rawRow();
 
       const result = await releaseConversation(ref, agent);
 
       expect(result).toEqual({ success: true });
-      expect(await rawRow()).toEqual(before.row);
-      expect(await conversation()).toEqual(before.state);
+      expect(await rawRow()).toEqual(before);
       expect(await auditActions()).toEqual([]);
     });
 
@@ -616,7 +462,7 @@ describe("a person takes over a conversation", () => {
     });
 
     it("does not restart a conversation a second release reaches", async () => {
-      await insert(OFFERING);
+      await insert();
       await takeoverConversation(ref, agent);
 
       await Promise.all([
@@ -628,47 +474,34 @@ describe("a person takes over a conversation", () => {
     });
 
     it("leaves what the first release started alone when a second arrives later", async () => {
-      await insert(OFFERING);
+      await insert();
       await takeoverConversation(ref, agent);
       await releaseConversation(ref, agent);
 
       await customerWrites("hola");
-      const answered = await conversation();
+      const answered = await rawRow();
       expect(textSends).toEqual([DEFAULT_REPLY]);
 
       await releaseConversation(ref, agent);
 
-      expect(await conversation()).toEqual(answered);
+      expect(await rawRow()).toEqual(answered);
       expect(await auditActions()).toEqual(["takeover", "release"]);
     });
 
-    it("still moves a conversation that only has the human_takeover status", async () => {
-      await insert(OFFERING, { status: "human_takeover" });
+    it("moves a held conversation with no agent back to the bot", async () => {
+      await insert({ status: "human_takeover" });
 
       await releaseConversation(ref, agent);
 
-      const after = await conversation();
-      expect(after.status).toBe("active");
-      expect(after.phase).toEqual({ phase: "greeting" });
-      expect(await auditActions()).toEqual(["release"]);
-    });
-
-    it("still moves a conversation that only has the escalated phase", async () => {
-      await insert({ phase: "escalated", reason: "multiple_objections" });
-
-      await releaseConversation(ref, agent);
-
-      const after = await conversation();
-      expect(after.status).toBe("active");
-      expect(after.phase).toEqual({ phase: "greeting" });
+      expect((await conversation()).status).toBe("active");
       expect(await auditActions()).toEqual(["release"]);
     });
   });
 
   describe("when the conversation lock does not come free", () => {
     it("refuses a takeover and changes nothing", async () => {
-      await insert(OFFERING);
-      const before = await conversation();
+      await insert();
+      const before = await rawRow();
 
       await whileLocked(ref, () =>
         expect(takeoverConversation(ref, agent)).rejects.toThrow(
@@ -676,19 +509,16 @@ describe("a person takes over a conversation", () => {
         ),
       );
 
-      expect(await conversation()).toEqual(before);
+      expect(await rawRow()).toEqual(before);
       expect(await auditActions()).toEqual([]);
     });
 
     it("refuses a release and changes nothing", async () => {
-      await insert(
-        { phase: "escalated", reason: "Manual takeover by agent" },
-        {
-          status: "human_takeover",
-          handoverReason: "Manual takeover by agent",
-        },
-      );
-      const before = await conversation();
+      await insert({
+        status: "human_takeover",
+        handoverReason: TAKEOVER_REASON,
+      });
+      const before = await rawRow();
 
       await whileLocked(ref, () =>
         expect(releaseConversation(ref, agent)).rejects.toThrow(
@@ -696,7 +526,7 @@ describe("a person takes over a conversation", () => {
         ),
       );
 
-      expect(await conversation()).toEqual(before);
+      expect(await rawRow()).toEqual(before);
       expect(await auditActions()).toEqual([]);
     });
 
@@ -724,8 +554,8 @@ describe("a person takes over a conversation", () => {
 
       for (const action of ["takeover", "release"] as const) {
         it(`answers ${action} with an error the dashboard can show`, async () => {
-          await insert(OFFERING);
-          const before = await conversation();
+          await insert();
+          const before = await rawRow();
 
           const response = await whileLocked(ref, async () => post(action));
 
@@ -733,13 +563,13 @@ describe("a person takes over a conversation", () => {
           expect(await response.json()).toEqual({
             error: "The conversation is busy. Try again in a moment.",
           });
-          expect(await conversation()).toEqual(before);
+          expect(await rawRow()).toEqual(before);
           expect(await auditActions()).toEqual([]);
         });
       }
 
       it("writes one audit row for each of takeover and release", async () => {
-        await insert(OFFERING);
+        await insert();
 
         expect((await post("takeover")).status).toBe(200);
         expect((await post("release")).status).toBe(200);
@@ -749,16 +579,13 @@ describe("a person takes over a conversation", () => {
     });
   });
 
-  describe("the idle reset", () => {
-    it("still hands an escalated conversation back to the bot", async () => {
-      await insert(
-        { phase: "escalated", reason: "multiple_objections" },
-        {
-          status: "human_takeover",
-          handoverReason: "multiple_objections",
-          lastActivityAt: Date.now() - 4 * HOUR,
-        },
-      );
+  describe("an idle hold", () => {
+    it("goes back to the bot when the customer writes", async () => {
+      await insert({
+        status: "human_takeover",
+        handoverReason: BOT_REASON,
+        lastActivityAt: Date.now() - 4 * HOUR,
+      });
 
       await customerWrites("hola");
 
@@ -766,20 +593,19 @@ describe("a person takes over a conversation", () => {
       const after = await conversation();
       expect(after.status).toBe("active");
       expect(after.handoverReason).toBeNull();
-      expect(after.phase.phase).not.toBe("escalated");
     });
 
-    it("restarts an idle conversation the bot was answering", async () => {
-      await insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
+    it("does not change a conversation the bot was answering", async () => {
+      await insert({ lastActivityAt: Date.now() - 4 * HOUR });
 
       await customerWrites("hola");
 
       expect(textSends).toEqual([DEFAULT_REPLY]);
-      expect((await conversation()).phase).toEqual({ phase: "greeting" });
+      expect((await conversation()).status).toBe("active");
     });
 
-    it("leaves a conversation an agent answered recently with the agent", async () => {
-      await insert(OFFERING, { lastActivityAt: Date.now() - 4 * HOUR });
+    it("stays with the agent who answered it recently", async () => {
+      await insert({ lastActivityAt: Date.now() - 4 * HOUR });
       await takeoverConversation(ref, agent);
       await sendManualMessage(ref, "Hola, soy Ana", agent);
       textSends.length = 0;
@@ -787,7 +613,7 @@ describe("a person takes over a conversation", () => {
       await customerWrites("gracias");
 
       expect(textSends).toEqual([]);
-      expect((await conversation()).phase.phase).toBe("escalated");
+      expect((await conversation()).status).toBe("human_takeover");
     });
   });
 });

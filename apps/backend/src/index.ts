@@ -9,7 +9,6 @@ import { requireAuth, requireRole } from "./middleware/auth.ts";
 import { errorHandler } from "./middleware/error.ts";
 import { securityHeaders } from "./middleware/security.ts";
 import admin from "./routes/admin.ts";
-import analytics from "./routes/analytics.ts";
 import assets from "./routes/assets.ts";
 import assistant from "./routes/assistant.ts";
 import auth from "./routes/auth.ts";
@@ -75,11 +74,7 @@ app.route("/api/customers", customers);
 app.route("/api/delivery-zones", deliveryZones);
 app.route("/api/payment-methods", paymentMethods);
 
-const requireAnalyticsAccess = requireRole("admin", "developer", "supervisor");
-app.use("/api/analytics/*", requireAnalyticsAccess);
-app.route("/api/analytics", analytics);
-
-app.use("/api/system/logs/*", requireAnalyticsAccess);
+app.use("/api/system/logs/*", requireRole("admin", "developer", "supervisor"));
 app.route("/api/system/logs", systemLogs);
 
 app.use("/api/admin/*", requireRole("admin"));

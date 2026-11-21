@@ -3,17 +3,6 @@
 
 import type { Generated } from "kysely";
 
-export interface AnalyticsEventsTable {
-  id: string;
-  tenant_id: string;
-  channel_account_id: string;
-  phone_number: string;
-  event_type: string;
-  metadata: Generated<string | null>;
-  is_simulation: Generated<0 | 1 | null>;
-  created_at: Generated<number>;
-}
-
 export interface AssetsTable {
   id: string;
   tenant_id: string;
@@ -111,28 +100,11 @@ export interface ConversationsTable {
   tenant_id: string;
   channel_account_id: string;
   phone_number: string;
-  client_name: string | null;
-  dni: string | null;
-  is_calidda_client: Generated<0 | 1 | null>;
-  segment: "fnb" | "gaso" | null;
-  credit_line: number | null;
-  nse: number | null;
-  age: number | null;
-  context_data: Generated<string | null>;
   status: Generated<"active" | "human_takeover" | "closed" | null>;
   handover_reason: string | null;
   is_simulation: Generated<0 | 1 | null>;
-  persona_id: string | null;
   last_activity_at: Generated<number>;
-  products_interested: Generated<string | null>;
-  delivery_address: string | null;
-  delivery_reference: string | null;
   assigned_agent: string | null;
-  agent_notes: string | null;
-  sale_status: Generated<"pending" | "confirmed" | "rejected" | "no_answer" | null>;
-  recording_contract_asset_id: string | null;
-  recording_audio_asset_id: string | null;
-  recording_uploaded_at: number | null;
   assignment_notified_at: number | null;
 }
 
@@ -199,7 +171,6 @@ export interface LlmCallsTable {
   tokens_prompt: number | null;
   tokens_completion: number | null;
   tokens_total: number | null;
-  conversation_phase: string | null;
   context_metadata: string | null;
   created_at: Generated<number>;
 }
@@ -454,21 +425,6 @@ export interface TenantsTable {
   updated_at: Generated<number>;
 }
 
-export interface TestPersonasTable {
-  id: string;
-  tenant_id: string;
-  name: string;
-  description: string | null;
-  segment: "fnb" | "gaso" | "not_eligible";
-  client_name: string;
-  dni: string;
-  credit_line: number;
-  nse: number | null;
-  is_active: Generated<0 | 1 | null>;
-  created_by: string | null;
-  created_at: Generated<number>;
-}
-
 export interface UnreadAlertsTable {
   tenant_id: string;
   channel_account_id: string;
@@ -489,7 +445,6 @@ export interface UsersTable {
 }
 
 export interface Database {
-  analytics_events: AnalyticsEventsTable;
   assets: AssetsTable;
   assistant_settings: AssistantSettingsTable;
   audit_log: AuditLogTable;
@@ -524,14 +479,12 @@ export interface Database {
   tenant_secrets: TenantSecretsTable;
   tenant_settings: TenantSettingsTable;
   tenants: TenantsTable;
-  test_personas: TestPersonasTable;
   unread_alerts: UnreadAlertsTable;
   users: UsersTable;
 }
 
 /** Tables with a tenant_id column. db/tenant-scope.ts requires a predicate on each. */
 export const TENANT_TABLES: ReadonlySet<string> = new Set([
-  "analytics_events",
   "assets",
   "assistant_settings",
   "audit_log",
@@ -563,6 +516,5 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "tenant_memberships",
   "tenant_secrets",
   "tenant_settings",
-  "test_personas",
   "unread_alerts",
 ]);

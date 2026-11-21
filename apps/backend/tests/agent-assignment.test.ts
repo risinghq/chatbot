@@ -281,7 +281,7 @@ describe("conversation assignment", () => {
 
     async function state() {
       const row = (await getOne(
-        `SELECT assigned_agent, assignment_notified_at, status, handover_reason, context_data
+        `SELECT assigned_agent, assignment_notified_at, status, handover_reason
            FROM conversations WHERE tenant_id = ? AND phone_number = ?`,
         [tenant.tenantId, CUSTOMER],
       )) as {
@@ -289,14 +289,12 @@ describe("conversation assignment", () => {
         assignment_notified_at: number | null;
         status: string;
         handover_reason: string | null;
-        context_data: string;
       };
       return {
         assignedAgent: row.assigned_agent,
         notifiedAt: row.assignment_notified_at,
         status: row.status,
         handoverReason: row.handover_reason,
-        phase: JSON.parse(row.context_data).phase.phase as string,
       };
     }
 
@@ -304,18 +302,9 @@ describe("conversation assignment", () => {
       await run(
         `UPDATE conversations
          SET assigned_agent = ?, assignment_notified_at = ?, status = 'human_takeover',
-             handover_reason = 'multiple_objections', context_data = ?
+             handover_reason = 'multiple_objections'
          WHERE tenant_id = ? AND phone_number = ?`,
-        [
-          userId,
-          notifiedAt,
-          JSON.stringify({
-            phase: { phase: "escalated", reason: "multiple_objections" },
-            metadata: { createdAt: Date.now(), lastActivityAt: Date.now() },
-          }),
-          tenant.tenantId,
-          CUSTOMER,
-        ],
+        [userId, notifiedAt, tenant.tenantId, CUSTOMER],
       );
     }
 
@@ -358,7 +347,6 @@ describe("conversation assignment", () => {
         assignedAgent: next.userId,
         status: "human_takeover",
         handoverReason: "multiple_objections",
-        phase: "escalated",
       });
       expect((await state()).notifiedAt).toBeGreaterThan(
         Date.now() - TEN_MINUTES,
@@ -386,7 +374,6 @@ describe("conversation assignment", () => {
         );
         expect(await state()).toMatchObject({
           status: "active",
-          phase: "greeting",
         });
 
         const response = await decline(first.auth);
@@ -395,7 +382,6 @@ describe("conversation assignment", () => {
         expect(await state()).toMatchObject({
           assignedAgent: next.userId,
           status: "human_takeover",
-          phase: "escalated",
         });
         expect((await state()).notifiedAt).toBeGreaterThan(0);
       });
@@ -409,7 +395,6 @@ describe("conversation assignment", () => {
         );
         expect(await state()).toMatchObject({
           status: "active",
-          phase: "greeting",
         });
 
         const response = await decline(only.auth);
@@ -420,7 +405,6 @@ describe("conversation assignment", () => {
           notifiedAt: null,
           status: "human_takeover",
           handoverReason: "agent_assigned",
-          phase: "escalated",
         });
       });
 

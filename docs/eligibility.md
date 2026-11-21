@@ -1,15 +1,16 @@
 # Eligibility
 
-The bot sells on credit that Cálidda, Lima's natural-gas distributor, extends to
-its customers. Before it offers anything, it checks the customer's DNI against
-two Cálidda sources and learns whether they qualify, for how much, and under
-which program.
+A business that sells on Cálidda credit can check whether a customer qualifies.
+Cálidda is Lima's natural-gas distributor and extends credit to its customers.
+The customer's DNI goes to two Cálidda sources, which answer whether they
+qualify, for how much, and under which program.
 
-These are one business's rules written into code. The providers, the thresholds
-and the segment names are fixed, and every tenant shares them. So does the copy:
-the bot introduces itself as Cálidda for every tenant. What a tenant configures
-is its own Cálidda login, plus its catalog, periods and personas. Onboarding a
-business that does not sell on Cálidda credit needs code changes first.
+The check is optional. A business uses it by entering its own Cálidda login. The
+providers and the thresholds are fixed in code and every business shares them.
+
+No conversation runs the check yet. The assistant gets a `check_calidda_credit`
+tool next, offered only to a business with a Cálidda login. Until then the check
+runs only from [the DNI lookup](#looking-up-a-dni).
 
 ## The two providers
 
@@ -67,7 +68,7 @@ out, is switched off, or has its circuit breaker open.
 ## The result
 
 [`mapper.ts`](../apps/backend/src/domains/eligibility/mapper.ts) turns the
-winning answer into the `eligibility_result` core reads:
+winning answer into an eligibility result:
 
 - **Segment.** An approval with an NSE is `gaso`, any other approval is `fnb`.
   FNB never sends an NSE, and a Power BI approval with an empty NSE also becomes
@@ -78,48 +79,11 @@ winning answer into the `eligibility_result` core reads:
 - **Status.** `eligible`, `not_eligible`, `system_outage`, or `needs_human` when
   the check threw.
 
-The result is written to the conversation's metadata and to the columns `dni`,
-`client_name`, `segment`, `credit_line` and `nse`. Which provider answered is
-not stored.
+## Outages
 
-## What the customer sees
-
-[`phases/checking-eligibility.ts`](../packages/core/src/conversation/phases/checking-eligibility.ts)
-and
-[`phases/collecting-age.ts`](../packages/core/src/conversation/phases/collecting-age.ts):
-
-| Result                     | The bot                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------- |
-| FNB, credit S/ 100 or more | congratulates them on the amount and lists the product groups they can afford         |
-| FNB, credit under S/ 100   | says they do not qualify and closes                                                   |
-| GASO                       | asks their age; under 25 it closes, otherwise it lists the categories they can afford |
-| not eligible               | offers to try another DNI. After the third DNI that fails, it closes                  |
-| system outage              | says nothing. The conversation waits in `waiting_for_recovery`                        |
-| the check threw            | sends a holding message and escalates to a person                                     |
-
-The minimum credit is `MIN_CREDIT_THRESHOLD` in
-[`fnb-logic.ts`](../packages/core/src/eligibility/fnb-logic.ts). The minimum age
-is `MIN_AGE` in `collecting-age.ts`. The age is asked but not stored.
-
-## Outages and recovery
-
-When both providers fail, the backend emits `system_outage_detected`, which
-alerts the dev group, and the customer's conversation waits in
-`waiting_for_recovery`. No timer retries it. An admin runs the check again for
-every waiting conversation in scope:
-
-```sh
-curl -X POST -b "session=<token>" https://sales.rising.sh/api/admin/retry-eligibility
-```
-
-The dashboard has no button for it. `GET /api/admin/outage-status` counts the
-conversations waiting. Both routes are in
-[`routes/admin/operations.ts`](../apps/backend/src/routes/admin/operations.ts).
-A pinned admin sweeps their tenant, an unpinned platform operator every open
-tenant.
-
-When one provider fails and the other answers, the backend emits
-`provider_degraded`, which also alerts the dev group.
+When both providers fail, the backend emits `system_outage_detected`. When one
+provider fails and the other answers, it emits `provider_degraded`. Both alert
+the dev group.
 
 ## The circuit breaker
 
@@ -141,18 +105,7 @@ selected sets them on the settings page, `/dashboard/admin/settings`. A tenant
 admin sees them but cannot change them
 ([`domains/settings/system.ts`](../apps/backend/src/domains/settings/system.ts)).
 
-Forcing both down puts every new check into `waiting_for_recovery`.
-
-## Simulated customers
-
-A simulator conversation created with a persona skips both providers. The
-persona's answer is returned as both providers' answer
-([`eligibility/shared.ts`](../apps/backend/src/domains/eligibility/shared.ts),
-[`domains/personas/index.ts`](../apps/backend/src/domains/personas/index.ts)).
-Eight personas are built in and every tenant sees them: FNB with S/ 8000, 3000
-and 1200; GASO with S/ 5000, 2500 and 1500; not eligible; and not found. A
-tenant can add its own on the Personas page. A simulator conversation without a
-persona queries the real providers.
+Forcing both down makes every check an outage.
 
 ## Looking up a DNI
 

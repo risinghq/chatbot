@@ -29,37 +29,6 @@ export const notificationRules: NotificationRule[] = [
         phoneNumber: event.payload.phoneNumber,
         channelAccountId: event.channelAccountId,
         clientName: event.payload.clientName,
-        dni: event.payload.dni,
-      });
-    },
-  },
-  {
-    id: "enrichment_limit_alert",
-    triggerEvent: "enrichment_limit_exceeded",
-    channel: "whatsapp",
-    target: "dev",
-    condition: (event) => event.type === "enrichment_limit_exceeded",
-    template: (event) => {
-      if (event.type !== "enrichment_limit_exceeded") return "";
-      return templates.enrichmentLoop({
-        phoneNumber: event.payload.phoneNumber,
-        channelAccountId: event.channelAccountId,
-      });
-    },
-  },
-  {
-    id: "contract_uploaded_alert",
-    triggerEvent: "contract_uploaded",
-    channel: "whatsapp",
-    target: "sales",
-    condition: (event) => event.type === "contract_uploaded",
-    template: (event) => {
-      if (event.type !== "contract_uploaded") return "";
-      return templates.contractUploaded({
-        phoneNumber: event.payload.phoneNumber,
-        channelAccountId: event.channelAccountId,
-        clientName: event.payload.clientName,
-        details: event.payload.contractPath,
       });
     },
   },
@@ -147,22 +116,6 @@ export const notificationRules: NotificationRule[] = [
         },
         event.payload.error,
       );
-    },
-  },
-  {
-    id: "attention_required_alert",
-    triggerEvent: "attention_required",
-    channel: "whatsapp",
-    target: "agent",
-    condition: (event) => event.type === "attention_required",
-    template: (event) => {
-      if (event.type !== "attention_required") return "";
-      return templates.attention({
-        phoneNumber: event.payload.phoneNumber,
-        channelAccountId: event.channelAccountId,
-        clientName: event.payload.clientName,
-        dni: event.payload.dni,
-      });
     },
   },
   {

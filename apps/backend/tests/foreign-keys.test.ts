@@ -112,16 +112,6 @@ describe("foreign key enforcement", () => {
           ),
       },
       {
-        table: "analytics_events",
-        insert: async (tenantId, channelAccountId) =>
-          await run(
-            `INSERT INTO analytics_events
-                 (id, tenant_id, channel_account_id, phone_number, event_type)
-               VALUES (?, ?, ?, '51900000013', 'message_received')`,
-            [crypto.randomUUID(), tenantId, channelAccountId],
-          ),
-      },
-      {
         table: "llm_calls",
         insert: async (tenantId, channelAccountId) =>
           await run(
@@ -461,7 +451,6 @@ describe("the composite reference itself", () => {
 
     // channel_accounts itself is the parent, so it is not in this set.
     expect(tables.sort()).toEqual([
-      "analytics_events",
       "conversations",
       "llm_calls",
       "message_inbox",

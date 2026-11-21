@@ -12,7 +12,7 @@ import {
   isQueued,
   storeIncomingMessage,
 } from "../conversation/message-inbox.ts";
-import { getOrCreateConversation } from "../conversation/store.ts";
+import { ensureConversation } from "../conversation/store.ts";
 import { lockKey } from "../conversation/locks.ts";
 import { conversationStub } from "../conversation/stub.ts";
 import { TenantService } from "../domains/tenants/index.ts";
@@ -328,7 +328,7 @@ async function handleInbound(
   // The message row belongs to a conversation, so the conversation has to
   // exist before it is written. Inbound text from a contact starts one, and the
   // handler's own get-or-create later is idempotent.
-  await getOrCreateConversation(ref);
+  await ensureConversation(ref);
 
   await WhatsAppService.logMessage(
     ref,

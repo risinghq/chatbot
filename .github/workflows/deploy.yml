@@ -36,7 +36,6 @@ jobs:
           filters: |
             backend:
               - apps/backend/**
-              - packages/core/**
               - packages/intelligence/**
               - packages/types/**
               - packages/utils/**

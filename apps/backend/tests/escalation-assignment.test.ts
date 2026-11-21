@@ -5,7 +5,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ConversationPhase } from "@vendeya/core";
 import type { ConversationRef, DomainEvent } from "@vendeya/types";
 
 import { getOne, run } from "../src/db/index.ts";
@@ -36,7 +35,7 @@ describe("handing a conversation off", () => {
 
   async function conversation() {
     const row = (await getOne(
-      `SELECT assigned_agent, assignment_notified_at, status, handover_reason, context_data
+      `SELECT assigned_agent, assignment_notified_at, status, handover_reason
          FROM conversations WHERE tenant_id = ? AND phone_number = ?`,
       [tenant.tenantId, CUSTOMER],
     )) as {
@@ -44,14 +43,12 @@ describe("handing a conversation off", () => {
       assignment_notified_at: number | null;
       status: string;
       handover_reason: string | null;
-      context_data: string;
     };
     return {
       assignedAgent: row.assigned_agent,
       notifiedAt: row.assignment_notified_at,
       status: row.status,
       handoverReason: row.handover_reason,
-      phase: JSON.parse(row.context_data).phase as ConversationPhase,
     };
   }
 
@@ -121,7 +118,6 @@ describe("handing a conversation off", () => {
       assignedAgent: agent,
       status: "human_takeover",
       handoverReason: REASON,
-      phase: { phase: "escalated", reason: REASON },
     });
     expect((await conversation()).notifiedAt).toBeGreaterThan(0);
     expect(assignments).toHaveLength(1);
@@ -156,7 +152,6 @@ describe("handing a conversation off", () => {
       assignedAgent: null,
       notifiedAt: null,
       status: "human_takeover",
-      phase: { phase: "escalated" },
     });
     expect(alerts).toHaveLength(1);
     expect(alerts[0]!.assignedAtEmit).toBeNull();
@@ -185,7 +180,7 @@ describe("handing a conversation off", () => {
   });
 
   describe("the agent does not take the conversation over", () => {
-    it("is handed to the next agent by the timer, still escalated", async () => {
+    it("is handed to the next agent by the timer, still held", async () => {
       const first = await agentWithPhone("51911111111");
       const second = await agentWithPhone("51922222222");
       await asksForAPerson();
@@ -202,7 +197,6 @@ describe("handing a conversation off", () => {
       expect(after).toMatchObject({
         status: "human_takeover",
         handoverReason: REASON,
-        phase: { phase: "escalated" },
       });
       expect(after.notifiedAt).toBeGreaterThan(Date.now() - 60 * 1000);
       expect(assignments).toHaveLength(2);
@@ -217,13 +211,11 @@ describe("handing a conversation off", () => {
     await asksForAPerson(simulated);
 
     const row = (await getOne(
-      `SELECT assigned_agent, context_data FROM conversations
+      `SELECT assigned_agent, status FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
       [simulated.tenantId, simulated.channelAccountId, simulated.phoneNumber],
-    )) as { assigned_agent: string | null; context_data: string };
-    expect(JSON.parse(row.context_data).phase).toMatchObject({
-      phase: "escalated",
-    });
+    )) as { assigned_agent: string | null; status: string };
+    expect(row.status).toBe("human_takeover");
     expect(row.assigned_agent).toBeNull();
     expect(alerts).toHaveLength(0);
     expect(assignments).toHaveLength(0);

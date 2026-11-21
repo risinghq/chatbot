@@ -318,17 +318,16 @@ bunx wrangler d1 execute vendeya --remote \
 
 ## When customers get no reply
 
-| Check                                    | Where                                                                                        |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Webhooks arrive at all                   | the backend's logs: "Webhook POST rejected" or "refused" names the signature, size or secret |
-| The tenant's OpenAI key is set           | `_has_openai_api_key` in `GET /api/admin/settings`; the dashboard's status names it too      |
-| The number is `active`                   | `GET /api/admin/channels`                                                                    |
-| The tenant is not suspended              | `GET /api/tenants`                                                                           |
-| The turn failed                          | the log line "Message processing failed", and the dev alert                                  |
-| The reply failed to send                 | `messages.status` `failed` or `queued`; the `outbox` row's `last_kind` and `last_reason`     |
-| The sweep runs                           | the backend's logs for "Scheduled task failed", and its cron events in the dashboard         |
-| The conversation is waiting on providers | phase `waiting_for_recovery`; see [Eligibility](./eligibility.md#outages-and-recovery)       |
-| The conversation is with a person        | phase `escalated`; the bot stays silent until release                                        |
+| Check                             | Where                                                                                        |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| Webhooks arrive at all            | the backend's logs: "Webhook POST rejected" or "refused" names the signature, size or secret |
+| The tenant's OpenAI key is set    | `_has_openai_api_key` in `GET /api/admin/settings`; the dashboard's status names it too      |
+| The number is `active`            | `GET /api/admin/channels`                                                                    |
+| The tenant is not suspended       | `GET /api/tenants`                                                                           |
+| The turn failed                   | the log line "Message processing failed", and the dev alert                                  |
+| The reply failed to send          | `messages.status` `failed` or `queued`; the `outbox` row's `last_kind` and `last_reason`     |
+| The sweep runs                    | the backend's logs for "Scheduled task failed", and its cron events in the dashboard         |
+| The conversation is with a person | status `human_takeover`; the bot stays silent until release                                  |
 
 Failed turns and interrupted sends are retried and handed off as
 [Conversation](./conversation.md#the-inbox-and-the-aggregator) describes.

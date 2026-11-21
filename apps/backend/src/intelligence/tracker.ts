@@ -21,7 +21,6 @@ export type LLMCallData = {
   tokensPrompt?: number;
   tokensCompletion?: number;
   tokensTotal?: number;
-  conversationPhase?: string;
   contextMetadata?: Record<string, any>;
 };
 
@@ -49,8 +48,8 @@ async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
       prompt, user_message, response,
       status, error_type, error_message,
       latency_ms, tokens_prompt, tokens_completion, tokens_total,
-      conversation_phase, context_metadata
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      context_metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       data.ref.tenantId,
@@ -68,7 +67,6 @@ async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
       data.tokensPrompt || null,
       data.tokensCompletion || null,
       data.tokensTotal || null,
-      data.conversationPhase || null,
       contextJson,
     ],
   );

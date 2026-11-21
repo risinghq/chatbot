@@ -46,7 +46,6 @@ describe("the simulator routes", () => {
     env.ENVIRONMENT = "production";
 
     for (const path of [
-      "/api/simulator/personas",
       "/api/simulator/conversations",
       "/api/simulator/conversation/51999999999",
     ]) {

@@ -15,22 +15,6 @@ reports.use(
   requireRole("admin", "developer", "supervisor"),
 );
 
-reports.get("/daily", async (c) => {
-  const date = c.req.query("date") || undefined;
-  const buffer = await ReportService.generateDailyReport(
-    c.get("scope").tenantId,
-    date,
-  );
-
-  c.header("Content-Type", XLSX_TYPE);
-  c.header(
-    "Content-Disposition",
-    `attachment; filename="report-${date ?? limaDateString(Date.now())}.xlsx"`,
-  );
-
-  return c.body(buffer);
-});
-
 reports.get("/today-count", async (c) => {
   const count = await ReportService.getTodayContactCount(
     c.get("scope").tenantId,
@@ -41,8 +25,6 @@ reports.get("/today-count", async (c) => {
 reports.get("/activity", async (c) => {
   const startDateStr = c.req.query("startDate");
   const endDateStr = c.req.query("endDate");
-  const segmentsStr = c.req.query("segments") || "fnb,gaso,none";
-  const saleStatusesStr = c.req.query("saleStatuses") || "all";
 
   const startMs = startDateStr
     ? limaRangeEdge(startDateStr, "start", "startDate")
@@ -51,15 +33,10 @@ reports.get("/activity", async (c) => {
     ? limaRangeEdge(endDateStr, "end", "endDate")
     : limaDayBounds()[1];
 
-  const segments = segmentsStr.split(",").filter(Boolean);
-  const saleStatuses = saleStatusesStr.split(",").filter(Boolean);
-
   const buffer = await ReportService.generateActivityReport({
     tenantId: c.get("scope").tenantId,
     startDate: new Date(startMs),
     endDate: new Date(endMs),
-    segments,
-    saleStatuses,
   });
 
   const filename = `reporte-actividad-${limaDateString(startMs)}-a-${limaDateString(endMs)}.xlsx`;

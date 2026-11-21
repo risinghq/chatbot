@@ -1,5 +1,5 @@
 /**
- * The report and funnel routes answer an invalid date with 400 and a short
+ * The report routes answer an invalid date with 400 and a short
  * message, and cut their days in America/Lima whatever zone the server is in.
  */
 
@@ -25,13 +25,12 @@ import {
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import { requireAuth, requireRole } from "../src/middleware/auth.ts";
+import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
 import {
   createSession,
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
-import analyticsRoutes from "../src/routes/analytics.ts";
 import reportRoutes from "../src/routes/reports.ts";
 
 const CUSTOMER = "51900333444";
@@ -39,8 +38,6 @@ const CUSTOMER = "51900333444";
 function buildApp() {
   const app = new Hono();
   app.use("/api/*", requireAuth);
-  app.use("/api/analytics/*", requireRole("admin", "developer", "supervisor"));
-  app.route("/api/analytics", analyticsRoutes);
   app.route("/api/reports", reportRoutes);
   app.onError(errorHandler);
   return app;
@@ -62,7 +59,7 @@ function rowCount(buffer: ArrayBuffer): number {
   return XLSX.utils.sheet_to_json(workbook.Sheets[name ?? ""] ?? {}).length;
 }
 
-describe("report and funnel routes", () => {
+describe("report routes", () => {
   const originalTz = process.env.TZ;
   let app: ReturnType<typeof buildApp>;
   let tenant: TenantFixture;
@@ -91,7 +88,7 @@ describe("report and funnel routes", () => {
   beforeEach(async () => {
     app = buildApp();
     tenant = await createTenantFixture("report-routes");
-    await insertConversation(tenant.ref(CUSTOMER), { clientName: "Ana" });
+    await insertConversation(tenant.ref(CUSTOMER));
     auth = await login(tenant);
   });
 
@@ -101,12 +98,6 @@ describe("report and funnel routes", () => {
 
   describe("an invalid date", () => {
     it.each([
-      ["/api/reports/daily?date=garbage", "date must be YYYY-MM-DD"],
-      ["/api/reports/daily?date=2026-02-30", "date must be YYYY-MM-DD"],
-      [
-        "/api/reports/daily?date=2026-09-19T10:00:00Z",
-        "date must be YYYY-MM-DD",
-      ],
       [
         "/api/reports/activity?startDate=garbage",
         "startDate must be YYYY-MM-DD or an ISO timestamp with a zone",
@@ -127,18 +118,6 @@ describe("report and funnel routes", () => {
         "/api/reports/orders?startDate=2026-04-31T00:00:00-05:00",
         "startDate must be YYYY-MM-DD or an ISO timestamp with a zone",
       ],
-      [
-        "/api/analytics/funnel?end=2026-02-30T12:00:00Z",
-        "end must be YYYY-MM-DD or an ISO timestamp with a zone",
-      ],
-      [
-        "/api/analytics/funnel?start=garbage",
-        "start must be YYYY-MM-DD or an ISO timestamp with a zone",
-      ],
-      [
-        "/api/analytics/funnel?start=2026-03-01&end=2026-02-30",
-        "end must be YYYY-MM-DD or an ISO timestamp with a zone",
-      ],
     ])("answers 400 with a short message: %s", async (path, message) => {
       const res = await get(path);
 
@@ -147,53 +126,32 @@ describe("report and funnel routes", () => {
     });
   });
 
-  describe("the daily report", () => {
-    it("is the Lima day, from Lima midnight to the last millisecond of it", async () => {
+  describe("the activity report", () => {
+    const day = "/api/reports/activity?startDate=2026-09-19&endDate=2026-09-19";
+
+    it("spans a Lima day from its midnight to its last millisecond", async () => {
       await setLastActivity(Date.parse("2026-09-19T00:00:00.000-05:00"));
-      expect(
-        rowCount(
-          await (await get("/api/reports/daily?date=2026-09-19")).arrayBuffer(),
-        ),
-      ).toBe(1);
+      expect(rowCount(await (await get(day)).arrayBuffer())).toBe(1);
 
       await setLastActivity(Date.parse("2026-09-18T23:59:59.999-05:00"));
-      expect(
-        rowCount(
-          await (await get("/api/reports/daily?date=2026-09-19")).arrayBuffer(),
-        ),
-      ).toBe(0);
+      expect(rowCount(await (await get(day)).arrayBuffer())).toBe(0);
 
       await setLastActivity(Date.parse("2026-09-19T23:59:59.999-05:00"));
-      expect(
-        rowCount(
-          await (await get("/api/reports/daily?date=2026-09-19")).arrayBuffer(),
-        ),
-      ).toBe(1);
+      expect(rowCount(await (await get(day)).arrayBuffer())).toBe(1);
     });
 
-    it("is named for the date asked for", async () => {
-      const res = await get("/api/reports/daily?date=2026-09-19");
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Content-Disposition")).toBe(
-        'attachment; filename="report-2026-09-19.xlsx"',
-      );
-    });
-
-    it("is named for today in Lima when no date is given", async () => {
+    it("is today in Lima when no range is given", async () => {
       // 22:00 on the 19th in Lima, already the 20th in UTC.
       vi.setSystemTime(new Date("2026-09-20T03:00:00.000Z"));
 
-      const res = await get("/api/reports/daily");
+      const res = await get("/api/reports/activity");
 
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Disposition")).toBe(
-        'attachment; filename="report-2026-09-19.xlsx"',
+        'attachment; filename="reporte-actividad-2026-09-19-a-2026-09-19.xlsx"',
       );
     });
-  });
 
-  describe("the activity report", () => {
     it("covers Lima days and is named for them", async () => {
       await setLastActivity(Date.parse("2026-03-10T23:30:00-05:00"));
 
@@ -244,43 +202,16 @@ describe("report and funnel routes", () => {
     });
   });
 
-  describe("the funnel", () => {
-    it("covers the whole Lima day of a date-only end", async () => {
-      await run(
-        `INSERT INTO analytics_events
-           (id, tenant_id, channel_account_id, phone_number, event_type, created_at)
-         VALUES (?, ?, ?, ?, 'session_start', ?)`,
-        [
-          crypto.randomUUID(),
-          tenant.tenantId,
-          tenant.channelAccountId,
-          CUSTOMER,
-          Date.parse("2026-03-10T15:00:00.000Z"),
-        ],
-      );
-
-      const res = await get(
-        "/api/analytics/funnel?start=2026-03-10&end=2026-03-10",
-      );
-      const body = (await res.json()) as {
-        stats: { sessions_started: number };
-      };
-
-      expect(res.status).toBe(200);
-      expect(body.stats.sessions_started).toBe(1);
-    });
-  });
-
   describe("access", () => {
     it("still turns away a role that may not read reports", async () => {
       const agent = await login(tenant, "sales_agent");
 
-      expect((await get("/api/reports/daily", agent)).status).toBe(403);
+      expect((await get("/api/reports/activity", agent)).status).toBe(403);
       expect((await get("/api/reports/today-count", agent)).status).toBe(403);
     });
 
     it("still needs a session", async () => {
-      expect((await get("/api/reports/daily", {})).status).toBe(401);
+      expect((await get("/api/reports/activity", {})).status).toBe(401);
     });
   });
 });

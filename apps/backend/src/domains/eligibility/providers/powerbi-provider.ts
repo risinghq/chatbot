@@ -6,8 +6,6 @@ import {
   markBlocked,
 } from "../../../adapters/providers/health.ts";
 import { isProviderForcedDown, powerbiReport } from "../../settings/system.ts";
-import { getSimulationPersona } from "../shared.ts";
-import { PersonasService } from "../../personas/index.ts";
 import type { EligibilityProvider } from "./provider.ts";
 import { ProviderError } from "./provider.ts";
 import type { ConversationRef, ProviderCheckResult } from "@vendeya/types";
@@ -32,17 +30,8 @@ export class PowerBIProvider implements EligibilityProvider {
 
   async checkEligibility(
     dni: string,
-    ref?: ConversationRef,
+    _ref?: ConversationRef,
   ): Promise<Result<ProviderCheckResult, ProviderError>> {
-    // Check for simulation persona
-    if (ref) {
-      const persona = await getSimulationPersona(ref);
-      if (persona) {
-        logger.debug({ dni, persona: persona.name }, "Using test persona");
-        return Ok(PersonasService.toProviderResult(persona));
-      }
-    }
-
     // Check forced shutdown
     if (await isProviderForcedDown("gaso")) {
       logger.debug({ dni }, "Provider forced down");

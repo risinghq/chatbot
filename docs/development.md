@@ -82,9 +82,7 @@ apps/backend/tests/            the backend suite, one file per behavior, in work
 apps/backend/tests/helpers/    tenants, webhook deliveries, the Graph fake, turns
 apps/backend/tests/setup.ts    runs before each backend test
 apps/backend/tests/unit/       tests that need no binding, under bun test
-packages/core/tests/           transitions, eligibility, validation, under bun test
-packages/intelligence/tests/   the mock LLM provider, under bun test
-*.test.ts beside the code      apps/frontend/src/lib, packages/core/src
+*.test.ts beside the code      apps/frontend/src/lib
 ```
 
 The backend's tests run under vitest with `@cloudflare/vitest-plugin`
@@ -108,9 +106,6 @@ per file. It holds the tenant scope guard, which fails on a query that bypasses
 the scope helpers in `db/query.ts`, and the pure logic tests. A test whose code
 imports `cloudflare:workers`, even through the logger, stays in workerd. So does
 the password test, because Bun's PBKDF2 differs from the runtime's.
-
-`packages/core/tests/` is not typechecked: core's `tsconfig.json` includes `src`
-only.
 
 The tests that hold the architecture's boundaries are listed in
 [Architecture](./architecture.md#tests-that-enforce-structure).

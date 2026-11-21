@@ -123,23 +123,11 @@ curl http://localhost:8787/cdn-cgi/local/scheduled
 
 1. Open <http://localhost:5173> and log in as `admin@example.com`.
 2. Open the Simulador tile.
-3. Start a new simulation ("Nueva simulación") and pick the persona "FNB -
-   Crédito Alto (S/ 8000)". A persona answers the eligibility check in place of
-   Cálidda.
-4. Write `hola`, then `si`, then any DNI such as `12345678`.
+3. Start a new simulation ("Nueva simulación").
+4. Write `hola`, then ask for a product, such as `¿tienen celulares?`.
 
-The bot greets you as Cálidda, asks whether the gas service is in your name,
-asks for your DNI, then offers S/ 8000 of credit and lists the product groups:
-
-```text
-hola      -> ¡Qué tal! Somos Cálidda. ¿Tu servicio de gas está a tu nombre?
-si        -> Genial 😊, ¿me brindas el número de tu DNI?
-12345678  -> ¡Excelente noticia, Maria! 🎉 Tienes una línea de crédito aprobada de S/ 8000.00.
-             ¿Qué estás buscando? Tengo productos de Línea blanca y hogar, Tecnología, Combos.
-```
-
-The wording varies between runs. Answer with a group, such as `Tecnología`, then
-a category it lists, such as `celulares`, to get up to three products as images.
+The assistant answers from the demo catalog. It searches the products and sends
+their photos. The wording varies between runs.
 
 The same conversation through the API, with both servers running:
 
@@ -147,11 +135,10 @@ The same conversation through the API, with both servers running:
 curl -c cookies.txt -H 'content-type: application/json' \
   -d '{"email":"admin@example.com","password":"<password>"}' \
   http://localhost:5173/api/auth/login
-phone=$(curl -s -b cookies.txt -H 'content-type: application/json' \
-  -d '{"personaId":"fnb_high_credit"}' \
+phone=$(curl -s -b cookies.txt -X POST \
   http://localhost:5173/api/simulator/conversations |
   sed -E 's/.*"phone_number":"([0-9]+)".*/\1/')
-for m in hola si 12345678; do
+for m in hola '¿tienen celulares?'; do
   curl -b cookies.txt -H 'content-type: application/json' \
     -d "{\"phoneNumber\":\"$phone\",\"message\":\"$m\"}" \
     http://localhost:5173/api/simulator/message

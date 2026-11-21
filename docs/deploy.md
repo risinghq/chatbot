@@ -174,10 +174,10 @@ Its first job, `check`, runs the CI workflow. No deploy job starts unless the
 check passes, so a red commit never migrates the database. The workflow then
 deploys only the Workers whose inputs the push changed:
 
-| Job         | Runs when a push changes                                                                | Steps                                       |
-| ----------- | --------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `backend`   | `apps/backend`, `packages/{core,intelligence,types,utils,tsconfig}`, the root manifests | `db:migrate:remote`, then `wrangler deploy` |
-| `dashboard` | `apps/frontend`, `packages/{types,tsconfig}`, the root manifests                        | `vite build`, then `wrangler deploy`        |
+| Job         | Runs when a push changes                                                           | Steps                                       |
+| ----------- | ---------------------------------------------------------------------------------- | ------------------------------------------- |
+| `backend`   | `apps/backend`, `packages/{intelligence,types,utils,tsconfig}`, the root manifests | `db:migrate:remote`, then `wrangler deploy` |
+| `dashboard` | `apps/frontend`, `packages/{types,tsconfig}`, the root manifests                   | `vite build`, then `wrangler deploy`        |
 
 Migrations run before the new code, so the code never reads a column the
 database lacks. The dashboard job waits for the backend job when both run.

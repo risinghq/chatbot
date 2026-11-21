@@ -1,12 +1,15 @@
 import { Hono } from "hono";
 import { pathParam } from "../lib/http.ts";
 import type { Context } from "hono";
-import type { Conversation } from "@vendeya/types";
+import {
+  CONVERSATION_STATUSES,
+  type Conversation,
+  type ConversationStatus,
+} from "@vendeya/types";
 import * as ConversationRead from "../domains/conversations/read.ts";
 import { ConversationBusyError } from "../conversation/locks.ts";
 import { refOf } from "../conversation/store.ts";
 import * as ConversationWrite from "../domains/conversations/write.ts";
-import * as ConversationMedia from "../domains/conversations/media.ts";
 import { requireActiveTenant, requireTenantScope } from "../middleware/auth.ts";
 
 const conversations = new Hono();
@@ -73,7 +76,10 @@ function refuseIfBusy(c: Context, error: unknown): Response {
 
 conversations.get("/", async (c) => {
   const scope = c.get("scope");
-  const status = c.req.query("status");
+  const status = c.req.query("status") as ConversationStatus | undefined;
+  if (status && !CONVERSATION_STATUSES.includes(status)) {
+    return c.json({ error: "Unknown status" }, 400);
+  }
 
   const rows = await ConversationRead.listConversations(scope, status);
   return c.json(rows);
@@ -175,27 +181,6 @@ conversations.post(
   },
 );
 
-conversations.patch("/:phone/agent-data", requireActiveTenant, async (c) => {
-  const found = await resolve(c);
-  if ("error" in found) return found.error;
-  const conv = found.conversation;
-
-  const user = c.get("user");
-  const updates = await c.req.json();
-
-  const result = await ConversationWrite.updateAgentData(
-    refOf(conv),
-    user.id,
-    updates,
-  );
-
-  if (!result.success) {
-    return c.json({ error: result.error }, 400);
-  }
-
-  return c.json(result);
-});
-
 conversations.get("/:phone/replay", async (c) => {
   const user = c.get("user");
 
@@ -215,36 +200,5 @@ conversations.get("/:phone/replay", async (c) => {
 
   return c.json(replayData);
 });
-
-conversations.post(
-  "/:phone/upload-contract",
-  requireActiveTenant,
-  async (c) => {
-    const found = await resolve(c);
-    if ("error" in found) return found.error;
-    const conv = found.conversation;
-
-    const user = c.get("user");
-    const formData = await c.req.formData();
-
-    const contractFile = formData.get("contract") as File | null;
-    const audioFile = formData.get("audio") as File | null;
-
-    if (!contractFile || !audioFile) {
-      return c.json({ error: "Contract and audio files required" }, 400);
-    }
-
-    const result = await ConversationMedia.uploadContract({
-      ref: refOf(conv),
-      userId: user.id,
-      contractFile,
-      audioFile,
-      clientName: formData.get("clientName") as string | undefined,
-      userDisplayName: user.name,
-    });
-
-    return c.json(result);
-  },
-);
 
 export default conversations;

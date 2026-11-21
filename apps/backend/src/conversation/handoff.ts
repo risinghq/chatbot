@@ -10,7 +10,7 @@ import {
   unhandedFailedTurns,
 } from "./message-inbox.ts";
 import { cancelPending, markHandedOff, undeliveredRows } from "./outbox.ts";
-import { escalateConversation, findConversation } from "./store.ts";
+import { findConversation, handOff as holdConversation } from "./store.ts";
 import { raiseUnreadAlert } from "./unread-alerts.ts";
 
 /*
@@ -82,7 +82,7 @@ async function handOffRows(
   const statusBefore = (await findConversation(ref))?.status;
 
   if (statusBefore === "active") {
-    await escalateConversation(ref, reason);
+    await holdConversation(ref, reason);
     await assignNextAgentHeld(ref);
   }
 

@@ -108,7 +108,7 @@ describe("replaying a conversation from a second WhatsApp number", () => {
     });
   });
 
-  it("puts the replay on the simulator channel, with the source's client", async () => {
+  it("puts the replay on the simulator channel", async () => {
     await load({
       sourcePhone: CUSTOMER,
       sourceChannel: sourceRef.channelAccountId,
@@ -116,15 +116,11 @@ describe("replaying a conversation from a second WhatsApp number", () => {
 
     const target = await simulatorRef(alpha.tenantId, SIMULATOR_PHONE);
     const loaded = (await getOne(
-      `SELECT client_name, is_simulation FROM conversations
+      `SELECT is_simulation FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
       [target.tenantId, target.channelAccountId, target.phoneNumber],
-    )) as {
-      client_name: string;
-      is_simulation: number;
-    };
+    )) as { is_simulation: number };
 
-    expect(loaded.client_name).toBe("Cliente Segunda Línea");
     expect(loaded.is_simulation).toBe(1);
   });
 

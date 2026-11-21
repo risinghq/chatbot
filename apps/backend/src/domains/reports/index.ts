@@ -1,12 +1,12 @@
-import {
-  limaDateString,
-  limaDayBounds,
-  tenantPredicate,
-} from "../../db/query.ts";
 import * as XLSX from "xlsx";
-import type { OrderStatus, PaymentState } from "@vendeya/types";
+import type {
+  ConversationStatus,
+  OrderStatus,
+  PaymentState,
+} from "@vendeya/types";
+import { limaDateString, limaDayBounds } from "../../db/query.ts";
+import { db, tenantScope } from "../../db/index.ts";
 import { OrderReads } from "../orders/index.ts";
-import { getAll, getOne } from "../../db/index.ts";
 
 type ActivityReportParams = {
   /**
@@ -16,8 +16,6 @@ type ActivityReportParams = {
   tenantId: string | null;
   startDate: Date;
   endDate: Date;
-  segments: string[];
-  saleStatuses: string[];
 };
 
 type OrderReportParams = {
@@ -25,6 +23,12 @@ type OrderReportParams = {
   startDate?: Date;
   endDate?: Date;
   status?: OrderStatus;
+};
+
+const CONVERSATION_STATUS_LABELS: Record<ConversationStatus, string> = {
+  active: "Asistente",
+  human_takeover: "Equipo",
+  closed: "Cerrada",
 };
 
 const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
@@ -42,184 +46,83 @@ const PAYMENT_STATE_LABELS: Record<PaymentState, string> = {
   paid: "Pagado",
 };
 
+const limaTime = (ms: number) =>
+  new Date(ms).toLocaleString("es-PE", { timeZone: "America/Lima" });
+
+function workbookOf(
+  rows: Record<string, unknown>[],
+  widths: number[],
+  sheetName: string,
+): ArrayBuffer {
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  worksheet["!cols"] = widths.map((wch) => ({ wch }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  return XLSX.write(workbook, {
+    type: "array",
+    bookType: "xlsx",
+  }) as ArrayBuffer;
+}
+
 export const ReportService = {
-  /** `date` is `YYYY-MM-DD` in Lima. Omitted, it is today there. */
-  generateDailyReport: async (tenantId: string | null, date?: string) => {
-    const [start, end] = limaDayBounds(date);
-
-    const rows = await getAll<Record<string, unknown>>(
-      `
-            SELECT
-              phone_number,
-              client_name,
-              dni,
-              segment,
-              credit_line,
-              status,
-              current_state,
-              last_activity_at
-            FROM conversations
-            WHERE last_activity_at BETWEEN ? AND ?
-              AND ${tenantPredicate(tenantId)}
-        `,
-      tenantId ? [start, end, tenantId] : [start, end],
-    );
-
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, limaDateString(start));
-
-    return XLSX.write(workbook, {
-      type: "array",
-      bookType: "xlsx",
-    }) as ArrayBuffer;
-  },
-
+  /**
+   * Every customer who wrote in the range, with who answers them now. The
+   * customer's name is the business's customer with the same phone number.
+   */
   generateActivityReport: async (params: ActivityReportParams) => {
-    const { tenantId, startDate, endDate, segments, saleStatuses } = params;
+    const { tenantId, startDate, endDate } = params;
 
-    const conditions: string[] = ["is_simulation = 0"];
-    const values: any[] = [];
+    const conversations = await db
+      .selectFrom("conversations as cv")
+      .leftJoin("users as u", "u.id", "cv.assigned_agent")
+      .select((eb) => [
+        "cv.phone_number",
+        "cv.status",
+        "cv.handover_reason",
+        "cv.last_activity_at",
+        "u.name as agent_name",
+        eb
+          .selectFrom("customers as c")
+          .select("c.name")
+          .whereRef("c.tenant_id", "=", "cv.tenant_id")
+          .whereRef("c.phone", "=", "cv.phone_number")
+          .limit(1)
+          .as("customer_name"),
+      ])
+      .where(tenantScope(tenantId, "cv.tenant_id"))
+      .where("cv.is_simulation", "=", 0)
+      .where("cv.last_activity_at", ">=", startDate.getTime())
+      .where("cv.last_activity_at", "<=", endDate.getTime())
+      .orderBy("cv.last_activity_at", "desc")
+      .execute();
 
-    conditions.push(tenantPredicate(tenantId));
-    if (tenantId) values.push(tenantId);
+    const rows = conversations.map((conv, index) => ({
+      "#": index + 1,
+      Teléfono: conv.phone_number,
+      Cliente: conv.customer_name ?? "",
+      Atiende: CONVERSATION_STATUS_LABELS[conv.status as ConversationStatus],
+      Agente: conv.agent_name ?? "",
+      "Motivo de derivación": conv.handover_reason ?? "",
+      "Última actividad": limaTime(conv.last_activity_at),
+    }));
 
-    const startTimestamp = startDate.getTime();
-    const endTimestamp = endDate.getTime();
-    conditions.push("last_activity_at >= ? AND last_activity_at <= ?");
-    values.push(startTimestamp, endTimestamp);
-
-    if (segments.length > 0 && !segments.includes("all")) {
-      const segmentConditions: string[] = [];
-      if (segments.includes("fnb")) segmentConditions.push("segment = 'fnb'");
-      if (segments.includes("gaso")) segmentConditions.push("segment = 'gaso'");
-      if (segments.includes("none")) segmentConditions.push("segment IS NULL");
-      if (segmentConditions.length > 0) {
-        conditions.push(`(${segmentConditions.join(" OR ")})`);
-      }
-    }
-
-    if (saleStatuses.length > 0 && !saleStatuses.includes("all")) {
-      const statusPlaceholders = saleStatuses.map(() => "?").join(",");
-      conditions.push(`sale_status IN (${statusPlaceholders})`);
-      values.push(...saleStatuses);
-    }
-
-    const whereClause = conditions.join(" AND ");
-
-    const rows = await getAll<Record<string, unknown>>(
-      `
-        SELECT
-          phone_number as "Teléfono",
-          client_name as "Nombre",
-          dni as "DNI",
-          segment as "Campaña",
-          credit_line as "Crédito",
-          nse as "NSE",
-          current_state as "Estado Bot",
-          sale_status as "Estado Venta",
-          agent_notes as "Observaciones",
-          products_interested as "Productos",
-          last_activity_at as "Última Actividad"
-        FROM conversations
-        WHERE ${whereClause}
-        ORDER BY last_activity_at DESC
-      `,
-      values,
+    return workbookOf(
+      rows,
+      [5, 15, 25, 10, 20, 30, 20],
+      limaDateString(startDate.getTime()),
     );
-
-    const transformedRows = rows.map((row, index) => {
-      let productos = "";
-      try {
-        const productsArray = JSON.parse((row.Productos as string) || "[]");
-        if (Array.isArray(productsArray) && productsArray.length > 0) {
-          productos = productsArray.join(", ");
-        }
-      } catch {
-        productos = (row.Productos as string) || "";
-      }
-
-      let fechaActividad = "";
-      if (row["Última Actividad"]) {
-        const timestamp = Number(row["Última Actividad"]);
-        if (!Number.isNaN(timestamp)) {
-          fechaActividad = new Date(timestamp).toLocaleString("es-PE", {
-            timeZone: "America/Lima",
-          });
-        } else {
-          fechaActividad = row["Última Actividad"] as string;
-        }
-      }
-
-      const saleStatusMap: Record<string, string> = {
-        pending: "Pendiente",
-        confirmed: "Confirmado",
-        rejected: "Rechazado",
-        no_answer: "Sin respuesta",
-      };
-
-      const segmentMap: Record<string, string> = {
-        fnb: "FNB",
-        gaso: "GASO",
-      };
-
-      return {
-        "#": index + 1,
-        Teléfono: row.Teléfono,
-        Nombre: row.Nombre || "",
-        DNI: row.DNI || "",
-        Campaña: segmentMap[row.Campaña as string] || "",
-        Crédito: row.Crédito || "",
-        NSE: row.NSE || "",
-        "Estado Venta":
-          saleStatusMap[row["Estado Venta"] as string] || "Pendiente",
-        Productos: productos,
-        Observaciones: row.Observaciones || "",
-        "Última Actividad": fechaActividad,
-      };
-    });
-
-    const worksheet = XLSX.utils.json_to_sheet(transformedRows);
-
-    // Set column widths
-    worksheet["!cols"] = [
-      { wch: 5 }, // #
-      { wch: 15 }, // Teléfono
-      { wch: 25 }, // Nombre
-      { wch: 12 }, // DNI
-      { wch: 8 }, // Campaña
-      { wch: 10 }, // Crédito
-      { wch: 5 }, // NSE
-      { wch: 12 }, // Estado Venta
-      { wch: 30 }, // Productos
-      { wch: 40 }, // Observaciones
-      { wch: 20 }, // Última Actividad
-    ];
-
-    const workbook = XLSX.utils.book_new();
-    const sheetName = limaDateString(startTimestamp);
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-
-    return XLSX.write(workbook, {
-      type: "array",
-      bookType: "xlsx",
-    }) as ArrayBuffer;
   },
 
   getTodayContactCount: async (tenantId: string | null) => {
     const [startTimestamp] = limaDayBounds();
-
-    const result = await getOne<{ count: number }>(
-      `
-        SELECT COUNT(*) as count
-        FROM conversations
-        WHERE is_simulation = 0 AND last_activity_at >= ?
-          AND ${tenantPredicate(tenantId)}
-      `,
-      tenantId ? [startTimestamp, tenantId] : [startTimestamp],
-    );
-
-    return result?.count ?? 0;
+    const row = await db
+      .selectFrom("conversations")
+      .select((eb) => eb.fn.countAll<number>().as("count"))
+      .where(tenantScope(tenantId))
+      .where("is_simulation", "=", 0)
+      .where("last_activity_at", ">=", startTimestamp)
+      .executeTakeFirstOrThrow();
+    return Number(row.count);
   },
 
   generateOrderReport: async (params: OrderReportParams) => {
@@ -242,25 +145,13 @@ export const ReportService = {
       Total: soles(order.total_cents),
       Pagado: soles(order.paid_cents),
       Origen: order.source === "assistant" ? "Asistente" : "Equipo",
-      Fecha: new Date(order.created_at).toLocaleString("es-PE", {
-        timeZone: "America/Lima",
-      }),
+      Fecha: limaTime(order.created_at),
     }));
 
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    worksheet["!cols"] = [10, 25, 15, 12, 10, 12, 10, 12, 12, 10, 20].map(
-      (wch) => ({ wch }),
+    return workbookOf(
+      rows,
+      [10, 25, 15, 12, 10, 12, 10, 12, 12, 10, 20],
+      startDate ? limaDateString(startDate.getTime()) : "Ordenes",
     );
-
-    const workbook = XLSX.utils.book_new();
-    const sheetName = startDate
-      ? limaDateString(startDate.getTime())
-      : "Ordenes";
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-
-    return XLSX.write(workbook, {
-      type: "array",
-      bookType: "xlsx",
-    }) as ArrayBuffer;
   },
 };

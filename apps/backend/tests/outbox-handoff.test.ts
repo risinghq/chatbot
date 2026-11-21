@@ -16,10 +16,9 @@ import {
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import type { ConversationMetadata, ConversationPhase } from "@vendeya/core";
 import type { ConversationRef, DomainEvent } from "@vendeya/types";
 
-import { executeCommands } from "../src/conversation/handler/command-executor.ts";
+import { handOff } from "../src/conversation/store.ts";
 import { WhatsAppService } from "../src/adapters/whatsapp/index.ts";
 import { MAX_AGE_MS, type OutboxRow } from "../src/conversation/outbox.ts";
 import { logsDuring } from "./helpers/logs.ts";
@@ -36,7 +35,6 @@ const OTHER_CUSTOMER = "51900999002";
 type ConversationState = {
   status: string;
   handover_reason: string | null;
-  phase: ConversationPhase;
 };
 
 describe("handing a conversation to a person when a reply cannot be delivered", () => {
@@ -92,19 +90,11 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
     of: ConversationRef,
   ): Promise<ConversationState> {
     const row = (await getOne(
-      `SELECT status, handover_reason, context_data FROM conversations
+      `SELECT status, handover_reason FROM conversations
          WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
       [of.tenantId, of.channelAccountId, of.phoneNumber],
-    )) as {
-      status: string;
-      handover_reason: string | null;
-      context_data: string;
-    };
-    return {
-      status: row.status,
-      handover_reason: row.handover_reason,
-      phase: JSON.parse(row.context_data).phase,
-    };
+    )) as ConversationState;
+    return row;
   }
 
   async function assignmentOf(of: ConversationRef) {
@@ -256,7 +246,6 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
         expect(await conversationOf(ref)).toMatchObject({
           status: "human_takeover",
           handover_reason: "reply_undeliverable",
-          phase: { phase: "escalated", reason: "reply_undeliverable" },
         });
 
         expect((await assignmentOf(ref)).assigned_agent).toBe(agent);
@@ -323,41 +312,18 @@ describe("handing a conversation to a person when a reply cannot be delivered", 
   });
 
   describe("a conversation a person or the bot already holds", () => {
-    const metadata = {
-      createdAt: Date.now(),
-      lastActivityAt: Date.now(),
-    } as ConversationMetadata;
-
-    it("keeps the state and reason the bot escalated with, and still sends one alert", async () => {
+    it("keeps the reason the bot handed off with, and still sends one alert", async () => {
       answer = unreachable;
-      // The advisor message is the reply that never goes out.
-      await executeCommands(
-        {
-          type: "update",
-          nextPhase: {
-            phase: "escalated",
-            reason: "multiple_objections",
-          } as ConversationPhase,
-          commands: [
-            {
-              type: "SEND_MESSAGE",
-              text: "Un asesor te contactará en breve",
-            },
-          ],
-        },
-        ref,
-        metadata,
-        false,
-        "trace",
-      );
-      const advisorMessage = (await rowsOf(ref))[0]!;
+      await handOff(ref, "asked_for_a_person");
+      // The goodbye is the reply that never goes out.
+      const goodbye = await queue("Te paso con una persona del equipo.");
       const before = await conversationOf(ref);
       expect(before).toMatchObject({
         status: "human_takeover",
-        handover_reason: "multiple_objections",
+        handover_reason: "asked_for_a_person",
       });
 
-      await sweepAt(advisorMessage.created_at + MAX_AGE_MS);
+      await sweepAt(goodbye.created_at + MAX_AGE_MS);
 
       expect((await rowsOf(ref))[0]).toMatchObject({ status: "failed" });
       expect((await rowsOf(ref))[0]!.handed_off_at).toBeGreaterThan(0);

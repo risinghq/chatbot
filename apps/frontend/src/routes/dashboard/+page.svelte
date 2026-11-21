@@ -141,7 +141,7 @@ onMount(() => {
 								>
 									<div class="min-w-0 flex-1">
 										<p class="truncate text-base text-fg">
-											{conv.client_name || formatPhone(conv.phone_number)}
+											{conv.customer_name || formatPhone(conv.phone_number)}
 										</p>
 										{#if conv.handover_reason}
 											<p class="truncate text-sm text-fg-muted">{conv.handover_reason}</p>

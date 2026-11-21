@@ -1,6 +1,5 @@
 <script lang="ts">
 import type { Conversation } from "@vendeya/types";
-import { phaseLabel } from "#lib/utils/conversation-phase.js";
 import { formatPhone } from "#lib/utils/formatters.js";
 
 type Props = {
@@ -23,21 +22,15 @@ const rowClass = $derived(
 {#snippet body()}
 	<div class="flex items-center justify-between gap-2">
 		<span class="truncate text-base text-fg {isSelected ? 'font-medium' : ''}">
-			{conversation.client_name || formatPhone(conversation.phone_number)}
+			{conversation.customer_name || formatPhone(conversation.phone_number)}
 		</span>
 		{#if conversation.status === "human_takeover"}
 			<span class="size-2 shrink-0 rounded-full bg-danger" title="Espera a una persona"></span>
 		{/if}
 	</div>
-	{#if conversation.client_name}
+	{#if conversation.customer_name}
 		<p class="truncate font-mono text-sm text-fg-muted">{formatPhone(conversation.phone_number)}</p>
 	{/if}
-	<div class="mt-1 flex items-center gap-1.5">
-		<span class="truncate text-sm text-fg-muted">{phaseLabel(conversation.current_state)}</span>
-		{#if conversation.persona_id}
-			<span class="inline-flex h-4 items-center rounded-sm bg-warning-soft px-1 text-xs text-warning-text">Prueba</span>
-		{/if}
-	</div>
 	{#if conversation.handover_reason}
 		<p class="mt-1 truncate text-sm text-danger-text">{conversation.handover_reason}</p>
 	{/if}

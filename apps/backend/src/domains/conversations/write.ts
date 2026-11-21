@@ -10,39 +10,22 @@ import { cancelPendingStatements } from "../../conversation/outbox.ts";
 import { conversationStub, unlocked } from "../../conversation/stub.ts";
 import { clearUnreadAlert } from "../../conversation/unread-alerts.ts";
 import {
-  conversationUpdate,
+  byRef,
   findConversation,
-  getOrCreateConversation,
+  handOffUpdate,
   refreshLastActivity,
-  resetSession,
+  release,
 } from "../../conversation/store.ts";
-import { batch, getOne, run, stmt } from "../../db/index.ts";
-
-const ALLOWED_AGENT_DATA_FIELDS = [
-  "agent_notes",
-  "sale_status",
-  "delivery_address",
-  "delivery_reference",
-  "products_interested",
-];
-
-const VALID_SALE_STATUSES = ["pending", "confirmed", "rejected", "no_answer"];
+import { batch, db } from "../../db/index.ts";
 
 const MANUAL_TAKEOVER_REASON = "Manual takeover by agent";
-
-const IDENTITY_WHERE =
-  "tenant_id = ? AND channel_account_id = ? AND phone_number = ?";
-
-function identityParams(ref: ConversationRef): [string, string, string] {
-  return [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
-}
 
 export type WriteResult = { success: boolean; error?: string };
 
 /**
- * A bot turn reads the phase when it starts and writes it when it ends.
- * Without the lock a takeover that lands mid-turn is overwritten and the bot
- * resumes. A turn already in flight may still send the replies it had ready.
+ * A turn records its outcome when it ends. Without the lock a takeover that
+ * lands mid-turn could be followed by the turn's hand-off or reply as if
+ * nobody held the conversation. A turn already in flight may still send the replies it had ready.
  * The lock makes checking and assigning the taker atomic.
  *
  * @throws ConversationBusyError if the conversation's lock does not come free
@@ -59,10 +42,7 @@ export async function takeoverHeld(
   ref: ConversationRef,
   userId: string,
 ): Promise<WriteResult> {
-  const current = await getOne<{ assigned_agent: string | null }>(
-    `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
-    identityParams(ref),
-  );
+  const current = await findConversation(ref);
   if (current?.assigned_agent && current.assigned_agent !== userId) {
     return {
       success: false,
@@ -77,16 +57,12 @@ export async function takeoverHeld(
   // answers. A bot escalation does not come through here, so the "an advisor
   // will contact you" text it queued still goes out.
   const results = await batch([
-    await conversationUpdate(
+    handOffUpdate(ref, MANUAL_TAKEOVER_REASON),
+    byRef(
+      db
+        .updateTable("conversations")
+        .set({ assigned_agent: userId, assignment_notified_at: null }),
       ref,
-      { phase: "escalated", reason: MANUAL_TAKEOVER_REASON },
-      {},
-    ),
-    stmt(
-      `UPDATE conversations
-       SET assigned_agent = ?, assignment_notified_at = NULL
-       WHERE ${IDENTITY_WHERE}`,
-      [userId, ...identityParams(ref)],
     ),
     ...cancelPendingStatements(ref),
   ]);
@@ -104,7 +80,8 @@ export async function takeoverHeld(
 }
 
 /**
- * The lock keeps a bot turn from writing its phase over the reset.
+ * The lock keeps a turn in flight from handing the conversation off again
+ * after the release.
  *
  * @throws ConversationBusyError if the conversation's lock does not come free
  */
@@ -125,14 +102,12 @@ export async function releaseHeld(
   userId: string,
 ): Promise<void> {
   const row = await findConversation(ref);
-  if (!row) return;
-  const { phase, metadata } = await getOrCreateConversation(ref);
 
-  // A conversation the bot owns is left alone, so a repeated release cannot
-  // restart it.
-  if (row.status !== "human_takeover" && phase.phase !== "escalated") return;
+  // A conversation the assistant owns is left alone, so a repeated release
+  // does nothing.
+  if (row?.status !== "human_takeover") return;
 
-  await resetSession(ref, metadata.lastCategory);
+  await release(ref);
 
   await logAction(
     { userId, tenantId: ref.tenantId },
@@ -226,21 +201,18 @@ export async function declineHeld(
   ref: ConversationRef,
   userId: string,
 ): Promise<WriteResult> {
-  const conv = await getOne<{ assigned_agent: string | null }>(
-    `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
-    identityParams(ref),
-  );
+  const conv = await findConversation(ref);
 
   if (!conv || conv.assigned_agent !== userId) {
     return { success: false, error: "Not assigned to you" };
   }
 
-  await run(
-    `UPDATE conversations
-     SET assignment_notified_at = NULL, assigned_agent = NULL
-     WHERE ${IDENTITY_WHERE}`,
-    identityParams(ref),
-  );
+  await byRef(
+    db
+      .updateTable("conversations")
+      .set({ assignment_notified_at: null, assigned_agent: null }),
+    ref,
+  ).execute();
 
   await assignNextAgentHeld(ref);
 
@@ -249,65 +221,6 @@ export async function declineHeld(
     "decline_assignment",
     "conversation",
     ref.phoneNumber,
-  );
-
-  return { success: true };
-}
-
-export async function updateAgentData(
-  ref: ConversationRef,
-  userId: string,
-  updates: Record<string, string | undefined>,
-): Promise<{ success: boolean; error?: string }> {
-  const validUpdates: Record<string, string> = {};
-
-  for (const field of ALLOWED_AGENT_DATA_FIELDS) {
-    if (updates[field] !== undefined) {
-      validUpdates[field] = updates[field];
-    }
-  }
-
-  if (
-    validUpdates.sale_status &&
-    !VALID_SALE_STATUSES.includes(validUpdates.sale_status)
-  ) {
-    return { success: false, error: "Invalid sale_status" };
-  }
-
-  const conv = await getOne<{ assigned_agent: string | null }>(
-    `SELECT assigned_agent FROM conversations WHERE ${IDENTITY_WHERE}`,
-    identityParams(ref),
-  );
-
-  if (conv && !conv.assigned_agent) {
-    validUpdates.assigned_agent = userId;
-  }
-
-  if (Object.keys(validUpdates).length === 0) {
-    return { success: true };
-  }
-
-  const setClauses: string[] = [];
-  const values: (string | number)[] = [];
-
-  for (const [key, value] of Object.entries(validUpdates)) {
-    setClauses.push(`${key} = ?`);
-    values.push(value);
-  }
-
-  values.push(...identityParams(ref));
-
-  await run(
-    `UPDATE conversations SET ${setClauses.join(", ")} WHERE ${IDENTITY_WHERE}`,
-    values,
-  );
-
-  await logAction(
-    { userId, tenantId: ref.tenantId },
-    "update_agent_data",
-    "conversation",
-    ref.phoneNumber,
-    validUpdates,
   );
 
   return { success: true };

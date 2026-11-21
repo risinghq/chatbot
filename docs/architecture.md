@@ -1,9 +1,8 @@
 # Architecture
 
 This is the code map for contributors. It names the Workers and their bindings,
-the boundary between the conversation core and the backend, how a message
-becomes a reply, and the owner of each change. The user-facing flow is in
-[How a conversation runs](./conversation.md).
+how a message becomes a reply, and the owner of each change. The user-facing
+flow is in [How a conversation runs](./conversation.md).
 
 ## Workspaces
 
@@ -12,8 +11,7 @@ becomes a reply, and the owner of each change. The user-facing flow is in
 | `apps/backend`          | The backend Worker: the Hono API, the webhook, the conversation Durable Object, the cron sweep, provider calls, authentication and tenancy. |
 | `apps/frontend`         | The dashboard Worker: SvelteKit 3 with Svelte 5 on `@sveltejs/adapter-cloudflare`, and its server-side session check.                       |
 | `apps/cli`              | The `vendeya` command line: an API client that acts with an API token, for people and agents.                                               |
-| `packages/core`         | Conversation phases, validation, matching, templates, and the transition contract. It does not call external services.                      |
-| `packages/intelligence` | The OpenAI-backed `IntelligenceProvider` and its prompts.                                                                                   |
+| `packages/intelligence` | The model call: `createCompletion` sends messages and tool definitions to OpenAI and returns the reply or tool calls.                       |
 | `packages/types`        | Types shared by the applications and packages.                                                                                              |
 | `packages/utils`        | The trace-id helper.                                                                                                                        |
 | `packages/tsconfig`     | TypeScript configuration bases used by the workspaces.                                                                                      |
@@ -22,9 +20,8 @@ Workspace dependencies point inward:
 
 ```text
 types, utils, tsconfig
-core            -> types, utils
-intelligence    -> core, types
-backend         -> core, intelligence, types, utils
+intelligence    -> types
+backend         -> intelligence, types, utils
 frontend        -> types
 cli             -> types
 ```
@@ -58,7 +55,7 @@ The backend's bindings:
 | `DB`            | D1             | Every table, for every tenant.                                      |
 | `CONVERSATIONS` | Durable Object | `ConversationObject`, one per conversation.                         |
 | `KV`            | KV             | The per-tenant FNB session tokens and the provider circuit breaker. |
-| `FILES`         | R2             | Catalog images, contracts and call recordings.                      |
+| `FILES`         | R2             | Catalog images, and private files served after a scope check.       |
 | `IMAGES`        | Images         | Resizes an uploaded catalog image to a 1024 px JPEG.                |
 | `LOGIN_LIMITER` | Rate limit     | Login attempts: 10 per minute per client address.                   |
 
@@ -78,11 +75,10 @@ conversation/object.ts  ConversationObject
 conversation/aggregator.ts
   groups the contact's pending messages and starts one turn
 conversation/handler/orchestrator.ts
-  runs the turn and the enrichment loop
-conversation/handler/enrichment-loop.ts <-> packages/core transition()
-  core returns commands or asks the backend for an enrichment
-conversation/handler/command-executor.ts
-  sends commands, records the phase, and records analytics events
+  runs the turn: asks the assistant, sends, records the turn
+domains/assistant/agent.ts
+  calls the model with the conversation and the tools, runs the tool calls,
+  returns the reply and the tools' effects
 adapters/whatsapp/index.ts
   sends through CloudApiAdapter
 conversation/outbox-sender.ts
@@ -93,9 +89,9 @@ shared/events + bootstrap/event-bus-setup.ts
 ```
 
 The webhook answers Meta once the rows are stored. The turn runs on the object's
-alarm, after the response. The complete turn, including the phase table and
-failure states, is in [How a conversation runs](./conversation.md). Provider
-selection and recovery are in [Eligibility](./eligibility.md).
+alarm, after the response. The complete turn, including the assistant and
+failure states, is in [How a conversation runs](./conversation.md). The Cálidda
+credit check is in [Eligibility](./eligibility.md).
 
 ## Durable state
 
@@ -110,29 +106,30 @@ edit a migration that has run remotely.
 Queries go through [`db/index.ts`](../apps/backend/src/db/index.ts). `db` is a
 Kysely builder typed by [`db/schema.ts`](../apps/backend/src/db/schema.ts),
 which `bun run db:types` generates from the migrations. A wrong table, column or
-value type fails the typecheck. The catalog and stock domains use it. The other
-domains still use the raw helpers `getOne`, `getAll` and `run`, and move to `db`
-one domain at a time.
+value type fails the typecheck. The catalog, stock and conversation domains use
+it. The other domains still use the raw helpers `getOne`, `getAll` and `run`,
+and move to `db` one domain at a time.
 
 D1 has no interactive transaction, so `db.transaction()` throws. A multi-step
 write is one `batch()`, which takes Kysely queries and raw statements. The
 conversation's object keeps a second writer out.
 
-| Area                  | Tables                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------- |
-| Tenancy and auth      | `tenants`, `users`, `tenant_memberships`, `session`                                                     |
-| Channel credentials   | `channel_accounts`, encrypted `channel_secrets`                                                         |
-| Catalog and simulator | `catalog_periods`, `products`, `product_variants`, `product_images`, `catalog_bundles`, `test_personas` |
-| Stock                 | `stock_locations`, `stock_levels`, `stock_movements`                                                    |
-| Conversations         | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`                                 |
-| Customers             | `customers`, `customer_addresses`                                                                       |
-| Orders                | `orders`, `order_lines`, `payments`, `shipments`, `delivery_zones`, `payment_methods`                   |
-| Records               | `assets`, `analytics_events`, `llm_calls`, `notification_traces`, `audit_log`                           |
-| Settings              | `system_settings`, `tenant_settings`                                                                    |
+| Area                | Tables                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| Tenancy and auth    | `tenants`, `users`, `tenant_memberships`, `session`                                    |
+| Channel credentials | `channel_accounts`, encrypted `channel_secrets`                                        |
+| Catalog             | `catalog_periods`, `products`, `product_variants`, `product_images`, `catalog_bundles` |
+| Stock               | `stock_locations`, `stock_levels`, `stock_movements`                                   |
+| Conversations       | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`                |
+| Customers           | `customers`, `customer_addresses`                                                      |
+| Orders              | `orders`, `order_lines`, `payments`, `shipments`, `delivery_zones`, `payment_methods`  |
+| Records             | `assets`, `llm_calls`, `notification_traces`, `audit_log`                              |
+| Settings            | `system_settings`, `tenant_settings`                                                   |
 
-A conversation's phase and metadata are one JSON column,
-`conversations.context_data`, shaped `{ phase, metadata }`.
-`conversations.current_state` is generated from it.
+A conversation row holds who it is with, its status, who holds it and when it
+was last active. It stores no state for the assistant, which reads the messages.
+The customer's name and details are the `customers` row with the conversation's
+phone number.
 
 ### The conversation's Durable Object
 
@@ -190,6 +187,9 @@ R2 keys start with the tenant id. They are built only in
 | `<tenant>/contracts/...`   | only `/api/assets/:id`, after a tenant scope check                |
 | `<tenant>/recordings/...`  | only `/api/assets/:id`, after a tenant scope check                |
 
+No code writes a private file today. The route and its checks stay for the next
+one, such as a customer's payment receipt.
+
 Catalog images are public because Meta fetches an outgoing image's link with no
 credentials. The image id holds 60 random bits, so a key cannot be guessed. An
 image's bytes never change under its key.
@@ -206,11 +206,10 @@ of them.
 | Transition                  | Actor                              | Where                                                                         |
 | --------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
 | empty to the taker          | the agent who takes over           | `takeoverConversation`, under the conversation lock                           |
-| empty to the saver          | an agent saving agent data         | `updateAgentData`                                                             |
-| empty to the next agent     | an escalation, by the round-robin  | [`assignment.ts`](../apps/backend/src/domains/conversations/assignment.ts)    |
+| empty to the next agent     | a handoff, by the round-robin      | [`assignment.ts`](../apps/backend/src/domains/conversations/assignment.ts)    |
 | held to the next agent      | the holder declines                | `declineAssignment`, which hands it to the round-robin under the lock         |
 | held to the next agent      | the minute sweep                   | `checkAndReassignTimeouts`, for an assignment not taken over within 5 minutes |
-| held to empty, on hand-back | release, or the 3 h idle reset     | `resetSession`, only when the conversation was with a person                  |
+| held to empty, on hand-back | release, or the 3 h idle release   | `release` and `releaseIfIdle` in `conversation/store.ts`                      |
 | held to empty, user leaves  | removal, role change, deactivation | `MembershipService.remove`, `upsert` on a changed role, `clearAllAssignments` |
 | held to another holder      | nobody                             | takeover answers 409 while someone else holds the conversation                |
 
@@ -226,18 +225,18 @@ not answered since. A conversation is either `none` (no row) or `unread` (a
 row). Only `none` lets a customer message to a held conversation alert the
 assigned agent.
 
-| Transition     | When                                                                                                              | Owner                                                                                                                     |
-| -------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| none to unread | a bot turn escalates the conversation, after it is assigned                                                       | `answerMessage` in [`orchestrator.ts`](../apps/backend/src/conversation/handler/orchestrator.ts), `raiseUnreadAlert`      |
-| none to unread | a failed reply or turn hands the conversation to a person                                                         | `handOff` in [`handoff.ts`](../apps/backend/src/conversation/handoff.ts), `raiseUnreadAlert`                              |
-| none to unread | a customer message reaches a `human_takeover` conversation whose agent has a phone                                | `claimMessageAlert` in [`unread-alerts.ts`](../apps/backend/src/conversation/unread-alerts.ts), one atomic insert         |
-| unread to none | the holder sends a message                                                                                        | `sendManualMessage`, `clearUnreadAlert`, after the send succeeded                                                         |
-| unread to none | `assigned_agent` is written: assignment, reassignment, decline, takeover, release, idle reset, an agent's removal | the trigger `conversations_assignment_clears_unread_alert` in [`0001_init.sql`](../apps/backend/migrations/0001_init.sql) |
-| unread to none | none of the alert's notifications went out                                                                        | `notify` in [`notify.ts`](../apps/backend/src/domains/notifications/notify.ts)                                            |
+| Transition     | When                                                                                                                | Owner                                                                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| none to unread | a bot turn hands the conversation off, after it is assigned                                                         | `answerMessage` in [`orchestrator.ts`](../apps/backend/src/conversation/handler/orchestrator.ts), `raiseUnreadAlert`      |
+| none to unread | a failed reply or turn hands the conversation to a person                                                           | `handOff` in [`handoff.ts`](../apps/backend/src/conversation/handoff.ts), `raiseUnreadAlert`                              |
+| none to unread | a customer message reaches a `human_takeover` conversation whose agent has a phone                                  | `claimMessageAlert` in [`unread-alerts.ts`](../apps/backend/src/conversation/unread-alerts.ts), one atomic insert         |
+| unread to none | the holder sends a message                                                                                          | `sendManualMessage`, `clearUnreadAlert`, after the send succeeded                                                         |
+| unread to none | `assigned_agent` is written: assignment, reassignment, decline, takeover, release, idle release, an agent's removal | the trigger `conversations_assignment_clears_unread_alert` in [`0001_init.sql`](../apps/backend/migrations/0001_init.sql) |
+| unread to none | none of the alert's notifications went out                                                                          | `notify` in [`notify.ts`](../apps/backend/src/domains/notifications/notify.ts)                                            |
 
 The row is written before the alert is sent and the turn waits for the send, all
 under the conversation lock, so the next message sees the row as the delivery
-left it. An escalation assigns before it raises the row, because writing
+left it. A handoff assigns before it raises the row, because writing
 `assigned_agent` removes it.
 
 The dashboard Worker keeps no state of its own. See [Deploy](./deploy.md) for
@@ -245,23 +244,11 @@ deployment.
 
 ## Boundaries
 
-- Core returns a final update or an enrichment request. The backend handles the
-  database, providers, LLM, and WhatsApp calls, then feeds enrichment results
-  back to core. The contract is in
-  [`conversation/types.ts`](../packages/core/src/conversation/types.ts).
-- `transition()` in
-  [`packages/core/src/conversation/transition.ts`](../packages/core/src/conversation/transition.ts)
-  performs no I/O but is not a pure function: copy variants use `Math.random`,
-  phases stamp `Date.now`, and product matching writes to `console.log`. Equal
-  inputs can give different replies.
-- Only the backend writes metadata. Core reads `metadata` and returns enrichment
-  requests.
-  [`metadata-manager.ts`](../apps/backend/src/conversation/enrichment/metadata-manager.ts)
-  folds each enrichment result into it.
-- Business rules are split. Core holds the flow, copy, FNB minimum credit, and
-  GASO minimum age. The backend holds which provider answer wins, how a segment
-  is inferred, the GASO catalog price cap, order creation, idle reset, and reply
-  pacing.
+- The assistant never acts on its own. Its tools in
+  [`domains/assistant/tools/`](../apps/backend/src/domains/assistant/tools/)
+  check their arguments, read and write through the business's domains, and
+  return effects. The turn sends the replies and photos, files the events and
+  hands off. A business shapes the assistant with its settings, not code.
 - Every WhatsApp send uses `WhatsAppService` in
   [`adapters/whatsapp/index.ts`](../apps/backend/src/adapters/whatsapp/index.ts).
   It rechecks the tenant and channel account before sending and returns a typed
@@ -279,24 +266,21 @@ deployment.
 
 ## Where a change belongs
 
-| Change                                | Owner                                                                                                                                                                                                 |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Conversation phase or transition      | [`packages/core/src/conversation/`](../packages/core/src/conversation/)                                                                                                                               |
-| Bot copy or prompt text               | [`packages/core/src/templates/`](../packages/core/src/templates/) or [`packages/core/src/content/`](../packages/core/src/content/)                                                                    |
-| New phase                             | The `ConversationPhase` union in [`types.ts`](../packages/core/src/conversation/types.ts), the switch in `transition.ts`, and a phase file                                                            |
-| External data needed by a turn        | An `EnrichmentRequest` in [`conversation/types.ts`](../packages/core/src/conversation/types.ts), plus a backend handler in [`conversation/enrichment/`](../apps/backend/src/conversation/enrichment/) |
-| LLM model                             | [`packages/intelligence/src/config.ts`](../packages/intelligence/src/config.ts)                                                                                                                       |
-| Minimum FNB credit, minimum GASO age  | [`fnb-logic.ts`](../packages/core/src/eligibility/fnb-logic.ts), [`collecting-age.ts`](../packages/core/src/conversation/phases/collecting-age.ts)                                                    |
-| Provider behavior or result selection | [`apps/backend/src/domains/eligibility/`](../apps/backend/src/domains/eligibility/)                                                                                                                   |
-| WhatsApp transport                    | [`apps/backend/src/adapters/whatsapp/`](../apps/backend/src/adapters/whatsapp/)                                                                                                                       |
-| API endpoint                          | [`apps/backend/src/routes/`](../apps/backend/src/routes/)                                                                                                                                             |
-| Dashboard page                        | [`apps/frontend/src/routes/dashboard/`](../apps/frontend/src/routes/dashboard/)                                                                                                                       |
-| Catalog data or rules                 | [`apps/backend/src/domains/catalog/`](../apps/backend/src/domains/catalog/)                                                                                                                           |
-| Stock levels, locations or movements  | [`apps/backend/src/domains/stock/`](../apps/backend/src/domains/stock/)                                                                                                                               |
-| New table or column                   | A new file in [`apps/backend/migrations/`](../apps/backend/migrations/)                                                                                                                               |
-| Binding, variable, route or cron      | [`apps/backend/wrangler.jsonc`](../apps/backend/wrangler.jsonc), then `bun run --cwd apps/backend types`                                                                                              |
-| Notification recipient or text        | [`apps/backend/src/domains/notifications/`](../apps/backend/src/domains/notifications/)                                                                                                               |
-| R2 key layout                         | [`apps/backend/src/lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts)                                                                                                                   |
+| Change                                | Owner                                                                                                    |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| What the assistant can do             | A tool in [`apps/backend/src/domains/assistant/tools/`](../apps/backend/src/domains/assistant/tools/)    |
+| The assistant's fixed rules           | [`apps/backend/src/domains/assistant/prompt.ts`](../apps/backend/src/domains/assistant/prompt.ts)        |
+| Models a business may pick            | `ASSISTANT_MODELS` in [`packages/types/src/assistant.ts`](../packages/types/src/assistant.ts)            |
+| Provider behavior or result selection | [`apps/backend/src/domains/eligibility/`](../apps/backend/src/domains/eligibility/)                      |
+| WhatsApp transport                    | [`apps/backend/src/adapters/whatsapp/`](../apps/backend/src/adapters/whatsapp/)                          |
+| API endpoint                          | [`apps/backend/src/routes/`](../apps/backend/src/routes/)                                                |
+| Dashboard page                        | [`apps/frontend/src/routes/dashboard/`](../apps/frontend/src/routes/dashboard/)                          |
+| Catalog data or rules                 | [`apps/backend/src/domains/catalog/`](../apps/backend/src/domains/catalog/)                              |
+| Stock levels, locations or movements  | [`apps/backend/src/domains/stock/`](../apps/backend/src/domains/stock/)                                  |
+| New table or column                   | A new file in [`apps/backend/migrations/`](../apps/backend/migrations/)                                  |
+| Binding, variable, route or cron      | [`apps/backend/wrangler.jsonc`](../apps/backend/wrangler.jsonc), then `bun run --cwd apps/backend types` |
+| Notification recipient or text        | [`apps/backend/src/domains/notifications/`](../apps/backend/src/domains/notifications/)                  |
+| R2 key layout                         | [`apps/backend/src/lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts)                      |
 
 ## Tests that enforce structure
 

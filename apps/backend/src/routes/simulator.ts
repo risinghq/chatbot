@@ -2,15 +2,14 @@ import { Hono } from "hono";
 import { pathParam } from "../lib/http.ts";
 import type { Context } from "hono";
 import { WhatsAppService } from "../adapters/whatsapp/index.ts";
-import { PersonasService } from "../domains/personas/index.ts";
 import { ChannelAccountService } from "../domains/channels/accounts.ts";
 import { hasOpenAiApiKey } from "../domains/settings/openai.ts";
 import {
-  getOrCreateConversation,
-  resetSession,
-} from "../conversation/index.ts";
+  ensureConversation,
+  findConversation,
+  release,
+} from "../conversation/store.ts";
 import { conversationStub, unlocked } from "../conversation/stub.ts";
-import { findConversation } from "../conversation/store.ts";
 import {
   activeTenantId,
   requireActiveTenant,
@@ -92,74 +91,6 @@ async function nextSimulatedPhone(ref: ConversationRef): Promise<string> {
   return String(candidate);
 }
 
-// Get available test personas
-simulator.get("/personas", async (c) => {
-  return c.json(await PersonasService.getAll(activeTenantId(c)));
-});
-
-// Create new test persona
-simulator.post("/personas", async (c) => {
-  const user = c.get("user");
-  const tenantId = activeTenantId(c);
-
-  const { id, name, description, segment, clientName, dni, creditLine, nse } =
-    await c.req.json();
-
-  if (
-    !id ||
-    !name ||
-    !description ||
-    !segment ||
-    !clientName ||
-    !dni ||
-    creditLine === undefined
-  ) {
-    return c.json({ error: "Missing required fields" }, 400);
-  }
-
-  try {
-    const persona = await PersonasService.create(
-      tenantId,
-      { id, name, description, segment, clientName, dni, creditLine, nse },
-      user.id,
-    );
-    return c.json(persona);
-  } catch (error) {
-    logger.error({ error, user: user.id, tenantId }, "Persona creation failed");
-    return c.json({ error: "Failed to create persona" }, 500);
-  }
-});
-
-// Update test persona
-simulator.patch("/personas/:id", async (c) => {
-  const personaId = pathParam(c, "id");
-  const tenantId = activeTenantId(c);
-  const updates = await c.req.json();
-
-  try {
-    await PersonasService.update(tenantId, personaId, updates);
-    const updated = await PersonasService.getById(tenantId, personaId);
-    return c.json(updated);
-  } catch (error) {
-    logger.error({ error, personaId, tenantId }, "Persona update failed");
-    return c.json({ error: "Failed to update persona" }, 500);
-  }
-});
-
-// Delete test persona
-simulator.delete("/personas/:id", async (c) => {
-  const personaId = pathParam(c, "id");
-  const tenantId = activeTenantId(c);
-
-  try {
-    await PersonasService.delete(tenantId, personaId);
-    return c.json({ status: "deleted" });
-  } catch (error) {
-    logger.error({ error, personaId, tenantId }, "Persona deletion failed");
-    return c.json({ error: "Failed to delete persona" }, 500);
-  }
-});
-
 /**
  * The simulated conversations on the simulator channel. Every route here
  * resolves a phone number through `simulatorRef`, so the frontend keys rows by
@@ -179,39 +110,10 @@ simulator.get("/conversations", async (c) => {
 
 // Create new test conversation
 simulator.post("/conversations", async (c) => {
-  const tenantId = activeTenantId(c);
-  const { personaId } = await c.req.json();
-
   const account = await simulatorRef(c, SIMULATOR_PHONE);
   const ref = { ...account, phoneNumber: await nextSimulatedPhone(account) };
 
-  // Validate persona if provided
-  if (personaId) {
-    const persona = await PersonasService.getById(tenantId, personaId);
-    if (!persona) {
-      return c.json({ error: "Invalid persona_id" }, 400);
-    }
-  }
-
-  // Create new test conversation with persona
-  const initialPhase = { phase: "greeting" };
-  const initialMetadata = { createdAt: Date.now(), lastActivityAt: Date.now() };
-
-  await run(
-    `INSERT INTO conversations (tenant_id, channel_account_id, phone_number, context_data, status, is_simulation, persona_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      ref.tenantId,
-      ref.channelAccountId,
-      ref.phoneNumber,
-      JSON.stringify({ phase: initialPhase, metadata: initialMetadata }),
-      "active",
-      1,
-      personaId || null,
-    ],
-  );
-
-  return c.json((await findConversation(ref))!);
+  return c.json(await ensureConversation(ref, true));
 });
 
 // Send message in simulator
@@ -231,7 +133,7 @@ simulator.post("/message", async (c) => {
 
   const ref = await simulatorRef(c, phoneNumber);
 
-  await getOrCreateConversation(ref, true);
+  await ensureConversation(ref, true);
 
   await WhatsAppService.logMessage(ref, "inbound", "text", message, "received");
 
@@ -266,7 +168,7 @@ simulator.post("/message", async (c) => {
 simulator.get("/conversation/:phone", async (c) => {
   const ref = await simulatorRef(c, pathParam(c, "phone"));
 
-  const conv = await getOrCreateConversation(ref, true);
+  const conv = await ensureConversation(ref, true);
   const messages = await WhatsAppService.getMessageHistory(ref, 100);
 
   return c.json({
@@ -279,7 +181,7 @@ simulator.get("/conversation/:phone", async (c) => {
 simulator.post("/reset/:phone", async (c) => {
   const ref = await simulatorRef(c, pathParam(c, "phone"));
 
-  await resetSession(ref);
+  await release(ref);
   await WhatsAppService.clearMessageHistory(ref);
 
   return c.json({ status: "reset" });
@@ -335,36 +237,12 @@ simulator.post("/load", async (c) => {
   );
 
   // Reset simulator first
-  await resetSession(targetRef);
+  await release(targetRef);
   await WhatsAppService.clearMessageHistory(targetRef);
 
-  // Create/update simulator conversation with source data
-  await getOrCreateConversation(targetRef, true);
-
-  // Update context data and state
-  await run(
-    `UPDATE conversations
-     SET context_data = ?,
-       client_name = ?,
-       dni = ?,
-       segment = ?,
-       credit_line = ?,
-       nse = ?,
-       is_calidda_client = ?
-     WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-    [
-      sourceConv.context_data,
-      sourceConv.client_name,
-      sourceConv.dni,
-      sourceConv.segment,
-      sourceConv.credit_line,
-      sourceConv.nse,
-      sourceConv.is_calidda_client,
-      targetRef.tenantId,
-      targetRef.channelAccountId,
-      targetRef.phoneNumber,
-    ],
-  );
+  // The replay copies the messages only. The customer stays with the real
+  // phone number, so the assistant meets the replay as a new contact.
+  await ensureConversation(targetRef, true);
 
   // Copy messages in chronological order
   for (const msg of sourceMessages.reverse()) {

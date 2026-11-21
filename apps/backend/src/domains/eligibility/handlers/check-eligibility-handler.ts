@@ -5,9 +5,11 @@ import type { FNBProvider } from "../providers/fnb-provider.ts";
 import type { PowerBIProvider } from "../providers/powerbi-provider.ts";
 import { evaluateResults } from "../strategy/eligibility-strategy.ts";
 import { createEvent } from "../../../shared/events/index.ts";
-import type { EnrichmentResult } from "@vendeya/core";
 import type { ConversationRef } from "@vendeya/types";
-import { mapEligibilityToEnrichment } from "../mapper.ts";
+import {
+  type EligibilityOutcome,
+  mapEligibilityToEnrichment,
+} from "../mapper.ts";
 import { createLogger } from "../../../lib/logger.ts";
 
 const logger = createLogger("check-eligibility");
@@ -21,7 +23,7 @@ export class CheckEligibilityHandler {
   async execute(
     dni: string,
     ref?: ConversationRef,
-  ): Promise<Result<EnrichmentResult>> {
+  ): Promise<Result<EligibilityOutcome>> {
     const eventContext = ref
       ? { tenantId: ref.tenantId, channelAccountId: ref.channelAccountId }
       : undefined;

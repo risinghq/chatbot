@@ -19,36 +19,6 @@ export type DomainEvent =
         agentId: string;
         agentPhone: string | null;
         clientName: string | null;
-        dni?: string | null;
-      };
-    })
-  | (BaseEvent & {
-      type: "contract_uploaded";
-      payload: {
-        phoneNumber: string;
-        clientName: string;
-        contractPath: string;
-        dni?: string;
-      };
-    })
-  | (BaseEvent & {
-      type: "eligibility_failed";
-      payload: {
-        phoneNumber: string;
-        dni: string;
-        reason: string;
-        segment?: string;
-      };
-    })
-  | (BaseEvent & {
-      type: "purchase_confirmed";
-      payload: {
-        amount: number;
-        clientName: string;
-        phoneNumber: string;
-        dni: string;
-        productId: string;
-        productName: string;
       };
     })
   | (BaseEvent & {
@@ -61,13 +31,6 @@ export type DomainEvent =
         phoneNumber: string;
         dni?: string;
         productName?: string;
-      };
-    })
-  | (BaseEvent & {
-      type: "system_outage_reported";
-      payload: {
-        source: "core" | "external";
-        details: string[];
       };
     })
   | (BaseEvent & {
@@ -103,26 +66,10 @@ export type DomainEvent =
       };
     })
   | (BaseEvent & {
-      type: "enrichment_limit_exceeded";
-      payload: {
-        phoneNumber: string;
-        lastPhase: string;
-      };
-    })
-  | (BaseEvent & {
       type: "system_error_occurred";
       payload: {
         phoneNumber: string;
         error: string;
         context?: Record<string, unknown>;
-      };
-    })
-  | (BaseEvent & {
-      type: "attention_required";
-      payload: {
-        phoneNumber: string;
-        reason: string;
-        clientName: string;
-        dni: string;
       };
     });
