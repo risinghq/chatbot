@@ -14,6 +14,7 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import Textarea from "#lib/components/ui/textarea.svelte";
+import AssistantTabs from "#lib/components/assistant/assistant-tabs.svelte";
 import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
@@ -131,9 +132,6 @@ async function save() {
 			subtitle="Lo que el asistente sabe del negocio, además del catálogo, el stock, las zonas de envío y los medios de pago."
 		>
 			{#snippet actions()}
-				{#if auth.canAccessSimulator}
-					<Button size="sm" variant="secondary" href="/dashboard/simulator">Probar en el simulador</Button>
-				{/if}
 				{#if canEdit}
 					<Button size="sm" onclick={save} disabled={!changed || saving}>
 						{saving ? "Guardando…" : "Guardar"}
@@ -141,6 +139,8 @@ async function save() {
 				{/if}
 			{/snippet}
 		</PageHeader>
+
+		<AssistantTabs class="-mx-4 mb-6 border-b border-border-subtle px-4 md:mx-0 md:px-0" />
 
 		{#if draft}
 			<div class="flex flex-col gap-6">

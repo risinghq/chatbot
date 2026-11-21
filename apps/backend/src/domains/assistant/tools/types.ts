@@ -3,7 +3,7 @@ import type { OrderDetail } from "@vendeya/types";
 /** The conversation a tool runs for. Every read and write is scoped to it. */
 export type ToolContext = {
   tenantId: string;
-  channelAccountId: string | null;
+  channelAccountId: string;
   /** The customer's phone, as WhatsApp sends it. */
   phone: string;
   /** A simulated conversation reads real data and writes none. */

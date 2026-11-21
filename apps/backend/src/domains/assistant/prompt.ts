@@ -4,6 +4,8 @@ export type PromptInput = {
   businessName: string;
   settings: AssistantSettings;
   customer: Customer | null;
+  /** The business sells on Cálidda credit and has check_calidda_credit. */
+  caliddaCredit: boolean;
   now: Date;
 };
 
@@ -14,6 +16,10 @@ const RULES = `Rules:
 - Before create_order, confirm the products, quantities, delivery or pickup, the address, the payment method and the total, and wait for the customer's yes. After it, give the order number and the payment instructions.
 - Call hand_off when the customer asks for a person, is upset, or asks something the tools and the business's notes do not answer. Never make up an answer.
 - send_product_photos sends the photos after your reply, so do not describe them as already sent.`;
+
+const CREDIT_RULE = `Cálidda credit:
+- The business sells on Cálidda credit. When the customer wants to pay with it, ask for their DNI and call check_calidda_credit. Tell them only whether they qualify and their credit line.
+- Never ask for a DNI for anything else.`;
 
 function section(title: string, text: string): string | null {
   return text.trim() ? `${title}:\n${text.trim()}` : null;
@@ -40,6 +46,7 @@ export function buildSystemPrompt(input: PromptInput): string {
   return [
     `You are the sales assistant of ${input.businessName}, answering customers on WhatsApp. You help them find products, answer their questions and take their orders.`,
     RULES,
+    input.caliddaCredit ? CREDIT_RULE : null,
     section("The business's instructions", input.settings.instructions),
     section("Frequent questions", input.settings.faq),
     section("Policies", input.settings.policies),

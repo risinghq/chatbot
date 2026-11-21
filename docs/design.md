@@ -80,8 +80,10 @@ or page padding, so the heading sits at the same place on every page.
 A single-column page (a form, a record, the account page) passes
 `width="narrow"`. That caps the content at `max-w-3xl` on the same left edge; it
 does not centre a narrower column. Conversations and the simulator are
-full-bleed panes with no container. A page under `admin/` renders inside the
-admin layout, which already draws the `Page`, the heading and the tabs.
+full-bleed panes with no container. The simulator is the Asistente page's Probar
+tab, so it draws the page's tabs in a 3rem bar above its panes. A page under
+`admin/` renders inside the admin layout, which already draws the `Page`, the
+heading and the tabs.
 
 Touch targets grow to 44 px on a coarse pointer (`pointer-coarse:min-h-11`).
 Pages must not scroll sideways at 390 px; a wide table scrolls inside its card.

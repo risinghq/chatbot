@@ -14,7 +14,7 @@ import {
 
 import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
-import { eligibilityHandler } from "../src/bootstrap/index.ts";
+import { eligibilityHandler } from "../src/domains/eligibility/index.ts";
 import { Ok } from "../src/shared/result/index.ts";
 import {
   createSession,

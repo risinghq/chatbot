@@ -8,9 +8,9 @@ qualify, for how much, and under which program.
 The check is optional. A business uses it by entering its own Cálidda login. The
 providers and the thresholds are fixed in code and every business shares them.
 
-No conversation runs the check yet. The assistant gets a `check_calidda_credit`
-tool next, offered only to a business with a Cálidda login. Until then the check
-runs only from [the DNI lookup](#looking-up-a-dni).
+The assistant runs the check in a conversation
+([In a conversation](#in-a-conversation)), and platform operators run it from
+[the DNI lookup](#looking-up-a-dni).
 
 ## The two providers
 
@@ -72,6 +72,16 @@ The handler returns a `CreditCheck` (`@vendeya/types`): `eligible` with the
 Power BI, the NSE; `not_eligible`; or `system_outage`. A check that throws
 returns an error instead. The result says nothing about the catalog: what the
 customer can buy with the credit is the assistant's call.
+
+## In a conversation
+
+The assistant's `check_calidda_credit` tool
+([`tools/credit.ts`](../apps/backend/src/domains/assistant/tools/credit.ts))
+runs the check for the conversation's business. It is offered only when the
+business has a Cálidda login, so a business without one never asks for a DNI.
+The model reads `eligible` with the credit line, `not_eligible`, or
+`unavailable` for an outage. It never reads the name or the NSE: anyone can type
+a stranger's DNI in a chat. A simulated conversation runs the real check.
 
 ## Outages
 

@@ -40,9 +40,9 @@ const steps = $derived(
         {
           done: status.tried_simulator,
           label: "Prueba el asistente",
-          hint: "Conversa con él en el simulador. No envía nada a nadie.",
-          action: "Abrir simulador",
-          href: "/dashboard/simulator",
+          hint: "Conversa con él como un cliente. No envía nada a nadie.",
+          action: "Probar",
+          href: "/dashboard/asistente/probar",
         },
         {
           done: status.whatsapp_configured,

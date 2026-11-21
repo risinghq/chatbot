@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { pathParam } from "../lib/http.ts";
 import { requirePlatformOperator } from "../middleware/auth.ts";
 import { getAllStatus } from "../adapters/providers/health.ts";
-import { eligibilityHandler } from "../bootstrap/index.ts";
+import { eligibilityHandler } from "../domains/eligibility/index.ts";
 import { TenantService } from "../domains/tenants/index.ts";
 import { isOk } from "../shared/result/index.ts";
 import type { ConversationRef } from "@vendeya/types";

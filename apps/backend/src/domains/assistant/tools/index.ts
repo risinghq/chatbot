@@ -1,6 +1,7 @@
 import { OrderInputError } from "../../orders/index.ts";
 import { InsufficientStockError } from "../../stock/index.ts";
 import { catalogTools } from "./catalog.ts";
+import { creditTools } from "./credit.ts";
 import { customerTools } from "./customer.ts";
 import { orderTools } from "./orders.ts";
 import {
@@ -13,26 +14,35 @@ import {
 
 export type { Tool, ToolContext, ToolEffect, ToolOutcome } from "./types.ts";
 
-/** Every tool the assistant can call, in the order the model sees them. */
-export const TOOLS: readonly Tool[] = [
-  ...catalogTools,
-  ...customerTools,
-  ...orderTools,
-];
+export type ToolOptions = {
+  /** The business has a Cálidda login, so it sells on Cálidda credit. */
+  caliddaCredit: boolean;
+};
 
-const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+/** The tools a business's assistant can call, in the order the model sees them. */
+export function toolsFor(options: ToolOptions): readonly Tool[] {
+  return [
+    ...catalogTools,
+    ...customerTools,
+    ...orderTools,
+    ...(options.caliddaCredit ? creditTools : []),
+  ];
+}
 
 /**
- * Runs one tool call. A mistake the model can correct (an unknown tool,
- * wrong arguments, an order the stock or the order rules refuse) comes back
- * as `{ error }` for the model to read; any other failure throws.
+ * Runs one tool call from `tools`, the set the model was offered, so a tool
+ * the business lacks is refused like an unknown one. A mistake the model can
+ * correct (an unknown tool, wrong arguments, an order the stock or the order
+ * rules refuse) comes back as `{ error }` for the model to read; any other
+ * failure throws.
  */
 export async function runTool(
+  tools: readonly Tool[],
   ctx: ToolContext,
   name: string,
   args: unknown,
 ): Promise<ToolOutcome> {
-  const tool = BY_NAME.get(name);
+  const tool = tools.find((t) => t.name === name);
   if (!tool) return answer({ error: `there is no tool named ${name}` });
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
     return answer({ error: "arguments must be a JSON object" });

@@ -2,30 +2,34 @@
  * The assistant's tools read the business's catalog, stock, zones and
  * payment methods, and file an order for the customer of the chat. A
  * simulated chat reads the same data and writes nothing. Every tool sees
- * only its own business.
+ * only its own business. A business with a Cálidda login also checks a
+ * customer's Cálidda credit.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ProductVariant } from "@vendeya/types";
 
 import { db } from "../src/db/index.ts";
 import { AssistantSettingsService } from "../src/domains/assistant/settings.ts";
 import {
   runTool,
-  TOOLS,
+  toolsFor,
   type ToolContext,
 } from "../src/domains/assistant/tools/index.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { VariantService } from "../src/domains/catalog/variants.ts";
 import { CustomerService } from "../src/domains/customers/index.ts";
+import { eligibilityHandler } from "../src/domains/eligibility/index.ts";
 import {
   DeliveryZoneService,
   PaymentMethodService,
 } from "../src/domains/orders/index.ts";
 import { StockService } from "../src/domains/stock/index.ts";
+import { Ok } from "../src/shared/result/index.ts";
 import { createTenantFixture } from "./helpers/tenancy.ts";
 
 const PHONE = "51987654321";
+const TOOLS = toolsFor({ caliddaCredit: true });
 
 async function addVariant(
   tenantId: string,
@@ -70,7 +74,7 @@ describe("the assistant's tools", () => {
     args: object = {},
     over: Partial<ToolContext> = {},
   ) {
-    return await runTool({ ...ctx, ...over }, name, args);
+    return await runTool(TOOLS, { ...ctx, ...over }, name, args);
   }
 
   async function orderCount(): Promise<number> {
@@ -340,6 +344,60 @@ describe("the assistant's tools", () => {
         order({ lines: [{ variant_id: polo.id, quantity: 1 }] }),
       );
       expect(result).toEqual({ error: "not enough stock for this order" });
+    });
+  });
+
+  describe("check_calidda_credit", () => {
+    let execute: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      execute = vi.spyOn(eligibilityHandler, "execute");
+    });
+
+    afterEach(() => {
+      execute.mockRestore();
+    });
+
+    it("gives the credit line and keeps the name and NSE from the model", async () => {
+      execute.mockResolvedValue(
+        Ok({
+          status: "eligible",
+          source: "powerbi",
+          credit: 3500,
+          name: "JUAN PEREZ",
+          nse: 3,
+        }) as never,
+      );
+
+      const { result } = await call("check_calidda_credit", {
+        dni: "1234 5678",
+      });
+
+      expect(result).toEqual({ status: "eligible", credit_line: "S/ 3500.00" });
+      expect(execute).toHaveBeenCalledWith("12345678", {
+        tenantId: ctx.tenantId,
+        channelAccountId: ctx.channelAccountId,
+        phoneNumber: PHONE,
+      });
+    });
+
+    it("tells the model when the customer does not qualify or Cálidda is down", async () => {
+      execute.mockResolvedValueOnce(Ok({ status: "not_eligible" }) as never);
+      expect(
+        (await call("check_calidda_credit", { dni: "12345678" })).result,
+      ).toEqual({ status: "not_eligible" });
+
+      execute.mockResolvedValueOnce(Ok({ status: "system_outage" }) as never);
+      expect(
+        (await call("check_calidda_credit", { dni: "12345678" })).result,
+      ).toEqual(expect.objectContaining({ status: "unavailable" }));
+    });
+
+    it("refuses a DNI that is not 8 digits without checking", async () => {
+      expect(
+        (await call("check_calidda_credit", { dni: "1234567" })).result,
+      ).toEqual({ error: "dni must be 8 digits" });
+      expect(execute).not.toHaveBeenCalled();
     });
   });
 

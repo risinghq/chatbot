@@ -206,6 +206,14 @@ so the model cannot state a price or a stock level it did not read:
 | `quote`                | Prices a cart with delivery.                                |
 | `create_order`         | Files the order, and the customer if the business has none. |
 | `hand_off`             | Passes the conversation to a person, with a reason.         |
+| `check_calidda_credit` | Checks a DNI's Cálidda credit line.                         |
+
+A business gets `check_calidda_credit` only with a Cálidda login, and the prompt
+then tells the model to ask for a DNI only to pay with Cálidda credit. Without a
+login the model is never offered the tool, and a call to it is refused like an
+unknown tool. The tool answers whether the person qualifies and their credit
+line, never the name or NSE the providers return
+([Eligibility](./eligibility.md#in-a-conversation)).
 
 A tool never sends a message or alerts anyone. It returns effects (photos to
 send, an order filed, a handoff), and the turn carries them out. A turn makes at
