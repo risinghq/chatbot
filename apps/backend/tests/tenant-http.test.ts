@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import { hashPassword } from "../src/platform/auth/password.ts";
 import { frontendPath, importFrontend } from "./helpers/frontend.ts";
 import { getOne, run } from "../src/db/index.ts";
-import type { Bundle } from "@vendeya/types";
+import type { Product } from "@vendeya/types";
 
 import {
   addChannelAccount,
@@ -54,9 +54,8 @@ import {
 import { TenantSecrets } from "../src/domains/settings/tenant-secrets.ts";
 import { MembershipService } from "../src/domains/tenants/index.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
-import { BundleService } from "../src/domains/catalog/bundles.ts";
-import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
+import { VariantService } from "../src/domains/catalog/variants.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 
@@ -228,13 +227,7 @@ describe("HTTP authorization", () => {
   });
 
   it("does not leak another tenant's catalog", async () => {
-    const betaPeriod = await PeriodService.create({
-      tenantId: beta.tenantId,
-      name: "Septiembre",
-      year_month: "2026-09",
-      created_by: null,
-    });
-    await ProductService.create({
+    const betaProduct = await ProductService.create({
       tenantId: beta.tenantId,
       name: "Beta Product",
       category: "cocinas",
@@ -245,123 +238,48 @@ describe("HTTP authorization", () => {
     ).toEqual([]);
     expect(await getJson("/api/catalog/products", betaAdmin)).toHaveLength(1);
 
-    // Even naming the other tenant's period explicitly returns nothing.
+    // Even naming the other tenant's product explicitly finds nothing.
     expect(
-      await getJson<unknown[]>(
-        `/api/catalog/bundles?period_id=${betaPeriod.id}`,
-        alphaAdmin,
-      ),
-    ).toEqual([]);
+      (await get(`/api/catalog/products/${betaProduct.id}`, alphaAdmin)).status,
+    ).toBe(404);
   });
 
-  function createAlphaPeriod() {
-    return PeriodService.create({
-      tenantId: alpha.tenantId,
-      name: "Septiembre",
-      year_month: "2026-09",
-      created_by: null,
-    });
-  }
-
-  function createAlphaBundle(periodId: string, name: string) {
-    return BundleService.create({
-      id: `bundle-${crypto.randomUUID()}`,
-      tenantId: alpha.tenantId,
-      period_id: periodId,
-      segment: "gaso",
-      name,
-      price: 1000,
-      primary_category: "cocinas",
-      categories_json: JSON.stringify(["cocinas"]),
-      image_id: `img-${crypto.randomUUID()}`,
-      composition_json: JSON.stringify([]),
-      installments_json: JSON.stringify([]),
-      created_by: null,
-    });
-  }
-
   /** The row as stored, read without a tenant filter so a moved row is still found. */
-  async function storedBundle(id: string) {
-    return (await getOne("SELECT * FROM catalog_bundles WHERE id = ?", [id])) as
-      | Bundle
+  async function storedProduct(id: string) {
+    return (await getOne("SELECT * FROM products WHERE id = ?", [id])) as
+      | Product
       | undefined;
   }
 
   /**
-   * The bundle PATCH and bulk-update routes pass the request body to the
-   * service as `updates`. The service must drop off-list keys, because a new
-   * `tenant_id` would move the row to another business.
+   * The product PATCH passes the request body to the service. The service must
+   * drop off-list keys, because a new `tenant_id` would move the row to
+   * another business.
    */
-  it("ignores off-list fields in a bundle PATCH instead of moving the row", async () => {
-    const bundle = await createAlphaBundle(
-      (await createAlphaPeriod()).id,
-      "Alpha Bundle",
-    );
+  it("ignores off-list fields in a product PATCH instead of moving the row", async () => {
+    const product = await ProductService.create({
+      tenantId: alpha.tenantId,
+      name: "Alpha Product",
+      category: "Cocinas",
+    });
 
     const response = await patch(
-      `/api/catalog/bundles/${bundle.id}`,
+      `/api/catalog/products/${product.id}`,
       alphaAdmin,
-      { name: "Renamed", tenant_id: beta.tenantId },
+      { name: "Renamed", tenant_id: beta.tenantId, id: "hijacked-id" },
     );
 
     // Checked before the response is read: whatever the route answers, the row
     // must not have left the tenant that owns it.
-    const stored = await storedBundle(bundle.id);
+    const stored = await storedProduct(product.id);
     expect(stored?.tenant_id).toBe(alpha.tenantId);
 
     // Dropped, not rejected: the request succeeds and the rename still lands.
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      tenant_id: alpha.tenantId,
-      name: "Renamed",
-    });
     expect(stored?.name).toBe("Renamed");
-
-    // And the bundle never surfaces in the tenant the body named.
     expect(
-      await getJson<unknown[]>(
-        `/api/catalog/bundles?period_id=${bundle.period_id}`,
-        betaAdmin,
-      ),
+      await getJson<unknown[]>("/api/catalog/products", betaAdmin),
     ).toEqual([]);
-
-    // Other off-list columns, here `id` and `period_id`, are dropped the same
-    // way, and an on-list column such as `notes` still lands.
-    const second = await patch(
-      `/api/catalog/bundles/${bundle.id}`,
-      alphaAdmin,
-      { id: "hijacked-id", period_id: "no-such-period", notes: "Nota nueva" },
-    );
-
-    expect(second.status).toBe(200);
-    const after = await storedBundle(bundle.id);
-    expect(after?.id).toBe(bundle.id);
-    expect(after?.period_id).toBe(bundle.period_id);
-    expect(after?.notes).toBe("Nota nueva");
-  });
-
-  it("ignores off-list fields in a bundle bulk-update", async () => {
-    const period = await createAlphaPeriod();
-    const first = await createAlphaBundle(period.id, "Bulk One");
-    const second = await createAlphaBundle(period.id, "Bulk Two");
-
-    const response = await post(
-      "/api/catalog/bundles/bulk-update",
-      alphaAdmin,
-      {
-        ids: [first.id, second.id],
-        updates: { is_active: 0, tenant_id: beta.tenantId },
-      },
-    );
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ count: 2 });
-
-    for (const bundle of [first, second]) {
-      const stored = await storedBundle(bundle.id);
-      expect(stored?.tenant_id).toBe(alpha.tenantId);
-      expect(stored?.is_active).toBe(0);
-    }
   });
 
   it("does not leak another tenant's orders", async () => {
@@ -2243,30 +2161,21 @@ describe("HTTP authorization", () => {
       await TenantSecrets.set(tenantId, "openai_api_key", "sk-test");
       expect((await status()).openai_configured).toBe(true);
 
-      // The assistant quotes only active offers in the active period, so an
-      // offer in a draft period stays pending.
-      const period = await PeriodService.create({
+      // The assistant offers only an active product with an active variant,
+      // so a product with nothing to sell stays pending.
+      const product = await ProductService.create({
         tenantId,
-        name: "Septiembre",
-        year_month: "2026-09",
-        created_by: null,
-      });
-      await BundleService.create({
-        id: `bundle-${crypto.randomUUID()}`,
-        tenantId,
-        period_id: period.id,
-        segment: "gaso",
         name: "Cocina",
-        price: 1000,
-        primary_category: "cocinas",
-        categories_json: JSON.stringify(["cocinas"]),
-        image_id: `img-${crypto.randomUUID()}`,
-        composition_json: JSON.stringify([]),
-        installments_json: JSON.stringify([]),
-        created_by: null,
+        category: "Cocinas",
       });
       expect((await status()).has_catalog).toBe(false);
-      await PeriodService.updateStatus(tenantId, period.id, "active");
+      await VariantService.create(tenantId, product.id, {
+        name: null,
+        sku: "COCINA-1",
+        price_cents: 100000,
+        cost_cents: null,
+        is_active: 1,
+      });
       expect((await status()).has_catalog).toBe(true);
 
       await insertConversation(await simulatorRef(tenantId, "51900000001"));

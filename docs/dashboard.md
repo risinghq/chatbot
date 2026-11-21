@@ -33,11 +33,12 @@ request by hand:
 
 ```ts
 // routes/dashboard/catalog/+page.server.ts
-export const load: PageServerLoad = async ({ cookies, url, fetch }) => {
+export const load: PageServerLoad = async ({ cookies, fetch }) => {
   const sessionToken = cookies.get("session");
   // ...
-  const headers = { cookie: `session=${sessionToken}` };
-  const periodsRes = await fetch("/api/periods", { headers });
+  const res = await fetch("/api/catalog/products", {
+    headers: { cookie: `session=${sessionToken}` },
+  });
 ```
 
 A load must use the `fetch` it is given. The global `fetch` cannot resolve a
@@ -91,7 +92,7 @@ routes/
     conversations/  [phone]/        inbox and one conversation
     asistente/                      the assistant's instructions, model and tools
     clientes/  [customerId]/        customers and one customer
-    catalog/  bundles/[id]/  inventory/[id]/   products and offers; one product and its variants
+    catalog/  inventory/[id]/       products; one product and its variants
     inventario/                     stock per variant and the movement ledger
     orders/  [orderId]/
     envios/                         delivery zones and shipments
@@ -103,7 +104,7 @@ routes/
     cuenta/                         the signed-in user's account
     admin/                          admin only
       users/  [userId]/  create/
-      channels/  orders/  periods/  audit/  settings/
+      channels/  orders/  audit/  settings/
 ```
 
 ## Adding a page
@@ -147,33 +148,14 @@ Conventions the pages follow:
 ## The Proveedores page
 
 The page calls `GET /api/providers/:dni` and shows the `result` in the answer.
-`result` is what
-[`mapper.ts`](../apps/backend/src/domains/eligibility/mapper.ts) builds: a
-`status` (`eligible`, `not_eligible`, `system_outage` or `needs_human`) and, for
-an approval, `segment`, `credit`, `name` and `nse`. Only an approval carries a
-credit line. When the check itself failed, `result` is `{ error }`. The answer
-does not say which provider replied, so the page shows the segment.
+`result` is the `CreditCheck` from `@vendeya/types`: a `status` (`eligible`,
+`not_eligible` or `system_outage`) and, for an approval, the `source` that
+approved (`fnb` or `powerbi`), `credit`, `name` and `nse`. Only an approval
+carries a credit line. When the check itself failed, `result` is `{ error }`.
 
 The two dots in the page header come from `providersChecked` in the same answer:
 the providers whose circuit breaker was closed for that lookup. They appear
 after the first lookup. The page does not read `/api/health`.
-
-## Editing the catalog
-
-The bundle editor saves with `PATCH /api/catalog/bundles/:id`, and the stock
-badge on a bundle card sends `stock_status` to the same route. The route stores
-`name`, `price`, `is_active`, `stock_status`, `notes`, `primary_category`,
-`composition_json` and `installments_json`, and ignores any other key.
-
-The request body must be a JSON object. `name` and the category must be
-non-empty strings. `price` must be a number above zero, `is_active` 0 or 1, and
-`stock_status` one of `in_stock`, `low_stock` and `out_of_stock`. `notes` must
-be a string. Each JSON column must be a string that parses to an object or an
-array. The bot parses both on every catalog read. The create route holds `name`,
-`price`, the category and the JSON columns to the same rules, and
-`POST /api/catalog/bundles/bulk-update` holds `is_active` and `stock_status` to
-them, and answers 400 when `ids` is empty or `updates` is not an object that
-sets one of the two. A value that fails answers 400 and changes nothing.
 
 ## Products, variants and stock
 
@@ -266,12 +248,11 @@ the cover.
 | `PUT /api/catalog/products/:id/images/order` | `{ids}` naming every photo once; the first becomes the cover |
 | `DELETE /api/catalog/images/:id`             | Delete the photo, its asset row and its file                 |
 
-An upload is fit inside 1024 × 1024 and stored as JPEG, like a bundle image, and
-is served without a session at `/media/...` because Meta fetches it with no
-credentials. Over 10 MB answers 413, an eleventh photo 409, and a file the
-Images binding cannot read 400. There is no upload from a URL, so the server
-never fetches an address a user chose. Writing needs admin, developer or
-supervisor.
+An upload is fit inside 1024 × 1024 and stored as JPEG, and is served without a
+session at `/media/...` because Meta fetches it with no credentials. Over 10 MB
+answers 413, an eleventh photo 409, and a file the Images binding cannot
+read 400. There is no upload from a URL, so the server never fetches an address
+a user chose. Writing needs admin, developer or supervisor.
 
 ## What has no page
 
@@ -295,11 +276,11 @@ in as its admin. Each user's own profile and password are at
 While a business is unfinished, the home page and the Negocios page show a setup
 checklist (`lib/components/shared/setup-checklist.svelte`) fed by
 `GET /api/admin/setup-status`. Its steps run in the order a new business takes
-them: the OpenAI key, an active offer in the active period, one conversation in
-the simulator, a WhatsApp number with its token and app secret, and at least one
-member. The first pending step carries the primary action. The checklist hides
-once every step is done. The Cálidda login is optional: the status reports it,
-but it does not hold the checklist open.
+them: the OpenAI key, an active product with an active variant, one conversation
+in the simulator, a WhatsApp number with its token and app secret, and at least
+one member. The first pending step carries the primary action. The checklist
+hides once every step is done. The Cálidda login is optional: the status reports
+it, but it does not hold the checklist open.
 
 Pages that work inside one business show a pick-a-business message
 (`lib/components/shared/needs-tenant.svelte`) when the session has no active

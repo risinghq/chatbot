@@ -37,7 +37,7 @@ only the rules those documents do not.
   never names a tenant, and nothing a tenant sells, stores or is alerted about
   falls back to the platform.
 - **Business rules.** Implement what the code and the owner say. Credit tiers,
-  NSE limits and bundle rules found in old notes are not live rules.
+  NSE limits and catalog rules found in old notes are not live rules.
 
 ## Before you finish
 

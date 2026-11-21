@@ -7,8 +7,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type {
   AuditLog,
-  Bundle,
-  CatalogPeriod,
   Conversation,
   ConversationMessage,
   OrderDetail,
@@ -33,12 +31,9 @@ import {
 } from "../src/platform/auth/session.ts";
 import conversationRoutes from "../src/routes/conversations.ts";
 import catalogRoutes from "../src/routes/catalog.ts";
-import periodRoutes from "../src/routes/periods.ts";
 import orderRoutes from "../src/routes/orders.ts";
 import adminUserRoutes from "../src/routes/admin/users.ts";
 import adminSystemRoutes from "../src/routes/admin/system.ts";
-import { BundleService } from "../src/domains/catalog/bundles.ts";
-import { PeriodService } from "../src/domains/catalog/periods.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { OrderWrites } from "../src/domains/orders/index.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
@@ -62,7 +57,6 @@ function buildApp() {
   app.use("/api/*", requireAuth);
   app.route("/api/conversations", conversationRoutes);
   app.route("/api/catalog", catalogRoutes);
-  app.route("/api/periods", periodRoutes);
   app.route("/api/orders", orderRoutes);
   app.use("/api/admin/*", requireRole("admin"));
   app.route("/api/admin/users", adminUserRoutes);
@@ -95,37 +89,6 @@ describe("created_at over HTTP", () => {
     return (await response.json()) as T;
   }
 
-  it("returns CatalogPeriod.created_at as a number", async () => {
-    await PeriodService.create({
-      tenantId: tenant.tenantId,
-      name: "Septiembre",
-      year_month: "2026-09",
-      created_by: null,
-    });
-
-    const periods = await getJson<CatalogPeriod[]>("/api/periods");
-
-    expect(periods).toHaveLength(1);
-    expectMilliseconds(periods[0]!.created_at);
-  });
-
-  it("returns CatalogPeriod.published_at as null until the period is published, then a number", async () => {
-    const period = await PeriodService.create({
-      tenantId: tenant.tenantId,
-      name: "Septiembre",
-      year_month: "2026-09",
-      created_by: null,
-    });
-
-    const draft = await getJson<CatalogPeriod>(`/api/periods/${period.id}`);
-    expect(draft.published_at).toBeNull();
-
-    await PeriodService.updateStatus(tenant.tenantId, period.id, "active");
-
-    const published = await getJson<CatalogPeriod>(`/api/periods/${period.id}`);
-    expectMilliseconds(published.published_at!);
-  });
-
   it("returns Product.created_at as a number", async () => {
     await ProductService.create({
       tenantId: tenant.tenantId,
@@ -137,37 +100,6 @@ describe("created_at over HTTP", () => {
 
     expect(products).toHaveLength(1);
     expectMilliseconds(products[0]!.created_at);
-  });
-
-  it("returns Bundle.created_at as a number", async () => {
-    const period = await PeriodService.create({
-      tenantId: tenant.tenantId,
-      name: "Septiembre",
-      year_month: "2026-09",
-      created_by: null,
-    });
-    await BundleService.create({
-      id: `bundle-${crypto.randomUUID()}`,
-      tenantId: tenant.tenantId,
-      period_id: period.id,
-      segment: "gaso",
-      name: "Combo",
-      price: 1000,
-      primary_category: "cocinas",
-      categories_json: JSON.stringify(["cocinas"]),
-      image_id: `img-${crypto.randomUUID()}`,
-      composition_json: JSON.stringify([]),
-      installments_json: JSON.stringify([]),
-      created_by: null,
-    });
-
-    const bundles = await getJson<Bundle[]>(
-      `/api/catalog/bundles?period_id=${period.id}`,
-    );
-
-    expect(bundles).toHaveLength(1);
-    expectMilliseconds(bundles[0]!.created_at);
-    expectMilliseconds(bundles[0]!.updated_at);
   });
 
   it("returns ConversationMessage.created_at as a number", async () => {

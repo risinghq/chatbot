@@ -1,7 +1,7 @@
 /**
  * The Proveedores page renders what `GET /api/providers/:dni` answers. These
- * tests take a real response body, built by the eligibility mapper and the
- * route, and render it with the page's result card.
+ * tests take a real response body, built by the route from a credit check,
+ * and render it with the page's result card.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -11,7 +11,6 @@ import { insertUser } from "./helpers/tenancy.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
 import { eligibilityHandler } from "../src/bootstrap/index.ts";
-import { mapEligibilityToEnrichment } from "../src/domains/eligibility/mapper.ts";
 import { Err, Ok } from "../src/shared/result/index.ts";
 import {
   createSession,
@@ -66,13 +65,12 @@ describe("the provider lookup page", () => {
 
   it("shows an FNB approval with the name and the credit line", async () => {
     execute.mockResolvedValue(
-      Ok(
-        await mapEligibilityToEnrichment(null, {
-          eligible: true,
-          credit: 1500,
-          name: "Ana Pérez",
-        }),
-      ) as never,
+      Ok({
+        status: "eligible",
+        source: "fnb",
+        credit: 1500,
+        name: "Ana Pérez",
+      }) as never,
     );
 
     const page = await lookupPage();
@@ -87,14 +85,13 @@ describe("the provider lookup page", () => {
 
   it("shows a GASO approval with its NSE", async () => {
     execute.mockResolvedValue(
-      Ok(
-        await mapEligibilityToEnrichment(null, {
-          eligible: true,
-          credit: 2500,
-          name: "Luis Ríos",
-          nse: 3,
-        }),
-      ) as never,
+      Ok({
+        status: "eligible",
+        source: "powerbi",
+        credit: 2500,
+        name: "Luis Ríos",
+        nse: 3,
+      }) as never,
     );
 
     const page = await lookupPage();
@@ -105,11 +102,7 @@ describe("the provider lookup page", () => {
   });
 
   it("shows a refusal without a credit line", async () => {
-    execute.mockResolvedValue(
-      Ok(
-        await mapEligibilityToEnrichment(null, { eligible: false, credit: 0 }),
-      ) as never,
-    );
+    execute.mockResolvedValue(Ok({ status: "not_eligible" }) as never);
 
     const page = await lookupPage();
 
@@ -121,16 +114,7 @@ describe("the provider lookup page", () => {
   });
 
   it("says when no provider answered, not that the customer was refused", async () => {
-    execute.mockResolvedValue(
-      Ok(
-        await mapEligibilityToEnrichment(null, {
-          eligible: false,
-          credit: 0,
-          needsHuman: true,
-          handoffReason: "both_providers_down",
-        }),
-      ) as never,
-    );
+    execute.mockResolvedValue(Ok({ status: "system_outage" }) as never);
 
     const page = await lookupPage();
 

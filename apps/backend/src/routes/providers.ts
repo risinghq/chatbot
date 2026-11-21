@@ -33,21 +33,11 @@ app.get("/:dni", requirePlatformOperator, async (c) => {
     const result = await eligibilityHandler.execute(dni, ref);
     const healthStatus = await getAllStatus(ref?.tenantId);
 
-    let displayResult: any = result;
-    if (isOk(result)) {
-      displayResult = result.value;
-    } else {
-      displayResult = {
-        error: result.error.message,
-        details: result.error,
-      };
-    }
-
     return c.json({
       dni,
-      result: displayResult,
-      // The mapper folds a missing login into system_outage, so say plainly
-      // why the FNB leg could not answer.
+      result: isOk(result) ? result.value : { error: result.error.message },
+      // A missing login reads as a system outage, so say plainly why the FNB
+      // leg could not answer.
       fnb: ref
         ? undefined
         : { status: "unavailable", reason: "FNB requires a tenant" },

@@ -34,7 +34,7 @@ export type VariantLine = {
   unitPriceCents?: number;
 };
 
-/** A line that is not a stocked variant, such as a Cálidda bundle. */
+/** A line that is not a stocked variant, such as a service or a one-off item. */
 export type FreeLine = {
   name: string;
   sku?: string | null;

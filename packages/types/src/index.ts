@@ -1,9 +1,6 @@
 import type { StoredMessageType } from "./whatsapp.ts";
 
-export type Segment = "fnb" | "gaso";
-export type StockStatus = "in_stock" | "low_stock" | "out_of_stock";
 export type UserRole = "admin" | "developer" | "supervisor" | "sales_agent";
-export type PeriodStatus = "draft" | "active" | "archived";
 
 // Tenancy
 /** Role a user holds inside one tenant. Platform operators hold none. */
@@ -82,20 +79,8 @@ export type {
   Product,
   ProductStatus,
   ProductVariant,
-  ProductSpecs,
-  SnapshotProduct,
-  BundleChoice,
-  BundleChoiceOption,
-  BundleComposition,
-  InstallmentSchedule,
-  Bundle,
-  CategoryConfig,
-  CategoryKey,
-  CategoryGroup,
-  CatalogSnapshot,
   ProductImage,
 } from "./catalog.ts";
-export { CATEGORIES, CATEGORY_GROUPS } from "./catalog.ts";
 export type {
   StockLocation,
   StockMovement,
@@ -162,17 +147,6 @@ export type Conversation = {
   customer_name: string | null;
 };
 
-export type CatalogPeriod = {
-  id: string;
-  tenant_id: string;
-  name: string;
-  year_month: string;
-  status: PeriodStatus;
-  published_at: number | null;
-  created_by: string | null;
-  created_at: number;
-};
-
 export type ConversationMessage = {
   id: string;
   tenant_id: string;
@@ -235,6 +209,22 @@ export type ProviderCheckResult = {
   nse?: number;
   reason?: string;
 };
+
+/**
+ * What a Cálidda credit check found for one DNI. `source` is the provider that
+ * answered: FNB through the business's Cálidda login, or the Power BI report
+ * behind GASO, which also reports the NSE.
+ */
+export type CreditCheck =
+  | {
+      status: "eligible";
+      source: "fnb" | "powerbi";
+      credit: number;
+      name?: string;
+      nse?: number;
+    }
+  | { status: "not_eligible" }
+  | { status: "system_outage" };
 
 export type ReplayMetadata = {
   conversationId: string;

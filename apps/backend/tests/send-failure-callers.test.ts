@@ -1,6 +1,6 @@
 /**
  * A send that WhatsApp did not accept must not be reported as one that went
- * out. The bundle images and an agent's manual reply each act on the outcome.
+ * out. An agent's manual reply acts on the outcome.
  * The only fake is the network.
  */
 
@@ -19,8 +19,6 @@ import {
 import type { ConversationRef } from "@vendeya/types";
 
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
-import { sendBundleImages } from "../src/conversation/images.ts";
-import { BundleService } from "../src/domains/catalog/bundles.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { raiseUnreadAlert } from "../src/conversation/unread-alerts.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
@@ -32,15 +30,11 @@ import {
 import conversationRoutes from "../src/routes/conversations.ts";
 
 const CUSTOMER = "51900888001";
-const IMAGE_CHEAP = "img-cheap";
-const IMAGE_DEAR = "img-dear";
 
 describe("a send WhatsApp did not accept", () => {
   let tenant: TenantFixture;
   let ref: ConversationRef;
   let agent: string;
-  let cheapId: string;
-  let dearId: string;
   let originalFetch: typeof globalThis.fetch;
   /** Request bodies that reached the network, in order. */
   let requests: Array<Record<string, any>>;
@@ -59,43 +53,11 @@ describe("a send WhatsApp did not accept", () => {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
-  const refusesImage = (imageId: string) => (body: Record<string, any>) =>
-    body.type === "image" && body.image.link.includes(imageId)
-      ? refused()
-      : accepted();
   const refusesEverything = () => refused();
 
-  function imageRequests() {
-    return requests.filter((r) => r.type === "image");
-  }
   function textRequests() {
     return requests.filter((r) => r.type === "text");
   }
-
-  async function createBundle(
-    name: string,
-    price: number,
-    imageId: string,
-  ): Promise<string> {
-    const id = `bundle-${crypto.randomUUID()}`;
-    await BundleService.create({
-      id,
-      tenantId: tenant.tenantId,
-      period_id: periodId,
-      segment: "fnb",
-      name,
-      price,
-      primary_category: "cocinas",
-      categories_json: JSON.stringify(["cocinas"]),
-      image_id: imageId,
-      composition_json: JSON.stringify({ fixed: [], choices: [] }),
-      installments_json: JSON.stringify([{ months: 12, monthlyAmount: 110 }]),
-      created_by: null,
-    });
-    return id;
-  }
-
-  let periodId: string;
 
   beforeEach(async () => {
     tenant = await createTenantFixture("send-failure");
@@ -113,15 +75,6 @@ describe("a send WhatsApp did not accept", () => {
     await insertConversation(ref);
     agent = (await createMember(tenant, "sales_agent")).userId;
 
-    periodId = `per-${crypto.randomUUID()}`;
-    await run(
-      `INSERT INTO catalog_periods (id, tenant_id, name, year_month, status)
-       VALUES (?, ?, 'Enero', '2026-01', 'active')`,
-      [periodId, tenant.tenantId],
-    );
-    cheapId = await createBundle("Cocina 2 hornillas", 800, IMAGE_CHEAP);
-    dearId = await createBundle("Cocina 4 hornillas", 1200, IMAGE_DEAR);
-
     requests = [];
     answer = () => accepted();
     originalFetch = globalThis.fetch;
@@ -134,64 +87,6 @@ describe("a send WhatsApp did not accept", () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch;
-  });
-
-  describe("when the bundle images are sent", () => {
-    const params = () => ({
-      ref,
-      segment: "fnb" as const,
-      creditLine: 5000,
-      isSimulation: false,
-    });
-
-    it("reports success and both products when every image is accepted", async () => {
-      const result = await sendBundleImages(params());
-
-      expect(result.success).toBe(true);
-      expect(result.products.map((p) => p.productId)).toEqual([
-        cheapId,
-        dearId,
-      ]);
-      expect(textRequests()).toHaveLength(1);
-    });
-
-    it("reports no success, no products and no follow-up when every image is refused", async () => {
-      answer = refusesEverything;
-
-      const result = await sendBundleImages(params());
-
-      expect(result).toEqual({ success: false, products: [] });
-      expect(imageRequests()).toHaveLength(2);
-      expect(textRequests()).toHaveLength(0);
-    });
-
-    it("returns only the accepted product, at its original position, when one is refused", async () => {
-      answer = refusesImage(IMAGE_CHEAP);
-
-      const result = await sendBundleImages(params());
-
-      expect(result.success).toBe(true);
-      expect(result.products).toEqual([
-        {
-          name: "Cocina 4 hornillas",
-          position: 2,
-          productId: dearId,
-          price: 1200,
-        },
-      ]);
-      expect(textRequests()).toHaveLength(1);
-    });
-
-    it("still reports every product for a simulated conversation", async () => {
-      const result = await sendBundleImages({
-        ...params(),
-        isSimulation: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.products).toHaveLength(2);
-      expect(requests).toHaveLength(0);
-    });
   });
 
   describe("when an agent sends a manual reply", () => {

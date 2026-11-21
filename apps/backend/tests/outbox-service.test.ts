@@ -134,7 +134,7 @@ describe("a send the turn asked to keep", () => {
       ref,
       "images/img-1.jpg",
       "Cocina 4 hornillas",
-      "bundle-1",
+      "product-1",
       { retry: true },
     );
 
@@ -148,7 +148,7 @@ describe("a send the turn asked to keep", () => {
     expect((await MessageStore.getHistory(ref))[0]).toMatchObject({
       type: "image",
       status: "queued",
-      product_id: "bundle-1",
+      product_id: "product-1",
     });
   });
 

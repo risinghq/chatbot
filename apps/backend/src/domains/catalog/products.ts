@@ -1,6 +1,5 @@
 import type { Product, ProductStatus } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
-import { sql } from "kysely";
 import { db, tenantScope } from "../../db/index.ts";
 import { mediaPath } from "../../lib/storage-paths.ts";
 
@@ -137,41 +136,5 @@ export const ProductService = {
       .orderBy("category")
       .execute();
     return rows.map((r) => r.category);
-  },
-
-  /**
-   * Brands of the products inside active, in-stock bundles. A bundle's
-   * composition holds product ids, joined back to `products` inside the tenant.
-   */
-  getActiveBrands: async (tenantId: string): Promise<string[]> => {
-    const rows = await db
-      .selectFrom([
-        "catalog_bundles as b",
-        sql<{ key: string; value: string }>`json_tree(b.composition_json)`.as(
-          "ref",
-        ),
-      ])
-      .innerJoin("catalog_periods as period", (join) =>
-        join
-          .onRef("period.id", "=", "b.period_id")
-          .onRef("period.tenant_id", "=", "b.tenant_id"),
-      )
-      .innerJoin("products as p", (join) =>
-        join
-          .onRef("p.id", "=", "ref.value")
-          .onRef("p.tenant_id", "=", "b.tenant_id"),
-      )
-      .select("p.brand")
-      .distinct()
-      .where("b.tenant_id", "=", tenantId)
-      .where("period.status", "=", "active")
-      .where("b.is_active", "=", 1)
-      .where("b.stock_status", "!=", "out_of_stock")
-      .where("ref.key", "=", "id")
-      .where("p.brand", "is not", null)
-      .where("p.brand", "!=", "")
-      .orderBy("p.brand")
-      .execute();
-    return rows.flatMap((r) => (r.brand ? [r.brand] : []));
   },
 };

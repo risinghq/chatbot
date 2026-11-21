@@ -1,6 +1,8 @@
+import type { CreditCheck } from "@vendeya/types";
+
 /**
- * The body of `GET /api/providers/:dni`. `result` is the eligibility mapper's
- * output (`mapper.ts` in the backend), or `{ error }` when the check failed.
+ * The body of `GET /api/providers/:dni`. `result` is the credit check, or
+ * `{ error }` when the check could not run.
  */
 export type ProviderLookup = {
   dni: string;
@@ -9,12 +11,4 @@ export type ProviderLookup = {
   providersChecked: string[];
 };
 
-export type LookupResult = {
-  type?: "eligibility_result";
-  status?: "eligible" | "not_eligible" | "system_outage" | "needs_human";
-  segment?: "fnb" | "gaso";
-  credit?: number;
-  name?: string;
-  nse?: number;
-  error?: string;
-};
+export type LookupResult = CreditCheck | { error: string };

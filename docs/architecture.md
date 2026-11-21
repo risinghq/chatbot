@@ -114,17 +114,17 @@ D1 has no interactive transaction, so `db.transaction()` throws. A multi-step
 write is one `batch()`, which takes Kysely queries and raw statements. The
 conversation's object keeps a second writer out.
 
-| Area                | Tables                                                                                 |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| Tenancy and auth    | `tenants`, `users`, `tenant_memberships`, `session`                                    |
-| Channel credentials | `channel_accounts`, encrypted `channel_secrets`                                        |
-| Catalog             | `catalog_periods`, `products`, `product_variants`, `product_images`, `catalog_bundles` |
-| Stock               | `stock_locations`, `stock_levels`, `stock_movements`                                   |
-| Conversations       | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`                |
-| Customers           | `customers`, `customer_addresses`                                                      |
-| Orders              | `orders`, `order_lines`, `payments`, `shipments`, `delivery_zones`, `payment_methods`  |
-| Records             | `assets`, `llm_calls`, `notification_traces`, `audit_log`                              |
-| Settings            | `system_settings`, `tenant_settings`                                                   |
+| Area                | Tables                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------- |
+| Tenancy and auth    | `tenants`, `users`, `tenant_memberships`, `session`                                   |
+| Channel credentials | `channel_accounts`, encrypted `channel_secrets`                                       |
+| Catalog             | `products`, `product_variants`, `product_images`                                      |
+| Stock               | `stock_locations`, `stock_levels`, `stock_movements`                                  |
+| Conversations       | `conversations`, `messages`, `message_inbox`, `outbox`, `unread_alerts`               |
+| Customers           | `customers`, `customer_addresses`                                                     |
+| Orders              | `orders`, `order_lines`, `payments`, `shipments`, `delivery_zones`, `payment_methods` |
+| Records             | `assets`, `llm_calls`, `notification_traces`, `audit_log`                             |
+| Settings            | `system_settings`, `tenant_settings`                                                  |
 
 A conversation row holds who it is with, its status, who holds it and when it
 was last active. It stores no state for the assistant, which reads the messages.
