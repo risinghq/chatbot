@@ -29,11 +29,10 @@ bun run dev
 
 `account create` asks for the new user's password.
 
-Open <http://localhost:5173>, log in as `admin`, and open the Simulador. Start a
-simulation with the persona `FNB - Crédito Alto (S/ 8000)`, then send `hola`,
-`si`, and an eight-digit DNI such as `12345678`. The simulator needs no WhatsApp
-number, provider credentials, or LLM key. The full setup and real number
-instructions are in [Get started](./docs/get-started.md).
+Open <http://localhost:5173>, log in as `admin`, and open Asistente, then
+Probar. Start a simulation and ask for a product. The simulator needs no
+WhatsApp number, but the assistant needs the business's OpenAI key. The full
+setup and real number instructions are in [Get started](./docs/get-started.md).
 
 ## Features
 
@@ -43,7 +42,8 @@ instructions are in [Get started](./docs/get-started.md).
   without a deploy.
 - A dashboard for conversations, catalog and order work, reports, and a provider
   lookup for platform operators.
-- A simulator with built-in personas for testing the conversation flow.
+- A simulator on the Asistente page that talks to the assistant without
+  WhatsApp.
 - WhatsApp Cloud API sends.
 - An outbox that retries recoverable send failures and hands undeliverable
   replies to a person.

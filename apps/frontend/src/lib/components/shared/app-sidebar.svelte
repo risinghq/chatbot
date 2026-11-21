@@ -20,12 +20,6 @@ const sections = $derived.by(() => {
   const tools: NavItem[] = [
     { href: "/dashboard/asistente", label: "Asistente", icon: "bot" },
   ];
-  if (auth.canAccessSimulator)
-    tools.push({
-      href: "/dashboard/simulator",
-      label: "Simulador",
-      icon: "flask",
-    });
   if (auth.canAccessReports) {
     tools.push({
       href: "/dashboard/activity",

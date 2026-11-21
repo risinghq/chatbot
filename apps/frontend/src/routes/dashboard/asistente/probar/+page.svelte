@@ -12,6 +12,7 @@ import Textarea from "#lib/components/ui/textarea.svelte";
 import MessageBubble from "#lib/components/conversations/message-bubble.svelte";
 import MessageInput from "#lib/components/conversations/message-input.svelte";
 import ConversationItem from "#lib/components/conversations/conversation-item.svelte";
+import AssistantTabs from "#lib/components/assistant/assistant-tabs.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import type { Conversation, ReplayData, ReplayMetadata } from "@vendeya/types";
 import type { PageData } from "./$types";
@@ -306,17 +307,21 @@ onMount(() => {
 });
 </script>
 
-<PageTitle title="Simulador" />
+<PageTitle title="Probar el asistente" />
 
-<!-- 3rem is the mobile top bar in the dashboard layout. -->
-<div class="flex h-[calc(100dvh-3rem)] overflow-hidden md:h-dvh">
+<!-- 3rem is the mobile top bar in the dashboard layout, and 3rem more this page's tab bar. -->
+<div class="flex h-12 shrink-0 items-end gap-4 border-b border-border-subtle bg-surface px-4">
+	<h1 class="flex h-9 items-center text-md font-medium text-fg">Asistente</h1>
+	<AssistantTabs />
+</div>
+<div class="flex h-[calc(100dvh-6rem)] overflow-hidden md:h-[calc(100dvh-3rem)]">
 	<div
 		class="w-full shrink-0 flex-col border-r border-border-subtle bg-surface md:flex md:w-80 {selectedPhone
 			? 'hidden'
 			: 'flex'}"
 	>
 		<div class="flex h-12 shrink-0 items-center gap-1 border-b border-border-subtle pr-2 pl-4">
-			<h1 class="flex-1 text-md font-medium text-fg">Simulador</h1>
+			<h2 class="flex-1 text-md font-medium text-fg">Simulaciones</h2>
 			<Button variant="ghost" size="sm" onclick={createNewConversation} disabled={loading} aria-label="Nueva simulación">
 				<Icon name="plus" />
 			</Button>

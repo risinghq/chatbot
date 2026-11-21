@@ -69,7 +69,7 @@ These pages check the role on the server:
 - [`dashboard/admin/+layout.server.ts`](../apps/frontend/src/routes/dashboard/admin/+layout.server.ts)
   sends anyone but `admin` to `/dashboard`.
 - `reports/+page.server.ts` allows `admin`, `developer`, `supervisor`.
-- `simulator/+page.server.ts` allows `admin`, `developer`.
+- `asistente/probar/+page.server.ts` allows `admin`, `developer`.
 - `negocios/+page.server.ts` allows platform operators only.
 
 Other pages have no role guard. When the backend refuses their load with 403,
@@ -91,6 +91,7 @@ routes/
     +layout.svelte                  sidebar, a drawer below md
     conversations/  [phone]/        inbox and one conversation
     asistente/                      the assistant's instructions, model and tools
+      probar/                       the simulator: admin, developer
     clientes/  [customerId]/        customers and one customer
     catalog/  inventory/[id]/       products; one product and its variants
     inventario/                     stock per variant and the movement ledger
@@ -98,7 +99,6 @@ routes/
     envios/                         delivery zones and shipments
     reports/                        admin, developer, supervisor
     activity/                       system activity
-    simulator/                      admin, developer
     providers/                      DNI lookup, platform operators
     negocios/                       business management, platform operators
     cuenta/                         the signed-in user's account

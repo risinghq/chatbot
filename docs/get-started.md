@@ -122,7 +122,7 @@ curl http://localhost:8787/cdn-cgi/local/scheduled
 ## Talk to the bot
 
 1. Open <http://localhost:5173> and log in as `admin@example.com`.
-2. Open the Simulador tile.
+2. Open Asistente, then the Probar tab.
 3. Start a new simulation ("Nueva simulación").
 4. Write `hola`, then ask for a product, such as `¿tienen celulares?`.
 

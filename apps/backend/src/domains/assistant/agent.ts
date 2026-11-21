@@ -9,10 +9,17 @@ import { db } from "../../db/index.ts";
 import { classifyLLMError } from "../../intelligence/llm-errors.ts";
 import { trackLLMCall } from "../../intelligence/tracker.ts";
 import { CustomerService } from "../customers/index.ts";
+import { caliddaLogin } from "../settings/calidda.ts";
 import { TenantService } from "../tenants/index.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { AssistantSettingsService } from "./settings.ts";
-import { TOOLS, runTool, type ToolEffect } from "./tools/index.ts";
+import {
+  runTool,
+  toolsFor,
+  type Tool,
+  type ToolContext,
+  type ToolEffect,
+} from "./tools/index.ts";
 
 /** Tool calls one turn may make before the model must answer in text. */
 export const MAX_TOOL_CALLS = 6;
@@ -97,6 +104,7 @@ type Step = {
   complete: CompleteFn;
   model: string;
   messages: AgentMessage[];
+  tools: readonly Tool[];
   allowTools: boolean;
   /** What this call adds to the last: the prompt, or the tool results. */
   input: string;
@@ -117,7 +125,7 @@ async function callModel(step: Step): Promise<Completion> {
     const completion = await step.complete({
       model: step.model,
       messages: step.messages,
-      tools: TOOLS,
+      tools: step.tools,
       allowTools: step.allowTools,
     });
     await trackLLMCall({
@@ -166,17 +174,21 @@ export async function runAgent(input: {
   quoted?: string;
 }): Promise<AgentTurn> {
   const { ref, simulated, complete, quoted } = input;
-  const [settings, tenant, customer, history] = await Promise.all([
+  const [settings, tenant, customer, history, calidda] = await Promise.all([
     AssistantSettingsService.get(ref.tenantId),
     TenantService.getById(ref.tenantId),
     CustomerService.getByPhone(ref.tenantId, ref.phoneNumber),
     loadHistory(ref),
+    caliddaLogin(ref.tenantId),
   ]);
+  const caliddaCredit = calidda !== null;
+  const tools = toolsFor({ caliddaCredit });
 
   const system = buildSystemPrompt({
     businessName: tenant?.name ?? "the business",
     settings,
     customer,
+    caliddaCredit,
     now: new Date(),
   });
   const messages: AgentMessage[] = [
@@ -190,7 +202,7 @@ export async function runAgent(input: {
     });
   }
   const customerMessage = lastCustomerMessage(history);
-  const ctx = {
+  const ctx: ToolContext = {
     tenantId: ref.tenantId,
     channelAccountId: ref.channelAccountId,
     phone: ref.phoneNumber,
@@ -210,6 +222,7 @@ export async function runAgent(input: {
         complete,
         model: settings.model,
         messages,
+        tools,
         allowTools,
         input: stepInput,
         customerMessage,
@@ -229,7 +242,7 @@ export async function runAgent(input: {
     });
     const results = [];
     for (const call of completion.toolCalls) {
-      const result = await runCall(ctx, call, ++toolCalls, effects);
+      const result = await runCall(tools, ctx, call, ++toolCalls, effects);
       messages.push({ role: "tool", toolCallId: call.id, content: result });
       results.push({ tool: call.name, result });
     }
@@ -239,7 +252,8 @@ export async function runAgent(input: {
 
 /** A call past the limit is answered without running, so the model must reply. */
 async function runCall(
-  ctx: Parameters<typeof runTool>[0],
+  tools: readonly Tool[],
+  ctx: ToolContext,
   call: ToolCall,
   ordinal: number,
   effects: ToolEffect[],
@@ -247,7 +261,12 @@ async function runCall(
   if (ordinal > MAX_TOOL_CALLS) {
     return JSON.stringify({ error: "tool limit reached: answer the customer" });
   }
-  const outcome = await runTool(ctx, call.name, parseArguments(call.arguments));
+  const outcome = await runTool(
+    tools,
+    ctx,
+    call.name,
+    parseArguments(call.arguments),
+  );
   effects.push(...outcome.effects);
   return JSON.stringify(outcome.result);
 }

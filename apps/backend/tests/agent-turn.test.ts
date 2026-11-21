@@ -17,7 +17,11 @@ import { StockService } from "../src/domains/stock/index.ts";
 import { eventBus } from "../src/shared/events/index.ts";
 import { fakeGraph, withAccessToken } from "./helpers/graph.ts";
 import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";
-import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
+import {
+  createTenantFixture,
+  setCaliddaLogin,
+  type TenantFixture,
+} from "./helpers/tenancy.ts";
 import { customerWrites } from "./helpers/turn.ts";
 
 const CUSTOMER = "51987000222";
@@ -145,6 +149,42 @@ describe("a turn", () => {
         tokens_total: 120,
       });
     }
+  });
+
+  it("offers the Cálidda credit check only to a business with a Cálidda login", async () => {
+    const offered = () => {
+      const request = model.requests.at(-1)!;
+      return {
+        tool: request.tools.some(
+          (t) => t.function.name === "check_calidda_credit",
+        ),
+        rule: request.messages[0]!.content!.includes("DNI"),
+      };
+    };
+
+    await customerWrites(tenant, CUSTOMER, "hola");
+    expect(offered()).toEqual({ tool: false, rule: false });
+
+    await setCaliddaLogin(tenant.tenantId);
+    await customerWrites(tenant, CUSTOMER, "quiero pagar con Cálidda");
+    expect(offered()).toEqual({ tool: true, rule: true });
+  });
+
+  it("refuses a tool the business was not offered", async () => {
+    model.calls({
+      name: "check_calidda_credit",
+      arguments: { dni: "12345678" },
+    });
+    model.says("No puedo revisar eso.");
+
+    await customerWrites(tenant, CUSTOMER, "mi DNI es 12345678");
+
+    const toolAnswer = model.requests[1]!.messages.find(
+      (message) => message.role === "tool",
+    );
+    expect(toolAnswer?.content).toBe(
+      JSON.stringify({ error: "there is no tool named check_calidda_credit" }),
+    );
   });
 
   it("reads the earlier messages of the conversation", async () => {
