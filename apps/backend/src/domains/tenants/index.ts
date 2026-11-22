@@ -1,6 +1,10 @@
 import { newId } from "@vendeya/utils";
 import type { Tenant, TenantMembership, TenantRole } from "@vendeya/types";
-import { batch, getAll, getOne, run, stmt } from "../../db/index.ts";
+import type { Compilable } from "kysely";
+import { batch, db, withoutTenantScope } from "../../db/index.ts";
+
+/** Tenants have no tenant_id: a tenant row is keyed by its own id. */
+const tenants = () => withoutTenantScope("tenants are keyed by id");
 
 export const TENANT_ROLES: TenantRole[] = [
   "admin",
@@ -17,10 +21,14 @@ export function isTenantRole(role: string): role is TenantRole {
 
 export const TenantService = {
   getAll: (): Promise<Tenant[]> =>
-    getAll<Tenant>("SELECT * FROM tenants ORDER BY name"),
+    tenants().selectFrom("tenants").selectAll().orderBy("name").execute(),
 
   getById: async (id: string): Promise<Tenant | null> =>
-    (await getOne<Tenant>("SELECT * FROM tenants WHERE id = ?", [id])) ?? null,
+    (await tenants()
+      .selectFrom("tenants")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst()) ?? null,
 
   /**
    * Whether the tenant is open for access. Suspension closes a business to
@@ -29,10 +37,11 @@ export const TenantService = {
    */
   isOpen: async (id: string): Promise<boolean> =>
     (
-      await getOne<{ status: string }>(
-        "SELECT status FROM tenants WHERE id = ?",
-        [id],
-      )
+      await tenants()
+        .selectFrom("tenants")
+        .select("status")
+        .where("id", "=", id)
+        .executeTakeFirst()
     )?.status === "active",
 
   /**
@@ -48,52 +57,56 @@ export const TenantService = {
     return { name: trimmed };
   },
 
-  createStatement: (data: { id: string; name: string }): D1PreparedStatement =>
-    stmt("INSERT INTO tenants (id, name, status) VALUES (?, ?, 'active')", [
-      data.id,
-      data.name,
-    ]),
+  createStatement: (data: { id: string; name: string }): Compilable =>
+    tenants()
+      .insertInto("tenants")
+      .values({ id: data.id, name: data.name, status: "active" }),
 
   create: async (data: { name: string; id?: string }): Promise<Tenant> => {
     const id = data.id ?? newId();
-    await TenantService.createStatement({ ...data, id }).run();
+    await batch([TenantService.createStatement({ ...data, id })]);
     return (await TenantService.getById(id))!;
   },
 
   count: async (): Promise<number> =>
-    (await getOne<{ count: number }>("SELECT COUNT(*) as count FROM tenants"))!
-      .count,
+    (
+      await tenants()
+        .selectFrom("tenants")
+        .select((eb) => eb.fn.countAll<number>().as("count"))
+        .executeTakeFirstOrThrow()
+    ).count,
 };
 
 /**
  * Clear assignments when a user's membership ends or role changes. A re-added
  * user starts clean, and another agent can take those conversations.
  */
-function clearAssignments(
-  tenantId: string,
-  userId: string,
-): D1PreparedStatement {
-  return stmt(
-    `UPDATE conversations
-     SET assigned_agent = NULL, assignment_notified_at = NULL
-     WHERE tenant_id = ? AND assigned_agent = ?`,
-    [tenantId, userId],
-  );
+function clearAssignments(tenantId: string, userId: string): Compilable {
+  return db
+    .updateTable("conversations")
+    .set({ assigned_agent: null, assignment_notified_at: null })
+    .where("tenant_id", "=", tenantId)
+    .where("assigned_agent", "=", userId);
 }
+
+/** A user's memberships span tenants: the account is global. */
+const acrossTenants = () =>
+  withoutTenantScope("a user's own memberships, keyed by user id");
 
 export const MembershipService = {
   /** Open tenants the user belongs to, with the role they hold in each. */
   listForUser: (
     userId: string,
   ): Promise<Array<Tenant & { role: TenantRole }>> =>
-    getAll<Tenant & { role: TenantRole }>(
-      `SELECT t.*, m.role as role
-       FROM tenant_memberships m
-       JOIN tenants t ON t.id = m.tenant_id
-       WHERE m.user_id = ? AND t.status = 'active'
-       ORDER BY t.name`,
-      [userId],
-    ),
+    acrossTenants()
+      .selectFrom("tenant_memberships as m")
+      .innerJoin("tenants as t", "t.id", "m.tenant_id")
+      .selectAll("t")
+      .select("m.role")
+      .where("m.user_id", "=", userId)
+      .where("t.status", "=", "active")
+      .orderBy("t.name")
+      .execute(),
 
   /**
    * How many tenants a user belongs to, counting suspended ones. Callers use it
@@ -101,25 +114,32 @@ export const MembershipService = {
    * tenant. A suspended tenant still counts because it can be reactivated.
    */
   countForUser: async (userId: string): Promise<number> =>
-    (await getOne<{ count: number }>(
-      "SELECT COUNT(*) as count FROM tenant_memberships WHERE user_id = ?",
-      [userId],
-    ))!.count,
+    (
+      await acrossTenants()
+        .selectFrom("tenant_memberships")
+        .select((eb) => eb.fn.countAll<number>().as("count"))
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow()
+    ).count,
 
   listForTenant: (tenantId: string): Promise<TenantMembership[]> =>
-    getAll<TenantMembership>(
-      "SELECT * FROM tenant_memberships WHERE tenant_id = ? ORDER BY created_at",
-      [tenantId],
-    ),
+    db
+      .selectFrom("tenant_memberships")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .orderBy("created_at")
+      .execute(),
 
   get: async (
     tenantId: string,
     userId: string,
   ): Promise<TenantMembership | null> =>
-    (await getOne<TenantMembership>(
-      "SELECT * FROM tenant_memberships WHERE tenant_id = ? AND user_id = ?",
-      [tenantId, userId],
-    )) ?? null,
+    (await db
+      .selectFrom("tenant_memberships")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .where("user_id", "=", userId)
+      .executeTakeFirst()) ?? null,
 
   /** The role a user holds in a tenant, or null if they are not a member. */
   roleFor: async (
@@ -139,30 +159,36 @@ export const MembershipService = {
     userId: string;
     role: TenantRole;
     createdBy?: string | null;
-  }): D1PreparedStatement[] {
+  }): Compilable[] {
     return [
-      stmt(
-        `UPDATE conversations
-         SET assigned_agent = NULL, assignment_notified_at = NULL
-         WHERE tenant_id = ? AND assigned_agent = ?
-           AND EXISTS (
-             SELECT 1 FROM tenant_memberships
-             WHERE tenant_id = ? AND user_id = ? AND role != ?
-           )`,
-        [data.tenantId, data.userId, data.tenantId, data.userId, data.role],
-      ),
-      stmt(
-        `INSERT INTO tenant_memberships (id, tenant_id, user_id, role, created_by)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = excluded.role`,
-        [
-          newId(),
-          data.tenantId,
-          data.userId,
-          data.role,
-          data.createdBy ?? null,
-        ],
-      ),
+      db
+        .updateTable("conversations")
+        .set({ assigned_agent: null, assignment_notified_at: null })
+        .where("tenant_id", "=", data.tenantId)
+        .where("assigned_agent", "=", data.userId)
+        .where(({ exists, selectFrom }) =>
+          exists(
+            selectFrom("tenant_memberships")
+              .select("id")
+              .where("tenant_id", "=", data.tenantId)
+              .where("user_id", "=", data.userId)
+              .where("role", "!=", data.role),
+          ),
+        ),
+      db
+        .insertInto("tenant_memberships")
+        .values({
+          id: newId(),
+          tenant_id: data.tenantId,
+          user_id: data.userId,
+          role: data.role,
+          created_by: data.createdBy ?? null,
+        })
+        .onConflict((oc) =>
+          oc
+            .columns(["tenant_id", "user_id"])
+            .doUpdateSet((eb) => ({ role: eb.ref("excluded.role") })),
+        ),
     ];
   },
 
@@ -187,11 +213,13 @@ export const MembershipService = {
     userId: string,
     isAvailable: boolean,
   ): Promise<boolean> => {
-    const changed = await run(
-      "UPDATE tenant_memberships SET is_available = ? WHERE tenant_id = ? AND user_id = ?",
-      [isAvailable ? 1 : 0, tenantId, userId],
-    );
-    return changed.changes > 0;
+    const changed = await db
+      .updateTable("tenant_memberships")
+      .set({ is_available: isAvailable ? 1 : 0 })
+      .where("tenant_id", "=", tenantId)
+      .where("user_id", "=", userId)
+      .executeTakeFirst();
+    return changed.numUpdatedRows > 0n;
   },
 
   /**
@@ -199,21 +227,19 @@ export const MembershipService = {
    * cannot work its conversations, and the scope hides them from the other
    * agents. The account is global, so the clear is too.
    */
-  clearAllAssignments(userId: string): D1PreparedStatement {
-    return stmt(
-      `UPDATE conversations
-       SET assigned_agent = NULL, assignment_notified_at = NULL
-       WHERE assigned_agent = ?`,
-      [userId],
-    );
+  clearAllAssignments(userId: string): Compilable {
+    return withoutTenantScope("a global account's assignments in every tenant")
+      .updateTable("conversations")
+      .set({ assigned_agent: null, assignment_notified_at: null })
+      .where("assigned_agent", "=", userId);
   },
 
-  removeStatements(tenantId: string, userId: string): D1PreparedStatement[] {
+  removeStatements(tenantId: string, userId: string): Compilable[] {
     return [
-      stmt(
-        "DELETE FROM tenant_memberships WHERE tenant_id = ? AND user_id = ?",
-        [tenantId, userId],
-      ),
+      db
+        .deleteFrom("tenant_memberships")
+        .where("tenant_id", "=", tenantId)
+        .where("user_id", "=", userId),
       clearAssignments(tenantId, userId),
     ];
   },

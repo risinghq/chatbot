@@ -68,7 +68,8 @@ function respondTo(statement: {
 }): Record<string, unknown> {
   const sql = statement.sql ?? "";
   const params = statement.params ?? [];
-  const compact = sql.replace(/\s+/g, " ").toLowerCase();
+  // Kysely quotes identifiers; raw SQL does not.
+  const compact = sql.replace(/\s+/g, " ").replaceAll('"', "").toLowerCase();
 
   if (compact.startsWith("select")) {
     if (compact.includes("from tenants")) {
