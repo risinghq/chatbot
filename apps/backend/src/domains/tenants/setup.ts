@@ -1,4 +1,4 @@
-import { getOne } from "../../db/index.ts";
+import { db } from "../../db/index.ts";
 import { hasOpenAiApiKey } from "../settings/openai.ts";
 import { TenantSettings } from "../settings/system.ts";
 import { TenantSecrets } from "../settings/tenant-secrets.ts";
@@ -25,8 +25,10 @@ export type TenantSetupStatus = {
   complete: boolean;
 };
 
-const count = async (sql: string, tenantId: string): Promise<number> =>
-  (await getOne<{ count: number }>(sql, [tenantId]))?.count ?? 0;
+/** Whether the query matches a row; it reads one row at most. */
+const exists = async (query: {
+  limit(n: number): { executeTakeFirst(): Promise<unknown> };
+}): Promise<boolean> => (await query.limit(1).executeTakeFirst()) !== undefined;
 
 export async function tenantSetupStatus(
   tenantId: string,
@@ -41,31 +43,48 @@ export async function tenantSetupStatus(
     caliddaUsername,
   ] = await Promise.all([
     hasOpenAiApiKey(tenantId),
-    count(
-      `SELECT COUNT(*) as count FROM products p
-       WHERE p.tenant_id = ? AND p.status = 'active'
-         AND EXISTS (SELECT 1 FROM product_variants v
-                     WHERE v.tenant_id = p.tenant_id AND v.product_id = p.id
-                       AND v.is_active = 1)`,
-      tenantId,
+    exists(
+      db
+        .selectFrom("products as p")
+        .select("p.id")
+        .where("p.tenant_id", "=", tenantId)
+        .where("p.status", "=", "active")
+        .where(({ exists, selectFrom }) =>
+          exists(
+            selectFrom("product_variants as v")
+              .select("v.id")
+              .whereRef("v.tenant_id", "=", "p.tenant_id")
+              .whereRef("v.product_id", "=", "p.id")
+              .where("v.is_active", "=", 1),
+          ),
+        ),
     ),
-    count(
-      `SELECT COUNT(*) as count FROM conversations c
-       JOIN channel_accounts a ON a.id = c.channel_account_id
-       WHERE c.tenant_id = ? AND a.channel_type = 'simulator'`,
-      tenantId,
+    exists(
+      db
+        .selectFrom("conversations as c")
+        .innerJoin("channel_accounts as a", (join) =>
+          join
+            .onRef("a.id", "=", "c.channel_account_id")
+            .onRef("a.tenant_id", "=", "c.tenant_id"),
+        )
+        .select("c.phone_number")
+        .where("c.tenant_id", "=", tenantId)
+        .where("a.channel_type", "=", "simulator"),
     ),
-    count(
-      `SELECT COUNT(*) as count FROM channel_accounts
-       WHERE tenant_id = ?
-         AND channel_type = 'whatsapp'
-         AND access_token_secret_id IS NOT NULL
-         AND app_secret_secret_id IS NOT NULL`,
-      tenantId,
+    exists(
+      db
+        .selectFrom("channel_accounts")
+        .select("id")
+        .where("tenant_id", "=", tenantId)
+        .where("channel_type", "=", "whatsapp")
+        .where("access_token_secret_id", "is not", null)
+        .where("app_secret_secret_id", "is not", null),
     ),
-    count(
-      "SELECT COUNT(*) as count FROM tenant_memberships WHERE tenant_id = ?",
-      tenantId,
+    exists(
+      db
+        .selectFrom("tenant_memberships")
+        .select("id")
+        .where("tenant_id", "=", tenantId),
     ),
     TenantSecrets.has(tenantId, "calidda_password"),
     TenantSettings.get(tenantId, "calidda_username"),
@@ -73,10 +92,10 @@ export async function tenantSetupStatus(
 
   const required = {
     openai_configured: openai,
-    has_catalog: products > 0,
-    tried_simulator: simulated > 0,
-    whatsapp_configured: numbers > 0,
-    has_members: members > 0,
+    has_catalog: products,
+    tried_simulator: simulated,
+    whatsapp_configured: numbers,
+    has_members: members,
   };
   return {
     ...required,

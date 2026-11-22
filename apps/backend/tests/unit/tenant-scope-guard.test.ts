@@ -66,20 +66,6 @@ const RULE_2_EXEMPT: Array<{ file: string; sql: string; reason: string }> = [
       "secret's own id",
   },
   {
-    file: join("domains", "tenants", "index.ts"),
-    sql: "FROM tenant_memberships m",
-    reason:
-      "listForUser() is the tenant switcher, keyed by user id, and filters " +
-      "on t.status itself",
-  },
-  {
-    file: join("domains", "tenants", "index.ts"),
-    sql: "FROM tenant_memberships WHERE user_id = ?",
-    reason:
-      "countForUser() counts a user's memberships in every tenant on purpose, " +
-      "suspended ones too",
-  },
-  {
     file: join("db", "query.ts"),
     sql: "SELECT id FROM channel_accounts WHERE status = 'active'",
     reason:
