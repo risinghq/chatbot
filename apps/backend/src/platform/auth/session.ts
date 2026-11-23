@@ -7,7 +7,10 @@ import type { Context } from "hono";
 import { setCookie, deleteCookie } from "hono/cookie";
 import { publicOrigin } from "../../config.ts";
 import type { TenantMembership, TenantRole } from "@vendeya/types";
-import { MembershipService } from "../../domains/tenants/index.ts";
+import {
+  MembershipService,
+  TenantService,
+} from "../../domains/tenants/index.ts";
 import type { AuthScope } from "./scope.ts";
 import { sessionRole } from "./scope.ts";
 import { withoutTenantScope } from "../../db/index.ts";
@@ -65,8 +68,21 @@ declare module "hono" {
  * still holds the cookie with the old expiry, so the caller must send it again.
  */
 export type SessionValidationResult =
-  | { session: Session; user: User; scope: AuthScope; fresh: boolean }
-  | { session: null; user: null; scope: null; fresh: false };
+  | {
+      session: Session;
+      user: User;
+      scope: AuthScope;
+      fresh: boolean;
+      forbidden?: never;
+    }
+  | {
+      session: null;
+      user: null;
+      scope: null;
+      fresh: false;
+      /** The login is valid but may not act in the business the request names. */
+      forbidden?: true;
+    };
 
 /** A session is global: one is keyed by its token's hash or by its user's id. */
 const sessions = () =>
@@ -146,9 +162,17 @@ export async function setSessionTenant(
 /** How stale a token's last use may get before a request records it again. */
 const LAST_USED_RESOLUTION_MS = 1000 * 60 * 60;
 
+/**
+ * @param requestedTenantId the business the request names in its
+ *   `X-Tenant-Id` header. A browser session acts there when the user is a
+ *   member, or a platform operator, and the business is open; otherwise the
+ *   result is `forbidden`. An API token is bound to its own business, so it
+ *   may name only that one. Without it the session's pin applies.
+ */
 export async function validateSessionToken(
   token: string,
   kind: SessionKind = "browser",
+  requestedTenantId: string | null = null,
 ): Promise<SessionValidationResult> {
   const sessionId = sessionIdOf(token);
   const row = await sessions()
@@ -239,6 +263,29 @@ export async function validateSessionToken(
       session.activeTenantId = null;
       membership = null;
     }
+  }
+
+  if (requestedTenantId && requestedTenantId !== session.activeTenantId) {
+    const requested = await MembershipService.get(requestedTenantId, row.uid);
+    const allowed =
+      kind === "browser" &&
+      (requested !== null || isPlatformOperator) &&
+      (await TenantService.isOpen(requestedTenantId));
+    if (!allowed) {
+      return {
+        session: null,
+        user: null,
+        scope: null,
+        fresh: false,
+        forbidden: true,
+      };
+    }
+
+    // The pin is the business the user last opened, where a fresh visit to
+    // the dashboard lands.
+    await setSessionTenant(session.id, requestedTenantId);
+    session.activeTenantId = requestedTenantId;
+    membership = requested;
   }
 
   const membershipRole: TenantRole | null = membership?.role ?? null;
