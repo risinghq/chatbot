@@ -395,8 +395,8 @@ onMount(() => {
 				<div class="shrink-0 border-b border-border-subtle p-3">
 					<Banner tone="warning" title="Falta la clave de OpenAI">
 						El asistente la usa para responder. {data.user.role === "admin"
-							? "Agrégala en Ajustes y vuelve a probar."
-							: "Pide a un administrador que la agregue en Ajustes."}
+							? "Agrégala en Administración › Configuración y vuelve a probar."
+							: "Pide a un administrador que la agregue en Administración › Configuración."}
 						{#snippet action()}
 							{#if data.user.role === "admin"}
 								<Button size="sm" variant="secondary" href="/dashboard/admin/settings">Agregar clave</Button>
