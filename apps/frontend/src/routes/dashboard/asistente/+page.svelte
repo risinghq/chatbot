@@ -129,7 +129,7 @@ async function save() {
 	{:else}
 		<PageHeader
 			title="Asistente"
-			subtitle="Lo que el asistente sabe del negocio, además del catálogo, el stock, las zonas de envío y los medios de pago."
+			subtitle="Lo que el asistente sabe del negocio, además del catálogo, el stock, las zonas de envío y los métodos de pago."
 		>
 			{#snippet actions()}
 				{#if canEdit}
