@@ -20,7 +20,10 @@ export type ReportBusiness = {
   orders: number;
   revenueCents: number;
   aiCalls: number;
+  aiErrors: number;
   aiCostUsd: number;
+  /** A key is stored; without one the assistant hands every turn off. */
+  hasOpenAiKey: boolean;
 };
 
 /**

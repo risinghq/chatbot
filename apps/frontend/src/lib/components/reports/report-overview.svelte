@@ -1,8 +1,10 @@
 <script lang="ts">
 import type { ReportBusiness, ReportDay, ReportSummary } from "@vendeya/types";
+import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import DataTable from "#lib/components/ui/data-table.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
+import { auth } from "#lib/state/auth.svelte.js";
 import { limaDateString } from "#lib/utils/formatters.js";
 import { formatCents } from "#lib/utils/money.js";
 
@@ -141,13 +143,14 @@ const dayTitle = (day: ReportDay) =>
 </SectionShell>
 
 {#if summary?.businesses}
-	<SectionShell title="Por negocio" description="Cada negocio activo en el mismo periodo.">
+	<SectionShell title="Por negocio" description="Cada negocio activo en el mismo periodo. Elige uno para entrar.">
 		<DataTable
 			data={summary.businesses}
 			keyField="tenantId"
 			emptyMessage="No hay negocios activos."
+			onRowClick={(b) => auth.selectTenant(b.tenantId)}
 			columns={[
-				{ header: "Negocio", key: "name" },
+				{ header: "Negocio", cell: nameCell },
 				{ header: "Contactos", cell: contactsCell, align: "right" },
 				{ header: "Pedidos", cell: ordersCell, align: "right" },
 				{ header: "Ventas", cell: revenueCell, align: "right" },
@@ -165,6 +168,14 @@ const dayTitle = (day: ReportDay) =>
 	</div>
 {/snippet}
 
+{#snippet nameCell(b: ReportBusiness)}
+	<span class="flex flex-wrap items-center gap-x-2 gap-y-1">
+		<span class="text-fg">{b.name}</span>
+		{#if !b.hasOpenAiKey}
+			<Badge variant="warning">Sin clave de OpenAI</Badge>
+		{/if}
+	</span>
+{/snippet}
 {#snippet contactsCell(b: ReportBusiness)}
 	<span class="tabular-nums">{count(b.contacts)}</span>
 {/snippet}
@@ -175,5 +186,10 @@ const dayTitle = (day: ReportDay) =>
 	<span class="whitespace-nowrap tabular-nums">{soles(b.revenueCents)}</span>
 {/snippet}
 {#snippet aiCell(b: ReportBusiness)}
-	<span class="whitespace-nowrap tabular-nums">{usd(b.aiCostUsd)} · {count(b.aiCalls)}</span>
+	<span class="block whitespace-nowrap tabular-nums">{usd(b.aiCostUsd)}</span>
+	<span class="block text-sm whitespace-nowrap text-fg-muted tabular-nums">
+		{count(b.aiCalls)} llamadas{#if b.aiErrors}
+			{" · "}<span class="text-danger-text">{count(b.aiErrors)} con error</span>
+		{/if}
+	</span>
 {/snippet}

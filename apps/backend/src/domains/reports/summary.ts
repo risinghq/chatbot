@@ -8,6 +8,7 @@ import {
 import { sql } from "kysely";
 import { db, tenantScope } from "../../db/index.ts";
 import { limaDateSql, limaDates, limaDateString } from "../../db/query.ts";
+import { OPENAI_API_KEY_SETTING } from "../settings/openai.ts";
 
 const TOP_PRODUCTS = 5;
 
@@ -82,6 +83,7 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
     llmByModel,
     topProducts,
     tenants,
+    openAiKeys,
   ] = await Promise.all([
     inboundContacts(range)
       .select([limaDate("m.created_at").as("date"), contactCount.as("n")])
@@ -159,8 +161,17 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
           .select(["id", "name"])
           .where("status", "=", "active")
           .execute(),
+    tenantId
+      ? Promise.resolve([])
+      : db
+          .selectFrom("tenant_secrets")
+          .select("tenant_id")
+          .where(tenantScope(null))
+          .where("key", "=", OPENAI_API_KEY_SETTING)
+          .execute(),
   ]);
 
+  const keyed = new Set(openAiKeys.map((row) => row.tenant_id));
   const businesses = new Map<string, ReportBusiness>(
     tenants.map((tenant) => [
       tenant.id,
@@ -171,7 +182,9 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
         orders: 0,
         revenueCents: 0,
         aiCalls: 0,
+        aiErrors: 0,
         aiCostUsd: 0,
+        hasOpenAiKey: keyed.has(tenant.id),
       },
     ]),
   );
@@ -242,6 +255,7 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
     const business = businesses.get(row.tenant_id);
     if (business) {
       business.aiCalls += row.calls;
+      business.aiErrors += row.errors;
       business.aiCostUsd += cost ?? 0;
     }
   }
