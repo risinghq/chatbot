@@ -47,6 +47,7 @@ async function callerFor(name: string): Promise<{
       method,
       headers: {
         Cookie: `session=${token}`,
+        "X-Tenant-Id": tenantId,
         ...(body === undefined || body instanceof FormData
           ? {}
           : { "Content-Type": "application/json" }),

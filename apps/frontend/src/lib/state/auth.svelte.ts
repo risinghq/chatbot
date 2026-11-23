@@ -6,20 +6,17 @@ type User = {
   email: string;
   /**
    * The role the session acts with. A platform operator is admin in every
-   * scope. Anyone else has their role in the active tenant, null until one is
-   * selected.
+   * business. Anyone else has their role in the business the URL names, null
+   * outside one.
    */
   role: string | null;
   name: string;
-  /** Whether the user takes new conversations in the active tenant. False while unpinned. */
+  /** Whether the user takes new conversations in the open business. */
   isAvailable?: boolean;
   /** VendeYa staff, who may act across tenants rather than inside one. */
   isPlatformOperator?: boolean;
-  /**
-   * Tenant the session is pinned to. Null means none is pinned: an operator
-   * sees across tenants and a member has no scope yet.
-   */
-  activeTenantId?: string | null;
+  /** The business last opened, which /dashboard opens again. */
+  lastTenantId?: string | null;
 };
 
 type Tenant = {
@@ -109,9 +106,6 @@ function createAuthState() {
     get isPlatformOperator() {
       return sessionUser()?.isPlatformOperator === true;
     },
-    get activeTenantId() {
-      return sessionUser()?.activeTenantId ?? null;
-    },
     get tenants() {
       return state.tenants;
     },
@@ -145,14 +139,8 @@ function createAuthState() {
     },
     async loadTenants() {
       try {
-        const data = await fetchApi<{
-          tenants: Tenant[];
-          activeTenantId: string | null;
-        }>("/api/tenants");
+        const data = await fetchApi<{ tenants: Tenant[] }>("/api/tenants");
         state.tenants = data.tenants;
-        if (state.user) {
-          state.user.activeTenantId = data.activeTenantId;
-        }
       } catch {
         state.tenants = [];
       }

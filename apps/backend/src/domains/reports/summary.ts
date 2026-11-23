@@ -5,8 +5,9 @@ import {
   type ReportBusiness,
   type ReportSummary,
 } from "@vendeya/types";
-import { sql } from "kysely";
-import { db, tenantScope } from "../../db/index.ts";
+import { type ExpressionBuilder, sql } from "kysely";
+import { db, inOpenTenants, tenantScope } from "../../db/index.ts";
+import type { Database } from "../../db/schema.ts";
 import { limaDateSql, limaDates, limaDateString } from "../../db/query.ts";
 import { OPENAI_API_KEY_SETTING } from "../settings/openai.ts";
 
@@ -21,7 +22,14 @@ const sumWhen = (
 ) =>
   sql<number>`coalesce(sum(case when ${condition} then ${value} else 0 end), 0)`;
 
+/** A null `tenantId` is the platform summary (routes/platform.ts). */
 type Range = { tenantId: string | null; startMs: number; endMs: number };
+
+/** One business, or every open one for the platform summary. */
+function scoped(tenantId: string | null, column: string) {
+  return (eb: ExpressionBuilder<Database, any>) =>
+    tenantId ? tenantScope(tenantId, column)(eb) : inOpenTenants(eb, column);
+}
 
 /** Conversations a customer wrote to in the range, by business and Lima day when `byDay`. */
 function inboundContacts({ tenantId, startMs, endMs }: Range) {
@@ -33,7 +41,7 @@ function inboundContacts({ tenantId, startMs, endMs }: Range) {
         .onRef("c.channel_account_id", "=", "m.channel_account_id")
         .onRef("c.phone_number", "=", "m.phone_number"),
     )
-    .where(tenantScope(tenantId, "m.tenant_id"))
+    .where(scoped(tenantId, "m.tenant_id"))
     .where("m.direction", "=", "inbound")
     .where("c.is_simulation", "=", 0)
     .where("m.created_at", ">=", startMs)
@@ -45,7 +53,7 @@ const contactCount = sql<number>`count(distinct m.channel_account_id || ':' || m
 function ordersIn({ tenantId, startMs, endMs }: Range) {
   return db
     .selectFrom("orders as o")
-    .where(tenantScope(tenantId, "o.tenant_id"))
+    .where(scoped(tenantId, "o.tenant_id"))
     .where("o.created_at", ">=", startMs)
     .where("o.created_at", "<=", endMs);
 }
@@ -128,7 +136,7 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
         sql<number>`coalesce(sum(l.tokens_prompt), 0)`.as("prompt"),
         sql<number>`coalesce(sum(l.tokens_completion), 0)`.as("completion"),
       ])
-      .where(tenantScope(tenantId, "l.tenant_id"))
+      .where(scoped(tenantId, "l.tenant_id"))
       .where("l.created_at", ">=", startMs)
       .where("l.created_at", "<=", endMs)
       .groupBy(["l.tenant_id", "l.model"])
@@ -145,7 +153,7 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
         sql<number>`sum(ol.quantity)`.as("quantity"),
         sql<number>`sum(ol.quantity * ol.unit_price_cents)`.as("revenue"),
       ])
-      .where(tenantScope(tenantId, "o.tenant_id"))
+      .where(scoped(tenantId, "o.tenant_id"))
       .where(notCancelled)
       .where("o.created_at", ">=", startMs)
       .where("o.created_at", "<=", endMs)
@@ -166,7 +174,7 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
       : db
           .selectFrom("tenant_secrets")
           .select("tenant_id")
-          .where(tenantScope(null))
+          .where((eb) => inOpenTenants(eb))
           .where("key", "=", OPENAI_API_KEY_SETTING)
           .execute(),
   ]);

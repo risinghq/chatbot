@@ -68,7 +68,13 @@ describe("account routes", () => {
     app = buildApp();
   });
 
-  function send(method: string, path: string, body?: unknown, cookie?: string) {
+  function send(
+    method: string,
+    path: string,
+    body?: unknown,
+    cookie?: string,
+    tenantId?: string,
+  ) {
     return app.request(path, {
       method,
       headers: {
@@ -76,6 +82,7 @@ describe("account routes", () => {
         // The login limiter counts per address; each request gets its own.
         "cf-connecting-ip": crypto.randomUUID(),
         ...(cookie && { Cookie: cookie }),
+        ...(tenantId && { "X-Tenant-Id": tenantId }),
       },
       ...(body !== undefined && { body: JSON.stringify(body) }),
     });
@@ -94,13 +101,13 @@ describe("account routes", () => {
 
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
-        user: { email: string; role: string; activeTenantId: string };
+        user: { email: string; role: string; lastTenantId: string };
         tenants: Array<{ id: string; name: string; role: string }>;
       };
       expect(body.user.email).toBe(email);
       expect(body.user.role).toBe("admin");
       expect(body.tenants).toEqual([
-        { id: body.user.activeTenantId, name: "Tienda de Ana", role: "admin" },
+        { id: body.user.lastTenantId, name: "Tienda de Ana", role: "admin" },
       ]);
 
       const me = await send(
@@ -178,6 +185,7 @@ describe("account routes", () => {
         "/api/admin/invitations",
         { email, role },
         adminCookie,
+        tenant.tenantId,
       );
       expect(response.status).toBe(201);
       const { link } = (await response.json()) as { link: string };
@@ -206,11 +214,11 @@ describe("account routes", () => {
 
       expect(accepted.status).toBe(200);
       const body = (await accepted.json()) as {
-        user: { role: string; activeTenantId: string };
+        user: { role: string; lastTenantId: string };
       };
       expect(body.user).toMatchObject({
         role: "sales_agent",
-        activeTenantId: tenant.tenantId,
+        lastTenantId: tenant.tenantId,
       });
     });
 
@@ -267,7 +275,13 @@ describe("account routes", () => {
       const email = freshEmail();
       const token = await invite(email);
       const list = (await (
-        await send("GET", "/api/admin/invitations", undefined, adminCookie)
+        await send(
+          "GET",
+          "/api/admin/invitations",
+          undefined,
+          adminCookie,
+          tenant.tenantId,
+        )
       ).json()) as { invitations: Array<{ id: string; email: string }> };
       const id = list.invitations.find((i) => i.email === email)!.id;
 
@@ -276,6 +290,7 @@ describe("account routes", () => {
         `/api/admin/invitations/${id}`,
         undefined,
         adminCookie,
+        tenant.tenantId,
       );
 
       expect(revoked.status).toBe(200);
@@ -305,6 +320,7 @@ describe("account routes", () => {
         "/api/admin/invitations",
         { email: await emailOf(userId), role: "sales_agent" },
         adminCookie,
+        tenant.tenantId,
       );
 
       expect(response.status).toBe(409);

@@ -15,7 +15,6 @@ import { imageStorage, isUnreadableImage } from "../adapters/storage/images.ts";
 import { logAction } from "../platform/audit/logger.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireRole,
   requireTenantScope,
 } from "../middleware/auth.ts";
@@ -29,100 +28,88 @@ const NOT_AN_OBJECT = "Request body must be a JSON object";
 const PRODUCT_STATUSES: unknown[] = ["draft", "active", "archived"];
 const INVALID_STATUS = "status must be draft, active or archived";
 
-// Reads use the pinned tenant, or every open tenant for an unpinned platform
-// operator. Writes additionally need a pinned tenant to write into.
 catalog.use("/*", requireTenantScope);
 
 // ============ PRODUCTS (base templates) ============
 
 catalog.get("/products", async (c) => {
-  return c.json(await ProductService.getAll(c.get("scope").tenantId));
+  return c.json(await ProductService.getAll(activeTenantId(c)));
 });
 
 catalog.get("/products/categories", async (c) => {
-  return c.json(await ProductService.getCategories(c.get("scope").tenantId));
+  return c.json(await ProductService.getCategories(activeTenantId(c)));
 });
 
 catalog.get("/products/:id", async (c) => {
   const product = await ProductService.getById(
-    c.get("scope").tenantId,
+    activeTenantId(c),
     pathParam(c, "id"),
   );
   if (!product) return c.json({ error: "Product not found" }, 404);
   return c.json(product);
 });
 
-catalog.post(
-  "/products",
-  requireActiveTenant,
-  requireCatalogWrite,
-  async (c) => {
-    const user = c.get("user");
-    const tenantId = activeTenantId(c);
-    const { name, category, description, status, brand, model, specs_json } =
-      await c.req.json();
+catalog.post("/products", requireCatalogWrite, async (c) => {
+  const user = c.get("user");
+  const tenantId = activeTenantId(c);
+  const { name, category, description, status, brand, model, specs_json } =
+    await c.req.json();
 
-    if (!name || !category) {
-      return c.json({ error: "Name and category required" }, 400);
-    }
-    if (status !== undefined && !PRODUCT_STATUSES.includes(status)) {
-      return c.json({ error: INVALID_STATUS }, 400);
-    }
+  if (!name || !category) {
+    return c.json({ error: "Name and category required" }, 400);
+  }
+  if (status !== undefined && !PRODUCT_STATUSES.includes(status)) {
+    return c.json({ error: INVALID_STATUS }, 400);
+  }
 
-    const product = await ProductService.create({
-      tenantId,
+  const product = await ProductService.create({
+    tenantId,
+    name,
+    category,
+    description,
+    status,
+    brand,
+    model,
+    specs_json,
+  });
+
+  await logAction(
+    { userId: user.id, tenantId },
+    "create_product",
+    "product",
+    product.id,
+    {
       name,
       category,
-      description,
-      status,
-      brand,
-      model,
-      specs_json,
-    });
+    },
+  );
+  return c.json(product);
+});
 
-    await logAction(
-      { userId: user.id, tenantId },
-      "create_product",
-      "product",
-      product.id,
-      {
-        name,
-        category,
-      },
-    );
-    return c.json(product);
-  },
-);
+catalog.patch("/products/:id", requireCatalogWrite, async (c) => {
+  const id = pathParam(c, "id");
+  const user = c.get("user");
+  const tenantId = activeTenantId(c);
+  const updates = await c.req.json();
+  if (
+    updates.status !== undefined &&
+    !PRODUCT_STATUSES.includes(updates.status)
+  ) {
+    return c.json({ error: INVALID_STATUS }, 400);
+  }
 
-catalog.patch(
-  "/products/:id",
-  requireActiveTenant,
-  requireCatalogWrite,
-  async (c) => {
-    const id = pathParam(c, "id");
-    const user = c.get("user");
-    const tenantId = activeTenantId(c);
-    const updates = await c.req.json();
-    if (
-      updates.status !== undefined &&
-      !PRODUCT_STATUSES.includes(updates.status)
-    ) {
-      return c.json({ error: INVALID_STATUS }, 400);
-    }
+  const product = await ProductService.update(tenantId, id, updates);
+  if (!product) return c.json({ error: "Product not found" }, 404);
 
-    const product = await ProductService.update(tenantId, id, updates);
-    if (!product) return c.json({ error: "Product not found" }, 404);
-
-    await logAction(
-      { userId: user.id, tenantId },
-      "update_product",
-      "product",
-      id,
-      updates,
-    );
-    return c.json(product);
-  },
-);
+  await logAction(
+    { userId: user.id, tenantId },
+    "update_product",
+    "product",
+    id,
+    updates,
+  );
+  return c.json(product);
+});
 
 // ============ PRODUCT IMAGES ============
 
@@ -151,7 +138,7 @@ async function storeImage(
   }
 }
 
-catalog.get("/products/:id/images", requireActiveTenant, async (c) => {
+catalog.get("/products/:id/images", async (c) => {
   const tenantId = activeTenantId(c);
   const productId = pathParam(c, "id");
   if (!(await ProductService.getById(tenantId, productId))) {
@@ -162,7 +149,6 @@ catalog.get("/products/:id/images", requireActiveTenant, async (c) => {
 
 catalog.post(
   "/products/:id/images",
-  requireActiveTenant,
   requireCatalogWrite,
   limitImageUpload,
   async (c) => {
@@ -210,68 +196,58 @@ catalog.post(
   },
 );
 
-catalog.put(
-  "/products/:id/images/order",
-  requireActiveTenant,
-  requireCatalogWrite,
-  async (c) => {
-    const user = c.get("user");
-    const tenantId = activeTenantId(c);
-    const productId = pathParam(c, "id");
-    const body = await jsonObject(c);
-    const ids = body?.ids;
-    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) {
-      return c.json({ error: "ids must be a list of image ids" }, 400);
-    }
+catalog.put("/products/:id/images/order", requireCatalogWrite, async (c) => {
+  const user = c.get("user");
+  const tenantId = activeTenantId(c);
+  const productId = pathParam(c, "id");
+  const body = await jsonObject(c);
+  const ids = body?.ids;
+  if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) {
+    return c.json({ error: "ids must be a list of image ids" }, 400);
+  }
 
-    if (!(await ProductService.getById(tenantId, productId))) {
-      return c.json({ error: "Product not found" }, 404);
-    }
-    const images = await ProductImageService.reorder(tenantId, productId, ids);
-    if (!images) {
-      return c.json(
-        { error: "ids must name each of the product's images once" },
-        400,
-      );
-    }
-
-    await logAction(
-      { userId: user.id, tenantId },
-      "reorder_product_images",
-      "product",
-      productId,
-      { ids },
+  if (!(await ProductService.getById(tenantId, productId))) {
+    return c.json({ error: "Product not found" }, 404);
+  }
+  const images = await ProductImageService.reorder(tenantId, productId, ids);
+  if (!images) {
+    return c.json(
+      { error: "ids must name each of the product's images once" },
+      400,
     );
-    return c.json(images);
-  },
-);
+  }
 
-catalog.delete(
-  "/images/:id",
-  requireActiveTenant,
-  requireCatalogWrite,
-  async (c) => {
-    const user = c.get("user");
-    const tenantId = activeTenantId(c);
-    const id = pathParam(c, "id");
-    const image = await ProductImageService.get(tenantId, id);
-    if (!image) return c.json({ error: "Image not found" }, 404);
+  await logAction(
+    { userId: user.id, tenantId },
+    "reorder_product_images",
+    "product",
+    productId,
+    { ids },
+  );
+  return c.json(images);
+});
 
-    await ProductImageService.remove(tenantId, id);
-    await logAction(
-      { userId: user.id, tenantId },
-      "delete_product_image",
-      "product",
-      image.product_id,
-      { imageId: id },
-    );
-    return c.json({ success: true });
-  },
-);
+catalog.delete("/images/:id", requireCatalogWrite, async (c) => {
+  const user = c.get("user");
+  const tenantId = activeTenantId(c);
+  const id = pathParam(c, "id");
+  const image = await ProductImageService.get(tenantId, id);
+  if (!image) return c.json({ error: "Image not found" }, 404);
+
+  await ProductImageService.remove(tenantId, id);
+  await logAction(
+    { userId: user.id, tenantId },
+    "delete_product_image",
+    "product",
+    image.product_id,
+    { imageId: id },
+  );
+  return c.json({ success: true });
+});
 
 // ============ VARIANTS ============
 
-catalog.get("/products/:id/variants", requireActiveTenant, async (c) => {
+catalog.get("/products/:id/variants", async (c) => {
   const tenantId = activeTenantId(c);
   const productId = pathParam(c, "id");
   if (!(await ProductService.getById(tenantId, productId))) {
@@ -280,65 +256,55 @@ catalog.get("/products/:id/variants", requireActiveTenant, async (c) => {
   return c.json(await VariantService.listByProduct(tenantId, productId));
 });
 
-catalog.post(
-  "/products/:id/variants",
-  requireActiveTenant,
-  requireCatalogWrite,
-  async (c) => {
-    const tenantId = activeTenantId(c);
-    const productId = pathParam(c, "id");
-    const body = await jsonObject(c);
-    if (!body) return c.json({ error: NOT_AN_OBJECT }, 400);
+catalog.post("/products/:id/variants", requireCatalogWrite, async (c) => {
+  const tenantId = activeTenantId(c);
+  const productId = pathParam(c, "id");
+  const body = await jsonObject(c);
+  if (!body) return c.json({ error: NOT_AN_OBJECT }, 400);
 
-    const fields = parseVariantFields(body, false);
-    if (typeof fields === "string") return c.json({ error: fields }, 400);
-    if (!(await ProductService.getById(tenantId, productId))) {
-      return c.json({ error: "Product not found" }, 404);
-    }
+  const fields = parseVariantFields(body, false);
+  if (typeof fields === "string") return c.json({ error: fields }, 400);
+  if (!(await ProductService.getById(tenantId, productId))) {
+    return c.json({ error: "Product not found" }, 404);
+  }
 
-    const variant = await VariantService.create(tenantId, productId, {
-      name: null,
-      cost_cents: null,
-      is_active: 1,
-      ...(fields as Pick<VariantFields, "sku" | "price_cents">),
-    });
+  const variant = await VariantService.create(tenantId, productId, {
+    name: null,
+    cost_cents: null,
+    is_active: 1,
+    ...(fields as Pick<VariantFields, "sku" | "price_cents">),
+  });
 
-    await logAction(
-      { userId: c.get("user").id, tenantId },
-      "create_variant",
-      "product_variant",
-      variant.id,
-      { product_id: productId, sku: variant.sku },
-    );
-    return c.json(variant, 201);
-  },
-);
+  await logAction(
+    { userId: c.get("user").id, tenantId },
+    "create_variant",
+    "product_variant",
+    variant.id,
+    { product_id: productId, sku: variant.sku },
+  );
+  return c.json(variant, 201);
+});
 
-catalog.patch(
-  "/variants/:id",
-  requireActiveTenant,
-  requireCatalogWrite,
-  async (c) => {
-    const tenantId = activeTenantId(c);
-    const id = pathParam(c, "id");
-    const body = await jsonObject(c);
-    if (!body) return c.json({ error: NOT_AN_OBJECT }, 400);
+catalog.patch("/variants/:id", requireCatalogWrite, async (c) => {
+  const tenantId = activeTenantId(c);
+  const id = pathParam(c, "id");
+  const body = await jsonObject(c);
+  if (!body) return c.json({ error: NOT_AN_OBJECT }, 400);
 
-    const fields = parseVariantFields(body, true);
-    if (typeof fields === "string") return c.json({ error: fields }, 400);
+  const fields = parseVariantFields(body, true);
+  if (typeof fields === "string") return c.json({ error: fields }, 400);
 
-    const variant = await VariantService.update(tenantId, id, fields);
-    if (!variant) return c.json({ error: "Variant not found" }, 404);
+  const variant = await VariantService.update(tenantId, id, fields);
+  if (!variant) return c.json({ error: "Variant not found" }, 404);
 
-    await logAction(
-      { userId: c.get("user").id, tenantId },
-      "update_variant",
-      "product_variant",
-      id,
-      fields,
-    );
-    return c.json(variant);
-  },
-);
+  await logAction(
+    { userId: c.get("user").id, tenantId },
+    "update_variant",
+    "product_variant",
+    id,
+    fields,
+  );
+  return c.json(variant);
+});
 
 export default catalog;

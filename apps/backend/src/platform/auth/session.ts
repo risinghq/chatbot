@@ -31,6 +31,10 @@ export interface Session {
   id: string;
   kind: SessionKind;
   userId: string;
+  /**
+   * A token's business, the one it is bound to, or null for an unbound token.
+   * For a browser session, the business last opened, which grants nothing.
+   */
   activeTenantId: string | null;
   expiresAt: Date;
 }
@@ -40,17 +44,21 @@ export interface User {
   email: string;
   /**
    * The role the session acts with, from `sessionRole`. A platform operator is
-   * admin in every scope. Anyone else has their membership role in the active
-   * tenant, or null while no tenant is selected.
+   * admin in every scope. Anyone else has their membership role in the
+   * business the request names, or null outside one.
    */
   role: string | null;
   name: string;
   isPlatformOperator: boolean;
-  activeTenantId: string | null;
   /**
-   * Whether the agent is taking new conversations in the active tenant. It
-   * comes from the membership there, so it is false while no tenant is
-   * selected and for an operator who is not a member of the pinned tenant.
+   * The business the user last opened, where a visit to /dashboard lands. It
+   * grants nothing: a browser request acts only in the business it names.
+   */
+  lastTenantId: string | null;
+  /**
+   * Whether the agent is taking new conversations in the request's business.
+   * It comes from the membership there, so it is false outside a business and
+   * for an operator who is not a member of it.
    */
   isAvailable: boolean;
 }
@@ -101,10 +109,10 @@ export function sessionIdOf(token: string): string {
 }
 
 /**
- * Picks the tenant a fresh session starts in. A user with exactly one open
- * membership starts in it. Everyone else starts unpinned. A platform operator
- * chooses explicitly, and a user with several memberships is not put in
- * whichever tenant sorted first.
+ * The business a fresh session records as last opened. A user with exactly
+ * one open membership lands in it. A platform operator, and a user with
+ * several memberships, lands on the picker instead of whichever business
+ * sorted first.
  */
 export async function defaultTenantForUser(
   userId: string,
@@ -145,8 +153,8 @@ export async function createSession(
 }
 
 /**
- * Repoint a session at another tenant. The caller must already have been
- * checked against the target (membership, or platform operator).
+ * Record the business a session last opened. The caller must already have
+ * been checked against it (membership, or platform operator).
  */
 export async function setSessionTenant(
   sessionId: string,
@@ -166,8 +174,11 @@ const LAST_USED_RESOLUTION_MS = 1000 * 60 * 60;
  * @param requestedTenantId the business the request names in its
  *   `X-Tenant-Id` header. A browser session acts there when the user is a
  *   member, or a platform operator, and the business is open; otherwise the
- *   result is `forbidden`. An API token is bound to its own business, so it
- *   may name only that one. Without it the session's pin applies.
+ *   result is `forbidden`. A browser request that names none acts in no
+ *   business. An API token made for a business is bound to it: it may name
+ *   only that one, and acts there whether or not it names it. A token made
+ *   without one names its business on each request, as a browser does, and
+ *   records none.
  */
 export async function validateSessionToken(
   token: string,
@@ -241,58 +252,69 @@ export async function validateSessionToken(
 
   const isPlatformOperator = row.is_platform_operator === 1;
 
+  const forbidden: SessionValidationResult = {
+    session: null,
+    user: null,
+    scope: null,
+    fresh: false,
+    forbidden: true,
+  };
+
   // Membership and the tenant's own status are re-read on every request, so
-  // revoking one or suspending the other takes effect at once.
-  let membership: TenantMembership | null = null;
+  // revoking one or suspending the other takes effect at once. A suspended
+  // tenant is closed to everyone, platform operators included.
+  let recorded: TenantMembership | null = null;
+  let recordedOpen = false;
   if (session.activeTenantId) {
-    membership = await MembershipService.get(session.activeTenantId, row.uid);
-
-    // A suspended tenant is closed to everyone, platform operators included.
-    // The pin is dropped, not the session, so the user stays logged in and can
-    // select another tenant, as when a membership is revoked.
-    const tenantIsOpen = row.tenant_status === "active";
-    const stillAMember = membership !== null || isPlatformOperator;
-
-    // A member whose pin is dropped has no tenant scope, so `requireTenantScope`
-    // refuses them. For a platform operator no pin is the cross-tenant view, so
-    // the reads exclude suspended tenants themselves (`tenantScope` in
-    // db/index.ts, `canAccessTenant` in auth/scope.ts). POST /api/tenants/active
-    // refuses a suspended tenant.
-    if (!tenantIsOpen || !stillAMember) {
+    recorded = await MembershipService.get(session.activeTenantId, row.uid);
+    recordedOpen =
+      row.tenant_status === "active" &&
+      (recorded !== null || isPlatformOperator);
+    // A browser session forgets a business it can no longer open, so the user
+    // stays logged in and /dashboard offers the picker. A token keeps its
+    // binding and acts nowhere: cleared, it would be an unbound token, free to
+    // name any business its owner can open.
+    if (!recordedOpen && kind === "browser") {
       await setSessionTenant(session.id, null);
       session.activeTenantId = null;
-      membership = null;
     }
   }
 
-  if (requestedTenantId && requestedTenantId !== session.activeTenantId) {
+  let tenantId: string | null = null;
+  let membership: TenantMembership | null = null;
+
+  if (kind === "token" && session.activeTenantId) {
+    if (requestedTenantId && requestedTenantId !== session.activeTenantId) {
+      return forbidden;
+    }
+    if (recordedOpen) {
+      tenantId = session.activeTenantId;
+      membership = recorded;
+    }
+  } else if (requestedTenantId === session.activeTenantId) {
+    // Only a browser reaches this with a business: an unbound token records none.
+    tenantId = requestedTenantId;
+    membership = recorded;
+  } else if (requestedTenantId) {
     const requested = await MembershipService.get(requestedTenantId, row.uid);
     const allowed =
-      kind === "browser" &&
       (requested !== null || isPlatformOperator) &&
       (await TenantService.isOpen(requestedTenantId));
-    if (!allowed) {
-      return {
-        session: null,
-        user: null,
-        scope: null,
-        fresh: false,
-        forbidden: true,
-      };
-    }
+    if (!allowed) return forbidden;
 
-    // The pin is the business the user last opened, where a fresh visit to
-    // the dashboard lands.
-    await setSessionTenant(session.id, requestedTenantId);
-    session.activeTenantId = requestedTenantId;
+    tenantId = requestedTenantId;
     membership = requested;
+    if (kind === "browser") {
+      await setSessionTenant(session.id, requestedTenantId);
+      session.activeTenantId = requestedTenantId;
+    }
   }
 
   const membershipRole: TenantRole | null = membership?.role ?? null;
 
   const scope: AuthScope = {
     userId: row.uid,
-    tenantId: session.activeTenantId,
+    tenantId,
     membershipRole,
     isPlatformOperator,
   };
@@ -303,7 +325,7 @@ export async function validateSessionToken(
     role: sessionRole({ isPlatformOperator, membershipRole }),
     name: row.uname,
     isPlatformOperator,
-    activeTenantId: session.activeTenantId,
+    lastTenantId: session.activeTenantId,
     isAvailable: membership?.is_available === 1,
   };
 

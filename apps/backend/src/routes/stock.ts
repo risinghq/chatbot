@@ -10,7 +10,6 @@ import { quantityError, StockService } from "../domains/stock/index.ts";
 import { logAction } from "../platform/audit/logger.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireRole,
   requireTenantScope,
 } from "../middleware/auth.ts";
@@ -19,8 +18,7 @@ const stock = new Hono();
 
 const requireStockWrite = requireRole("admin", "developer", "supervisor");
 
-// Stock belongs to one business, so every route reads the pinned tenant.
-stock.use("/*", requireTenantScope, requireActiveTenant);
+stock.use("/*", requireTenantScope);
 
 stock.get("/", async (c) => {
   const tenantId = activeTenantId(c);

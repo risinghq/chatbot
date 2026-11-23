@@ -25,19 +25,11 @@ const hasChanges = $derived(
     openaiKey !== "",
 );
 
-// The Calidda integrations are shared platform infrastructure, not per
-// business, so only VendeYa staff can suspend them. A tenant admin sees the
-// current state read-only rather than a toggle that would silently no-op.
-const canEditPlatformSettings = $derived(settings._scope === "platform");
-
-// Where a platform switch's value is. An operator with no tenant selected
-// owns these and edits them under their own names. A tenant admin sees them
-// as `_platform_<key>`, which a save never posts back. Under the raw names, a
-// save would resubmit them and the server would refuse the write.
+// The provider switches are platform settings, edited on /dashboard/ajustes.
+// The API reports them here as `_platform_<key>`, which a save never posts
+// back, so a business sees their state read-only.
 function platformSwitchOn(key: string): boolean {
-  return (
-    settings[canEditPlatformSettings ? key : `_platform_${key}`] === "true"
-  );
+  return settings[`_platform_${key}`] === "true";
 }
 
 function secretPlaceholder(stored: string | undefined): string {
@@ -113,28 +105,7 @@ onMount(loadSettings);
 			save();
 		}}
 	>
-		{#if canEditPlatformSettings}
-			<SectionShell
-				title="Reporte Power BI (GASO)"
-				description="El reporte público de Cálidda que consulta la verificación GASO. Es uno para todos los negocios."
-			>
-				<div class="grid gap-x-4 p-4 md:grid-cols-2">
-					<FormField label="Resource key" for="powerbi-resource-key">
-						<Input id="powerbi-resource-key" bind:value={settings.powerbi_resource_key} class="font-mono" />
-					</FormField>
-					<FormField label="Report id" for="powerbi-report-id">
-						<Input id="powerbi-report-id" bind:value={settings.powerbi_report_id} class="font-mono" />
-					</FormField>
-					<FormField label="Dataset id" for="powerbi-dataset-id" class="md:mb-0!">
-						<Input id="powerbi-dataset-id" bind:value={settings.powerbi_dataset_id} class="font-mono" />
-					</FormField>
-					<FormField label="Model id" for="powerbi-model-id" class="mb-0!">
-						<Input id="powerbi-model-id" bind:value={settings.powerbi_model_id} class="font-mono" />
-					</FormField>
-				</div>
-			</SectionShell>
-		{:else}
-			<SectionShell
+		<SectionShell
 				title="OpenAI"
 				description="La clave de API de OpenAI de este negocio. El asistente la usa para responder a los clientes."
 			>
@@ -176,13 +147,10 @@ onMount(loadSettings);
 					</FormField>
 				</div>
 			</SectionShell>
-		{/if}
 
 		<SectionShell
 			title="Proveedores de crédito"
-			description={canEditPlatformSettings
-				? "Suspende un proveedor para todos los negocios cuando falla. El bot usa la otra verificación si puede."
-				: "El equipo de VendeYa los suspende cuando fallan. Aquí ves su estado."}
+			description="El equipo de VendeYa los suspende cuando fallan. Aquí ves su estado."
 		>
 			<div class="divide-y divide-border-subtle">
 				{@render providerSwitch(
@@ -213,12 +181,11 @@ onMount(loadSettings);
 {/if}
 
 {#snippet providerSwitch(key: string, label: string, description: string)}
-	<label class="flex items-start gap-3 px-4 py-3 {canEditPlatformSettings ? 'cursor-pointer hover:bg-hover' : ''}">
+	<label class="flex items-start gap-3 px-4 py-3">
 		<input
 			type="checkbox"
 			checked={platformSwitchOn(key)}
-			disabled={!canEditPlatformSettings}
-			onchange={(e) => (settings[key] = e.currentTarget.checked ? "true" : "false")}
+			disabled
 			class="mt-1 size-4 rounded-sm border-border bg-surface text-accent disabled:cursor-not-allowed"
 		/>
 		<span class="min-w-0">

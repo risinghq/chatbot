@@ -24,7 +24,7 @@ const CUSTOMER = "51900555666";
 describe("orders list date filter", () => {
   let app: Hono;
   let tenant: TenantFixture;
-  let auth: { Cookie: string };
+  let auth: { Cookie: string; "X-Tenant-Id": string };
 
   const get = (query: string) =>
     app.request(`/api/orders?${query}`, { headers: auth });
@@ -57,7 +57,7 @@ describe("orders list date filter", () => {
     const { userId } = await createMember(tenant, "admin");
     const token = generateSessionToken();
     await createSession(token, userId, tenant.tenantId);
-    auth = { Cookie: `session=${token}` };
+    auth = { Cookie: `session=${token}`, "X-Tenant-Id": tenant.tenantId };
   });
 
   afterEach(async () => {

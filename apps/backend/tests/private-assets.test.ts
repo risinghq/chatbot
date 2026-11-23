@@ -73,7 +73,9 @@ describe("serving a private asset", () => {
   }
 
   function fetchAsset(id: string) {
-    return app.request(`/api/assets/${id}`, { headers: { Cookie: cookie } });
+    return app.request(`/api/assets/${id}`, {
+      headers: { Cookie: cookie, "X-Tenant-Id": tenant.tenantId },
+    });
   }
 
   it("never renders an uploaded page in the browser", async () => {

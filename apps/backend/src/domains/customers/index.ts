@@ -138,14 +138,10 @@ function withUniquePhone<T>(phone: string | null | undefined) {
   };
 }
 
-/**
- * `tenantId` null reads across open tenants (platform operators only). Writes
- * take a concrete tenant.
- */
 export const CustomerService = {
   /** Newest first. `search` matches part of the name or the phone. */
   list: async (
-    tenantId: string | null,
+    tenantId: string,
     options: { search?: string; limit: number; offset: number },
   ): Promise<CustomerSummary[]> => {
     const search = options.search?.trim();
@@ -186,7 +182,7 @@ export const CustomerService = {
       .execute()) as CustomerSummary[];
   },
 
-  get: async (tenantId: string | null, id: string): Promise<Customer | null> =>
+  get: async (tenantId: string, id: string): Promise<Customer | null> =>
     (await db
       .selectFrom("customers")
       .selectAll()

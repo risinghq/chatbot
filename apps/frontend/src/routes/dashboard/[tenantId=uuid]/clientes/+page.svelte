@@ -32,7 +32,7 @@ let form = $state(customerForm());
 let errors = $state<ReturnType<typeof customerFormProblems>>({});
 let isSaving = $state(false);
 
-const canCreate = $derived(auth.canTakeOrders && Boolean(auth.activeTenantId));
+const canCreate = $derived(auth.canTakeOrders);
 
 const columns = [
   { header: "Cliente", cell: nameCell },

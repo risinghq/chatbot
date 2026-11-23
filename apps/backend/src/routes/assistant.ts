@@ -8,7 +8,6 @@ import {
 import { logAction } from "../platform/audit/logger.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireRole,
   requireTenantScope,
 } from "../middleware/auth.ts";
@@ -16,7 +15,7 @@ import {
 const assistant = new Hono();
 
 // The assistant's settings belong to one business.
-assistant.use("/*", requireTenantScope, requireActiveTenant);
+assistant.use("/*", requireTenantScope);
 
 assistant.get("/settings", async (c) => {
   return c.json(await AssistantSettingsService.get(activeTenantId(c)));

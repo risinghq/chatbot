@@ -76,14 +76,15 @@ The backend refuses to deploy until every secret in `secrets.required` of
 encrypts every credential stored in D1 — each number's WhatsApp access token and
 Meta app secret, and each tenant's OpenAI key and Cálidda password. Those
 credentials are entered after the deploy: each tenant's OpenAI key and Cálidda
-login by its admin on `/dashboard/admin/settings`, each number's credentials on
-`/dashboard/admin/channels` or the `account channel create` command (see
-[Connecting WhatsApp](./whatsapp.md)). Saving one takes effect at once, without
-a deploy.
+login by its admin on the business's Ajustes page
+(`/dashboard/<tenant id>/admin/settings`), each number's credentials on its
+Canales page (`/dashboard/<tenant id>/admin/channels`) or the
+`account channel create` command (see [Connecting WhatsApp](./whatsapp.md)).
+Saving one takes effect at once, without a deploy.
 
 `CALIDDA_BASE_URL` stays a plain variable in `wrangler.jsonc` — the Cálidda API
 host is the same for every business. The Power BI report's four ids are platform
-settings an operator enters on `/dashboard/admin/settings` (see
+settings an operator enters on `/dashboard/ajustes` (see
 [Eligibility](./eligibility.md#the-two-providers)).
 
 Write `SECRETS_KEY` to a file outside the repository, such as

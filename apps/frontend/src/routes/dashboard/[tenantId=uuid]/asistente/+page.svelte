@@ -15,12 +15,9 @@ import SectionShell from "#lib/components/ui/section-shell.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import Textarea from "#lib/components/ui/textarea.svelte";
 import AssistantTabs from "#lib/components/assistant/assistant-tabs.svelte";
-import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
-
-let { data } = $props();
 
 const MODEL_ITEMS: { value: AssistantModel; label: string }[] = [
   { value: "gpt-5-mini", label: "Equilibrado (recomendado)" },
@@ -95,7 +92,7 @@ async function load() {
 }
 
 $effect(() => {
-  if (data.user?.activeTenantId) load();
+  load();
 });
 
 async function save() {
@@ -123,72 +120,67 @@ async function save() {
 <PageTitle title="Asistente" />
 
 <Page width="narrow">
-	{#if !data.user?.activeTenantId}
-		<PageHeader title="Asistente" />
-		<NeedsTenant />
-	{:else}
-		<PageHeader
-			title="Asistente"
-			subtitle="Lo que el asistente sabe del negocio, además del catálogo, el stock, las zonas de envío y los métodos de pago."
-		>
-			{#snippet actions()}
-				{#if canEdit}
-					<Button size="sm" onclick={save} disabled={!changed || saving}>
-						{saving ? "Guardando…" : "Guardar"}
-					</Button>
-				{/if}
-			{/snippet}
-		</PageHeader>
+	<PageHeader
+		title="Asistente"
+		subtitle="Lo que el asistente sabe del negocio, además del catálogo, el stock, las zonas de envío y los métodos de pago."
+	>
+		{#snippet actions()}
+			{#if canEdit}
+				<Button size="sm" onclick={save} disabled={!changed || saving}>
+					{saving ? "Guardando…" : "Guardar"}
+				</Button>
+			{/if}
+		{/snippet}
+	</PageHeader>
 
-		<AssistantTabs class="-mx-4 mb-6 border-b border-border-subtle px-4 md:mx-0 md:px-0" />
+	<AssistantTabs class="-mx-4 mb-6 border-b border-border-subtle px-4 md:mx-0 md:px-0" />
 
-		{#if draft}
-			<div class="flex flex-col gap-6">
-				{#each TEXTS as text (text.key)}
-					<SectionShell title={text.title} description={text.description}>
-						<div class="p-4">
-							<Textarea
-								id="assistant-{text.key}"
-								bind:value={draft[text.key]}
-								rows={6}
-								placeholder={text.placeholder}
-								disabled={!canEdit}
-								error={draft[text.key].length > ASSISTANT_TEXT_LIMIT}
-							/>
-							<p class="mt-1.5 text-right text-xs text-fg-muted tabular-nums">
-								{draft[text.key].length} / {ASSISTANT_TEXT_LIMIT}
-							</p>
-						</div>
-					</SectionShell>
-				{/each}
-
-				<SectionShell title="Funcionamiento" description="El modelo que responde y de qué ubicación vende.">
-					<div class="grid gap-x-4 p-4 sm:grid-cols-2">
-						<FormField label="Modelo" for="assistant-model">
-							<Select id="assistant-model" bind:value={draft.model} items={MODEL_ITEMS} disabled={!canEdit} />
-						</FormField>
-						{#if locations.length > 1}
-							<FormField label="Vende desde" for="assistant-location">
-								<Select
-									id="assistant-location"
-									bind:value={() => draft!.stock_location_id ?? "", (v) => (draft!.stock_location_id = v || null)}
-									items={locationItems}
-									disabled={!canEdit}
-								/>
-								{#if !draft.stock_location_id}
-									<p class="mt-1.5 text-sm text-warning-text">
-										Con varias ubicaciones y ninguna elegida, el asistente no toma pedidos: los pasa al equipo.
-									</p>
-								{/if}
-							</FormField>
-						{/if}
+	{#if draft}
+		<div class="flex flex-col gap-6">
+			{#each TEXTS as text (text.key)}
+				<SectionShell title={text.title} description={text.description}>
+					<div class="p-4">
+						<Textarea
+							id="assistant-{text.key}"
+							bind:value={draft[text.key]}
+							rows={6}
+							placeholder={text.placeholder}
+							disabled={!canEdit}
+							error={draft[text.key].length > ASSISTANT_TEXT_LIMIT}
+						/>
+						<p class="mt-1.5 text-right text-xs text-fg-muted tabular-nums">
+							{draft[text.key].length} / {ASSISTANT_TEXT_LIMIT}
+						</p>
 					</div>
 				</SectionShell>
+			{/each}
 
-				{#if settings?.updated_at}
-					<p class="text-sm text-fg-muted">Guardado el {formatDateTime(settings.updated_at)}</p>
-				{/if}
-			</div>
-		{/if}
+			<SectionShell title="Funcionamiento" description="El modelo que responde y de qué ubicación vende.">
+				<div class="grid gap-x-4 p-4 sm:grid-cols-2">
+					<FormField label="Modelo" for="assistant-model">
+						<Select id="assistant-model" bind:value={draft.model} items={MODEL_ITEMS} disabled={!canEdit} />
+					</FormField>
+					{#if locations.length > 1}
+						<FormField label="Vende desde" for="assistant-location">
+							<Select
+								id="assistant-location"
+								bind:value={() => draft!.stock_location_id ?? "", (v) => (draft!.stock_location_id = v || null)}
+								items={locationItems}
+								disabled={!canEdit}
+							/>
+							{#if !draft.stock_location_id}
+								<p class="mt-1.5 text-sm text-warning-text">
+									Con varias ubicaciones y ninguna elegida, el asistente no toma pedidos: los pasa al equipo.
+								</p>
+							{/if}
+						</FormField>
+					{/if}
+				</div>
+			</SectionShell>
+
+			{#if settings?.updated_at}
+				<p class="text-sm text-fg-muted">Guardado el {formatDateTime(settings.updated_at)}</p>
+			{/if}
+		</div>
 	{/if}
 </Page>

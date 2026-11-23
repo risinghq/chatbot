@@ -25,6 +25,11 @@ export type CommandContext = {
     yes?: boolean;
   };
   call(method: string, path: string, body?: unknown): Promise<unknown>;
+  /**
+   * Names `business` on every later request, once the server confirms the
+   * account can open it, or names none. Answers the account as seen there.
+   */
+  useBusiness(business: string | null): Promise<unknown>;
   /** All of stdin, trimmed. Secrets arrive here, never in arguments. */
   readStdin(): Promise<string>;
   /** A local file's bytes. Throws UsageError when it does not exist. */
@@ -196,14 +201,11 @@ export const COMMANDS: Command[] = [
   {
     words: "businesses use",
     usage: "businesses use <business id | none>",
-    summary:
-      "Point the token at a business; `none` is the operator's cross-business view.",
+    summary: "Act in a business from now on; `none` acts in none.",
     run: (ctx) => {
       noMoreArgs(ctx, 1);
       const id = need(ctx.args[0], "business id");
-      return ctx.call("POST", "/api/tenants/active", {
-        tenantId: id === "none" ? null : id,
-      });
+      return ctx.useBusiness(id === "none" ? null : id);
     },
   },
   {

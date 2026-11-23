@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { publicOrigin } from "../../config.ts";
 import { InvitationService } from "../../domains/invitations/index.ts";
 import { pathParam } from "../../lib/http.ts";
-import { activeTenantId, requireActiveTenant } from "../../middleware/auth.ts";
+import { activeTenantId, requireTenantScope } from "../../middleware/auth.ts";
 
 /**
  * An admin brings people into the active tenant by invitation. The link is
@@ -10,7 +10,7 @@ import { activeTenantId, requireActiveTenant } from "../../middleware/auth.ts";
  */
 const invitations = new Hono();
 
-invitations.use("/*", requireActiveTenant);
+invitations.use("/*", requireTenantScope);
 
 invitations.get("/", async (c) =>
   c.json({

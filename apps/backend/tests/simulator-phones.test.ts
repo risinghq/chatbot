@@ -38,6 +38,7 @@ describe("simulated conversation phone numbers", () => {
     );
     headers = {
       Cookie: `session=${token}`,
+      "X-Tenant-Id": tenant.tenantId,
       "Content-Type": "application/json",
     };
   });
@@ -124,6 +125,7 @@ describe("simulated conversation phone numbers", () => {
         method: "POST",
         headers: {
           Cookie: `session=${token}`,
+          "X-Tenant-Id": other.tenantId,
           "Content-Type": "application/json",
         },
         body: "{}",

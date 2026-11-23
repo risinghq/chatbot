@@ -62,7 +62,10 @@ describe("API tokens", () => {
       headers: {
         "Content-Type": "application/json",
         "cf-connecting-ip": crypto.randomUUID(),
-        ...(credentials.cookie && { Cookie: credentials.cookie }),
+        ...(credentials.cookie && {
+          Cookie: credentials.cookie,
+          "X-Tenant-Id": tenantId,
+        }),
         ...(credentials.bearer && {
           Authorization: `Bearer ${credentials.bearer}`,
         }),
@@ -89,11 +92,11 @@ describe("API tokens", () => {
     const me = await send("GET", "/api/auth/me", { bearer: token });
     expect(me.status).toBe(200);
     const body = (await me.json()) as {
-      user: { id: string; activeTenantId: string; role: string };
+      user: { id: string; lastTenantId: string; role: string };
     };
     expect(body.user).toMatchObject({
       id: userId,
-      activeTenantId: tenantId,
+      lastTenantId: tenantId,
       role: "admin",
     });
 
@@ -174,7 +177,7 @@ describe("API tokens", () => {
     expect(invite.status).toBe(403);
   });
 
-  it("switches its own business without touching the browser session", async () => {
+  it("acts only in its own business, even for an owner of another", async () => {
     const other = (await createTenantFixture("Otra")).tenantId;
     await run(
       `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
@@ -182,23 +185,80 @@ describe("API tokens", () => {
       [crypto.randomUUID(), other, userId],
     );
     const { token } = await mint();
+    const meIn = (business: string) =>
+      app.request("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}`, "X-Tenant-Id": business },
+      });
 
-    const switched = await send(
-      "POST",
-      "/api/tenants/active",
-      { bearer: token },
-      { tenantId: other },
+    expect((await meIn(other)).status).toBe(404);
+    const own = await meIn(tenantId);
+    expect(own.status).toBe(200);
+    const { user } = (await own.json()) as { user: { lastTenantId: string } };
+    expect(user.lastTenantId).toBe(tenantId);
+  });
+
+  it("made without a business, names one on each request and records none", async () => {
+    const { token } = await createApiToken(
+      userId,
+      { name: "cli", days: 30 },
+      null,
     );
-    expect(switched.status).toBe(200);
+    const inviteIn = (business?: string) =>
+      app.request("/api/admin/invitations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(business && { "X-Tenant-Id": business }),
+        },
+        body: JSON.stringify({
+          email: `${crypto.randomUUID()}@test.invalid`,
+          role: "sales_agent",
+        }),
+      });
 
-    const viaToken = (await (
-      await send("GET", "/api/auth/me", { bearer: token })
-    ).json()) as { user: { activeTenantId: string } };
-    const viaCookie = (await (
-      await send("GET", "/api/auth/me", { cookie })
-    ).json()) as { user: { activeTenantId: string } };
-    expect(viaToken.user.activeTenantId).toBe(other);
-    expect(viaCookie.user.activeTenantId).toBe(tenantId);
+    expect((await inviteIn()).status).toBe(403);
+    expect((await inviteIn(tenantId)).status).toBe(201);
+    const stranger = (await createTenantFixture("Ajena")).tenantId;
+    expect((await inviteIn(stranger)).status).toBe(404);
+
+    const me = await send("GET", "/api/auth/me", { bearer: token });
+    const { user } = (await me.json()) as {
+      user: { lastTenantId: string | null };
+    };
+    expect(user.lastTenantId).toBeNull();
+  });
+
+  it("stays bound to its business while that business is suspended", async () => {
+    const other = (await createTenantFixture("Otra")).tenantId;
+    await run(
+      `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
+       VALUES (?, ?, ?, 'admin')`,
+      [crypto.randomUUID(), other, userId],
+    );
+    const { token } = await mint();
+    const invite = (business?: string) =>
+      app.request("/api/admin/invitations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(business && { "X-Tenant-Id": business }),
+        },
+        body: JSON.stringify({
+          email: `${crypto.randomUUID()}@test.invalid`,
+          role: "sales_agent",
+        }),
+      });
+
+    await run("UPDATE tenants SET status = 'suspended' WHERE id = ?", [
+      tenantId,
+    ]);
+    expect((await invite()).status).toBe(403);
+    expect((await invite(other)).status).toBe(404);
+
+    await run("UPDATE tenants SET status = 'active' WHERE id = ?", [tenantId]);
+    expect((await invite()).status).toBe(201);
   });
 
   it("lists the owner's tokens without the secret, and revokes one", async () => {

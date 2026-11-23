@@ -30,9 +30,8 @@ export function withoutTenantScope(_reason: string): Kysely<Database> {
 }
 
 /**
- * A cross-tenant read of tenant rows spans only active tenants. An operator's
- * session drops its pin when the tenant is suspended, but an unpinned operator
- * already reads every tenant, so the exclusion lives in the read.
+ * The rows of every active tenant. Only a platform read (routes/platform.ts)
+ * spans businesses; a suspended tenant's rows stay out of it.
  */
 export function inOpenTenants(
   eb: ExpressionBuilder<Database, any>,
@@ -45,13 +44,10 @@ export function inOpenTenants(
   );
 }
 
-/**
- * The tenant predicate for a read that takes `tenantId: string | null`: a
- * concrete id reads that tenant, null reads every open tenant.
- */
-export function tenantScope(tenantId: string | null, column = "tenant_id") {
+/** The rows of one tenant. */
+export function tenantScope(tenantId: string, column = "tenant_id") {
   return (eb: ExpressionBuilder<Database, any>): Expression<SqlBool> =>
-    tenantId ? eb(eb.ref(column), "=", tenantId) : inOpenTenants(eb, column);
+    eb(eb.ref(column), "=", tenantId);
 }
 
 /**

@@ -56,14 +56,16 @@ SECRETS_KEY=<the deployed key> bun run account channel create --tenant <tenant i
 
 [Operations](./operations.md#accounts) explains the key and the other forms. The
 system generates the number's webhook verify token when the account is created;
-`/dashboard/admin/channels` shows it with the webhook URL.
+the business's Canales page (`/dashboard/<tenant id>/admin/channels`) shows it
+with the webhook URL.
 
-A platform operator pinned to the tenant can also register the number through
-the API. `SECRETS_KEY` must be set on the backend, or a request carrying a
-credential answers 503.
+A tenant admin, or a platform operator, can also register the number through the
+API, naming the business in `X-Tenant-Id`. `SECRETS_KEY` must be set on the
+backend, or a request carrying a credential answers 503.
 
 ```sh
-curl -X POST -b "session=<token>" -H 'content-type: application/json' \
+curl -X POST -b "session=<token>" -H "X-Tenant-Id: <tenant id>" \
+  -H 'content-type: application/json' \
   -d '{
     "phoneNumberId": "<phone number id>",
     "wabaId": "<whatsapp business account id>",
@@ -84,10 +86,13 @@ token and app secret never come back, only `has_access_token` and
 To list the tenant's numbers, replace a token, or switch a number off:
 
 ```sh
-curl -b "session=<token>" https://sales.rising.sh/api/admin/channels
-curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
+curl -b "session=<token>" -H "X-Tenant-Id: <tenant id>" \
+  https://sales.rising.sh/api/admin/channels
+curl -X PATCH -b "session=<token>" -H "X-Tenant-Id: <tenant id>" \
+  -H 'content-type: application/json' \
   -d '{"accessToken":"<new token>"}' https://sales.rising.sh/api/admin/channels/<id>
-curl -X PATCH -b "session=<token>" -H 'content-type: application/json' \
+curl -X PATCH -b "session=<token>" -H "X-Tenant-Id: <tenant id>" \
+  -H 'content-type: application/json' \
   -d '{"status":"disabled"}' https://sales.rising.sh/api/admin/channels/<id>
 ```
 
@@ -120,7 +125,7 @@ When the callback URL is saved, Meta sends a GET with `hub.mode=subscribe`, a
 `hub.verify_token` and a `hub.challenge`. The backend answers the challenge if
 the token matches the verify token of any channel account. Anything else
 answers 403. The handshake carries no phone number id, so any stored verify
-token passes it. `/dashboard/admin/channels` shows each number's token.
+token passes it. Each business's Canales page shows its numbers' tokens.
 
 ```sh
 curl "https://sales.rising.sh/api/webhook?hub.mode=subscribe&hub.verify_token=<verify token>&hub.challenge=42"

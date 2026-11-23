@@ -40,10 +40,13 @@ async function rowsFor(action: string): Promise<AuditRow[]> {
   )) as AuditRow[];
 }
 
-async function login(userId: string, tenantId: string | null): Promise<string> {
+async function login(
+  userId: string,
+  tenantId: string,
+): Promise<Record<string, string>> {
   const token = generateSessionToken();
   await createSession(token, userId, tenantId);
-  return `session=${token}`;
+  return { Cookie: `session=${token}`, "X-Tenant-Id": tenantId };
 }
 
 describe("audit actors", () => {
@@ -149,7 +152,7 @@ describe("audit actors", () => {
       app.route("/api/admin", adminRoutes);
 
       const response = await app.request("/api/admin/audit?limit=500", {
-        headers: { Cookie: await login(userId, tenant.tenantId) },
+        headers: await login(userId, tenant.tenantId),
       });
 
       expect(response.status).toBe(200);
@@ -192,14 +195,14 @@ describe("audit actors", () => {
 
       const errors = (await (
         await app.request("/api/admin/llm-errors?phone=", {
-          headers: { Cookie: cookie },
+          headers: cookie,
         })
       ).json()) as { errors: Array<{ id: string }> };
       expect(errors.errors.map((e) => e.id)).toContain(llmId);
 
       const audit = (await (
         await app.request("/api/admin/audit?user_id=", {
-          headers: { Cookie: cookie },
+          headers: cookie,
         })
       ).json()) as { logs: Array<{ action: string }> };
       expect(audit.logs.map((l) => l.action)).toContain(action);
@@ -219,7 +222,7 @@ describe("audit actors", () => {
       app.route("/api/admin", adminRoutes);
 
       const response = await app.request("/api/admin/audit?limit=500", {
-        headers: { Cookie: await login(userId, tenant.tenantId) },
+        headers: await login(userId, tenant.tenantId),
       });
 
       expect(response.status).toBe(200);

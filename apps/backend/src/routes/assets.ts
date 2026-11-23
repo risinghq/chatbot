@@ -3,8 +3,7 @@ import { pathParam } from "../lib/http.ts";
 import { AssetService } from "../domains/assets/index.ts";
 import { servableContentType } from "../domains/assets/content-types.ts";
 import { privateFileStorage } from "../adapters/storage/private-files.ts";
-import { canAccessTenant } from "../platform/auth/scope.ts";
-import { requireTenantScope } from "../middleware/auth.ts";
+import { activeTenantId, requireTenantScope } from "../middleware/auth.ts";
 import { createLogger } from "../lib/logger.ts";
 
 const logger = createLogger("assets");
@@ -15,14 +14,14 @@ assets.use("/*", requireTenantScope);
 
 /** Resolve an asset to its bytes (private) or its public URL (catalog images). */
 assets.get("/:id", async (c) => {
-  const scope = c.get("scope");
-  const id = pathParam(c, "id");
+  // The read is scoped to the request's business, so an asset owned by another
+  // reads as missing and the endpoint cannot probe which ids exist elsewhere.
+  const asset = await AssetService.getById(
+    activeTenantId(c),
+    pathParam(c, "id"),
+  );
 
-  const asset = await AssetService.getById(null, id);
-
-  // An asset owned by another tenant is reported as missing, not forbidden, so
-  // the endpoint cannot be used to probe which ids exist elsewhere.
-  if (!asset || !(await canAccessTenant(scope, asset.tenant_id))) {
+  if (!asset) {
     return c.json({ error: "Asset not found" }, 404);
   }
 
@@ -75,12 +74,6 @@ function downloadName(asset: { id: string; storage_key: string }): string {
 
 /** List the caller's tenant's assets, optionally filtered by kind. */
 assets.get("/", async (c) => {
-  const scope = c.get("scope");
-
-  if (!scope.tenantId) {
-    return c.json({ error: "Select a tenant to list assets" }, 400);
-  }
-
   const kind = c.req.query("kind") as
     | "catalog_image"
     | "contract"
@@ -88,7 +81,7 @@ assets.get("/", async (c) => {
     | undefined;
 
   return c.json({
-    assets: await AssetService.listForTenant(scope.tenantId, kind),
+    assets: await AssetService.listForTenant(activeTenantId(c), kind),
   });
 });
 

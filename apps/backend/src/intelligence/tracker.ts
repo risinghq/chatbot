@@ -1,5 +1,4 @@
 import { newId } from "@vendeya/utils";
-import { sql } from "kysely";
 import type { ConversationRef } from "@vendeya/types";
 import { createLogger } from "../lib/logger.ts";
 import { db, tenantScope } from "../db/index.ts";
@@ -64,42 +63,12 @@ async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
     .execute();
 }
 
-/** `tenantId` null spans tenants and is only reachable by platform operators. */
-export async function getRecentLLMCalls(
-  tenantId: string | null,
-  limit: number = 50,
-) {
+export async function getRecentLLMCalls(tenantId: string, limit: number = 50) {
   return await db
     .selectFrom("llm_calls")
     .selectAll()
     .where(tenantScope(tenantId))
     .orderBy("created_at", "desc")
     .limit(limit)
-    .execute();
-}
-
-/**
- * Get error rate and performance stats by operation
- */
-export async function getLLMErrorStats(
-  tenantId: string | null,
-  hoursBack: number = 24,
-) {
-  return await db
-    .selectFrom("llm_calls")
-    .select((eb) => [
-      "operation",
-      eb.fn.countAll<number>().as("total_calls"),
-      sql<number>`sum(case when status = 'error' then 1 else 0 end)`.as(
-        "error_count",
-      ),
-      sql<number>`round(avg(latency_ms), 2)`.as("avg_latency_ms"),
-    ])
-    .where(
-      sql<boolean>`created_at > datetime('now', '-' || ${hoursBack} || ' hours')`,
-    )
-    .where(tenantScope(tenantId))
-    .groupBy("operation")
-    .orderBy("total_calls", "desc")
     .execute();
 }

@@ -5,8 +5,6 @@ import { ReportService } from "../domains/reports/index.ts";
 import { reportSummary } from "../domains/reports/summary.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
-  requirePlatformOperator,
   requireRole,
   requireTenantScope,
 } from "../middleware/auth.ts";
@@ -23,9 +21,7 @@ reports.use(
 );
 
 reports.get("/today-count", async (c) => {
-  const count = await ReportService.getTodayContactCount(
-    c.get("scope").tenantId,
-  );
+  const count = await ReportService.getTodayContactCount(activeTenantId(c));
   return c.json({ count });
 });
 
@@ -33,7 +29,7 @@ reports.get("/today-count", async (c) => {
 const SUMMARY_MAX_DAYS = 366;
 
 /** The summary's range from the query, today by default, or the problem. */
-function summaryRange(
+export function summaryRange(
   c: Context,
 ): { startMs: number; endMs: number } | { problem: string } {
   const startDateStr = c.req.query("startDate");
@@ -53,17 +49,10 @@ function summaryRange(
   return { startMs, endMs };
 }
 
-reports.get("/summary", requireActiveTenant, async (c) => {
+reports.get("/summary", async (c) => {
   const range = summaryRange(c);
   if ("problem" in range) return c.json({ error: range.problem }, 400);
   return c.json(await reportSummary({ tenantId: activeTenantId(c), ...range }));
-});
-
-/** Every open business, with a line per business: the platform's overview. */
-reports.get("/summary/all", requirePlatformOperator, async (c) => {
-  const range = summaryRange(c);
-  if ("problem" in range) return c.json({ error: range.problem }, 400);
-  return c.json(await reportSummary({ tenantId: null, ...range }));
 });
 
 reports.get("/activity", async (c) => {
@@ -78,7 +67,7 @@ reports.get("/activity", async (c) => {
     : limaDayBounds()[1];
 
   const buffer = await ReportService.generateActivityReport({
-    tenantId: c.get("scope").tenantId,
+    tenantId: activeTenantId(c),
     startDate: new Date(startMs),
     endDate: new Date(endMs),
   });
@@ -110,7 +99,7 @@ reports.get("/orders", async (c) => {
     : undefined;
 
   const buffer = await ReportService.generateOrderReport({
-    tenantId: c.get("scope").tenantId,
+    tenantId: activeTenantId(c),
     startDate: startMs === undefined ? undefined : new Date(startMs),
     endDate: endMs === undefined ? undefined : new Date(endMs),
     status: status as OrderStatus | undefined,

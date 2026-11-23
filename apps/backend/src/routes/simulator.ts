@@ -12,8 +12,8 @@ import {
 import { conversationStub, unlocked } from "../conversation/stub.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireRole,
+  requireTenantScope,
 } from "../middleware/auth.ts";
 import type { Conversation, ConversationRef } from "@vendeya/types";
 import { sql } from "kysely";
@@ -25,7 +25,7 @@ const logger = createLogger("simulator");
 const simulator = new Hono();
 
 // The simulator writes conversations, so it always needs a concrete tenant.
-simulator.use("/*", requireActiveTenant);
+simulator.use("/*", requireTenantScope);
 simulator.use("/*", requireRole("admin", "developer"));
 
 /**

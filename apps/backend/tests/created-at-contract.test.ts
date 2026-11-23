@@ -84,7 +84,9 @@ describe("created_at over HTTP", () => {
   });
 
   async function getJson<T>(path: string): Promise<T> {
-    const response = await app.request(path, { headers: { Cookie: cookie } });
+    const response = await app.request(path, {
+      headers: { Cookie: cookie, "X-Tenant-Id": tenant.tenantId },
+    });
     expect(response.status).toBe(200);
     return (await response.json()) as T;
   }

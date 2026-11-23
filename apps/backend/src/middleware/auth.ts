@@ -5,23 +5,17 @@ import {
   deleteSessionTokenCookie,
   setSessionTokenCookie,
 } from "../platform/auth/session.ts";
-import {
-  hasRole,
-  TenantScopeRequiredError,
-  writeTenantId,
-} from "../platform/auth/scope.ts";
+import { hasRole, writeTenantId } from "../platform/auth/scope.ts";
 
-/** Response body for a caller who has no active tenant. */
+/** Response body for a business route reached without a business. */
 export const NO_ACTIVE_TENANT = {
   error: "No active tenant",
-  detail:
-    "Select a tenant with POST /api/tenants/active before using this endpoint",
+  detail: "Name the business in the X-Tenant-Id header",
 } as const;
 
 /**
- * The business a request acts in. A browser tab names it on every request,
- * so two tabs can work in two businesses. Without it the session's pin, the
- * business last opened, applies.
+ * The business a browser request acts in. A tab names it on every request, so
+ * two tabs can work in two businesses. A request without it acts in none.
  */
 export const TENANT_HEADER = "X-Tenant-Id";
 
@@ -103,9 +97,9 @@ export function requireRole(...allowedRoles: string[]) {
 }
 
 /**
- * Gate for routes that read or write tenant-owned data. A caller who is not a
- * platform operator and has no pinned tenant gets a 403, so a member never
- * reaches an unscoped query.
+ * Gate for routes that read or write tenant-owned data. A request that names
+ * no business gets a 403, operator or member, so no handler reaches a query
+ * without one.
  */
 export async function requireTenantScope(c: Context, next: Next) {
   const scope = c.get("scope");
@@ -114,7 +108,7 @@ export async function requireTenantScope(c: Context, next: Next) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  if (!scope.isPlatformOperator && !scope.tenantId) {
+  if (!scope.tenantId) {
     return c.json(NO_ACTIVE_TENANT, 403);
   }
 
@@ -122,26 +116,12 @@ export async function requireTenantScope(c: Context, next: Next) {
 }
 
 /**
- * The tenant a request is acting in. This calls `writeTenantId`. When no tenant
- * is pinned and `requireActiveTenant` is not in front of the handler, it throws
- * TenantScopeRequiredError, which the error handler turns into the same 403.
+ * The business a request acts in. Without `requireTenantScope` in front of the
+ * handler it throws TenantScopeRequiredError for a request that names none,
+ * which the error handler turns into the same 403.
  */
 export function activeTenantId(c: Context): string {
   return writeTenantId(c.get("scope"));
-}
-
-/** Gate for routes that write tenant data, which need a concrete tenant. */
-export async function requireActiveTenant(c: Context, next: Next) {
-  try {
-    writeTenantId(c.get("scope"));
-  } catch (error) {
-    if (error instanceof TenantScopeRequiredError) {
-      return c.json(NO_ACTIVE_TENANT, 403);
-    }
-    throw error;
-  }
-
-  await next();
 }
 
 /** Gate for routes reserved for VendeYa's own staff. */

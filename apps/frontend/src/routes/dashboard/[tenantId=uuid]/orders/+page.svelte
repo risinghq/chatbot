@@ -74,7 +74,7 @@ function clearFilters() {
 <Page>
 	<PageHeader title="Pedidos" subtitle="Lo que tus clientes compraron, del pago a la entrega.">
 		{#snippet actions()}
-			{#if auth.canTakeOrders && auth.activeTenantId}
+			{#if auth.canTakeOrders}
 				<Button href="{businessPath()}/orders/nuevo">Nuevo pedido</Button>
 			{/if}
 		{/snippet}

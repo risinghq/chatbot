@@ -200,7 +200,13 @@ describe("writing to a conversation a person holds", () => {
       app.route("/api/conversations", conversationRoutes);
       const declined = await app.request(
         `/api/conversations/${CUSTOMER}/decline-assignment?channel=${tenant.channelAccountId}`,
-        { method: "POST", headers: { Cookie: `session=${token}` } },
+        {
+          method: "POST",
+          headers: {
+            Cookie: `session=${token}`,
+            "X-Tenant-Id": tenant.tenantId,
+          },
+        },
       );
       expect(declined.status).toBe(200);
       staffMessages.length = 0;

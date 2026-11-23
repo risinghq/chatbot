@@ -9,7 +9,6 @@ import {
 import { logAction } from "../platform/audit/logger.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireRole,
   requireTenantScope,
 } from "../middleware/auth.ts";
@@ -41,7 +40,7 @@ function settingRoutes<T extends { id: string }, F>(
   ) => Partial<F> | string,
 ) {
   const app = new Hono();
-  app.use("/*", requireTenantScope, requireActiveTenant);
+  app.use("/*", requireTenantScope);
 
   app.get("/", async (c) => c.json(await service.list(activeTenantId(c))));
 

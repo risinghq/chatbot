@@ -57,11 +57,8 @@ function paidCents(eb: ExpressionBuilder<any, any>) {
     .where("pay.status", "=", "confirmed");
 }
 
-/**
- * Orders with their buyer, in `tenantId` or across open businesses when it is
- * null, narrowed to `agentId`'s orders when set.
- */
-function scopedOrders(tenantId: string | null, agentId: string | null) {
+/** Orders with their buyer in `tenantId`, narrowed to `agentId`'s when set. */
+function scopedOrders(tenantId: string, agentId: string | null) {
   return db
     .selectFrom("orders as o")
     .innerJoin("customers as cu", (join) =>
@@ -73,7 +70,7 @@ function scopedOrders(tenantId: string | null, agentId: string | null) {
     .$if(agentId !== null, (q) => q.where((eb) => agentOrders(eb, agentId!)));
 }
 
-function summaries(tenantId: string | null, agentId: string | null) {
+function summaries(tenantId: string, agentId: string | null) {
   return scopedOrders(tenantId, agentId)
     .selectAll("o")
     .select((eb) => [
@@ -99,7 +96,7 @@ function withPaymentState<
 export const OrderReads = {
   /** Newest first. `agentId` narrows to a sales agent's orders. */
   list: async (
-    tenantId: string | null,
+    tenantId: string,
     filters: OrderFilters,
     agentId: string | null = null,
   ): Promise<OrderSummary[]> => {
@@ -130,7 +127,7 @@ export const OrderReads = {
    * orders.
    */
   shipments: async (
-    tenantId: string | null,
+    tenantId: string,
     statuses: readonly OrderStatus[],
     limit: number,
     agentId: string | null = null,
@@ -173,7 +170,7 @@ export const OrderReads = {
 
   /** `agentId` narrows to a sales agent's orders. */
   detail: async (
-    tenantId: string | null,
+    tenantId: string,
     id: string,
     agentId: string | null = null,
   ): Promise<OrderDetail | null> => {
@@ -285,7 +282,7 @@ export const OrderReads = {
 
   /** `agentId` narrows to a sales agent's orders. */
   metrics: async (
-    tenantId: string | null,
+    tenantId: string,
     agentId: string | null = null,
   ): Promise<OrderMetrics> => {
     const since = Date.now() - 30 * 24 * 60 * 60 * 1000;

@@ -1,12 +1,7 @@
 import { newId } from "@vendeya/utils";
 import type { Compilable } from "kysely";
 import type { AuditLog } from "@vendeya/types";
-import {
-  batch,
-  db,
-  inOpenTenants,
-  withoutTenantScope,
-} from "../../db/index.ts";
+import { batch, db } from "../../db/index.ts";
 
 /**
  * Who did it and inside which tenant. `tenantId` is null only for actions taken
@@ -111,26 +106,16 @@ export async function logAction(
   ]);
 }
 
-/**
- * `tenantId` null returns the entries of every open tenant and the platform's
- * own rows. The audit route passes null only for an unpinned platform operator.
- * A tenant-scoped caller sees their own tenant's entries.
- */
+/** The entries of one business, newest first. */
 export async function getAuditTrail(
-  tenantId: string | null,
+  tenantId: string,
   userId?: string,
   limit: number = 100,
 ): Promise<AuditLog[]> {
-  const scoped = tenantId
-    ? db.selectFrom("audit_log").selectAll().where("tenant_id", "=", tenantId)
-    : withoutTenantScope(
-        "a platform audit row carries a null tenant_id no value ties",
-      )
-        .selectFrom("audit_log")
-        .selectAll()
-        .where((eb) => eb.or([eb("tenant_id", "is", null), inOpenTenants(eb)]));
-
-  return (await scoped
+  return (await db
+    .selectFrom("audit_log")
+    .selectAll()
+    .where("tenant_id", "=", tenantId)
     .$if(Boolean(userId), (q) => q.where("user_id", "=", userId!))
     .orderBy("created_at", "desc")
     .limit(limit)

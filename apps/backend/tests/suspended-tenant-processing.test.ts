@@ -1,18 +1,16 @@
 /**
  * Covers the work that reaches a tenant's rows without a pinned tenant. Inbox
  * aggregation, customer sends and the reassignment cron run without a session.
- * A platform operator's exports read across tenants. Each path has to check the
- * tenant's status itself, because no pinned scope filters it.
+ * Each path has to check the tenant's status itself, because no pinned scope
+ * filters it.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as XLSX from "xlsx";
 
 import { getOne, run } from "./helpers/db.ts";
 import {
   createTenantFixture,
   createMember,
-  fileOrder,
   insertConversation,
   TEST_APP_SECRET,
   type TenantFixture,
@@ -24,7 +22,6 @@ import {
 } from "../src/conversation/message-inbox.ts";
 import { conversationStub } from "../src/conversation/stub.ts";
 import { checkAndReassignTimeouts } from "../src/domains/conversations/assignment.ts";
-import { ReportService } from "../src/domains/reports/index.ts";
 import { WhatsAppService } from "../src/adapters/whatsapp/index.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { CloudApiAdapter } from "../src/adapters/whatsapp/cloud-api.ts";
@@ -238,63 +235,6 @@ describe("a suspended tenant", () => {
       expect((await assignmentOf(open)).assignment_notified_at).toBeGreaterThan(
         staleNotifiedAt!,
       );
-    });
-  });
-
-  describe("is left out of a platform operator's exports", () => {
-    const range = {
-      startDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
-      endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    };
-
-    /** The rows an .xlsx file actually carries. */
-    function rowsOf(file: ArrayBuffer): Array<Record<string, unknown>> {
-      const workbook = XLSX.read(file, { type: "array" });
-
-      const sheet = workbook.Sheets[workbook.SheetNames[0]!]!;
-      return XLSX.utils.sheet_to_json(sheet);
-    }
-
-    it("out of the activity report", async () => {
-      await insertConversation(open.ref(CUSTOMER), {
-        clientName: "Open Client",
-      });
-      await insertConversation(closed.ref(CUSTOMER), {
-        clientName: "Closed Client",
-      });
-
-      await suspend(closed.tenantId);
-
-      const names = rowsOf(
-        await ReportService.generateActivityReport({
-          tenantId: null,
-          ...range,
-        }),
-      ).map((row) => row.Cliente);
-
-      expect(names).toContain("Open Client");
-      expect(names).not.toContain("Closed Client");
-    });
-
-    it("out of the order report", async () => {
-      for (const fixture of [open, closed]) {
-        await insertConversation(fixture.ref(CUSTOMER));
-        await fileOrder(fixture.ref(CUSTOMER), {
-          name: fixture === open ? "Open Buyer" : "Closed Buyer",
-        });
-      }
-
-      await suspend(closed.tenantId);
-
-      const buyers = rowsOf(
-        await ReportService.generateOrderReport({
-          tenantId: null,
-          ...range,
-        }),
-      ).map((row) => row.Cliente);
-
-      expect(buyers).toContain("Open Buyer");
-      expect(buyers).not.toContain("Closed Buyer");
     });
   });
 });

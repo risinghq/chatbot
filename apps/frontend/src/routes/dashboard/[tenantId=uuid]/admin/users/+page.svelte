@@ -1,7 +1,6 @@
 <script lang="ts">
 import { businessPath } from "#lib/state/business.svelte.js";
 import { onMount } from "svelte";
-import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import DataTable from "#lib/components/ui/data-table.svelte";
@@ -13,8 +12,6 @@ import { toast } from "#lib/state/toast.svelte.js";
 import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { formatDate } from "#lib/utils/formatters.js";
 import { roleLabel, roleLabels } from "#lib/utils/roles.js";
-
-let { data } = $props();
 
 type User = {
   id: string;
@@ -110,7 +107,7 @@ async function revoke(invitation: Invitation) {
 }
 
 onMount(() => {
-  if (data.user?.activeTenantId) load();
+  load();
 });
 
 const roleVariants: Record<string, "accent" | "info" | "default" | "success"> =
@@ -130,64 +127,60 @@ const columns = [
 ];
 </script>
 
-{#if !data.user?.activeTenantId}
-	<NeedsTenant />
-{:else}
-	<div class="flex flex-col gap-6">
-		<SectionShell title="Usuarios" description="Quién entra al panel y qué puede hacer.">
-			<DataTable data={users} {columns} {loading} emptyMessage="No hay usuarios registrados." />
-		</SectionShell>
+<div class="flex flex-col gap-6">
+	<SectionShell title="Usuarios" description="Quién entra al panel y qué puede hacer.">
+		<DataTable data={users} {columns} {loading} emptyMessage="No hay usuarios registrados." />
+	</SectionShell>
 
-		<SectionShell
-			title="Invitar"
-			description="Crea un enlace de invitación y envíalo a la persona. Vale 7 días y sirve una sola vez."
-		>
-			<form onsubmit={invite} class="p-4">
-				<div class="grid gap-x-4 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-end">
-					<FormField label="Correo" for="invite-email">
-						<Input id="invite-email" type="email" bind:value={inviteEmail} autocomplete="off" />
-					</FormField>
-					<FormField label="Rol" for="invite-role">
-						<Select id="invite-role" bind:value={inviteRole} items={roleItems} />
-					</FormField>
-					<div class="mb-4">
-						<Button type="submit" disabled={inviting || !inviteEmail.trim()}>
-							{inviting ? "Creando…" : "Crear enlace"}
-						</Button>
+	<SectionShell
+		title="Invitar"
+		description="Crea un enlace de invitación y envíalo a la persona. Vale 7 días y sirve una sola vez."
+	>
+		<form onsubmit={invite} class="p-4">
+			<div class="grid gap-x-4 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-end">
+				<FormField label="Correo" for="invite-email">
+					<Input id="invite-email" type="email" bind:value={inviteEmail} autocomplete="off" />
+				</FormField>
+				<FormField label="Rol" for="invite-role">
+					<Select id="invite-role" bind:value={inviteRole} items={roleItems} />
+				</FormField>
+				<div class="mb-4">
+					<Button type="submit" disabled={inviting || !inviteEmail.trim()}>
+						{inviting ? "Creando…" : "Crear enlace"}
+					</Button>
+				</div>
+			</div>
+
+			{#if newLink}
+				<div class="rounded-sm border border-border-subtle bg-sunken p-3">
+					<p class="text-sm text-fg-muted">
+						Enlace para {newLink.email}. Cópialo ahora: no se vuelve a mostrar.
+					</p>
+					<div class="mt-2 flex items-center gap-2">
+						<code class="min-w-0 flex-1 font-mono text-sm break-all text-fg select-all">{newLink.link}</code>
+						<Button type="button" variant="secondary" onclick={copyLink}>Copiar</Button>
 					</div>
 				</div>
-
-				{#if newLink}
-					<div class="rounded-sm border border-border-subtle bg-sunken p-3">
-						<p class="text-sm text-fg-muted">
-							Enlace para {newLink.email}. Cópialo ahora: no se vuelve a mostrar.
-						</p>
-						<div class="mt-2 flex items-center gap-2">
-							<code class="min-w-0 flex-1 font-mono text-sm break-all text-fg select-all">{newLink.link}</code>
-							<Button type="button" variant="secondary" onclick={copyLink}>Copiar</Button>
-						</div>
-					</div>
-				{/if}
-			</form>
-
-			{#if invitations.length > 0}
-				<ul class="divide-y divide-border-subtle border-t border-border-subtle">
-					{#each invitations as invitation (invitation.id)}
-						<li class="flex items-center justify-between gap-4 px-4 py-2.5">
-							<div class="min-w-0">
-								<p class="truncate text-base text-fg">{invitation.email}</p>
-								<p class="text-sm text-fg-muted">
-									{roleLabel(invitation.role)} · vence {formatDate(invitation.expires_at)}
-								</p>
-							</div>
-							<Button size="sm" variant="secondary" onclick={() => revoke(invitation)}>Anular</Button>
-						</li>
-					{/each}
-				</ul>
 			{/if}
-		</SectionShell>
-	</div>
-{/if}
+		</form>
+
+		{#if invitations.length > 0}
+			<ul class="divide-y divide-border-subtle border-t border-border-subtle">
+				{#each invitations as invitation (invitation.id)}
+					<li class="flex items-center justify-between gap-4 px-4 py-2.5">
+						<div class="min-w-0">
+							<p class="truncate text-base text-fg">{invitation.email}</p>
+							<p class="text-sm text-fg-muted">
+								{roleLabel(invitation.role)} · vence {formatDate(invitation.expires_at)}
+							</p>
+						</div>
+						<Button size="sm" variant="secondary" onclick={() => revoke(invitation)}>Anular</Button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</SectionShell>
+</div>
 
 {#snippet nameCell(u: User)}
 	<div class="text-fg">{u.name}</div>

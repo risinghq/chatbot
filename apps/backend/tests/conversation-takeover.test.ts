@@ -452,7 +452,13 @@ describe("a person takes over a conversation", () => {
 
       const response = await app.request(
         `/api/conversations/${CUSTOMER}/release`,
-        { method: "POST", headers: { Cookie: `session=${token}` } },
+        {
+          method: "POST",
+          headers: {
+            Cookie: `session=${token}`,
+            "X-Tenant-Id": tenant.tenantId,
+          },
+        },
       );
 
       expect(response.status).toBe(200);
@@ -548,7 +554,7 @@ describe("a person takes over a conversation", () => {
       function post(action: "takeover" | "release") {
         return app.request(`/api/conversations/${CUSTOMER}/${action}`, {
           method: "POST",
-          headers: { Cookie: cookie },
+          headers: { Cookie: cookie, "X-Tenant-Id": tenant.tenantId },
         });
       }
 

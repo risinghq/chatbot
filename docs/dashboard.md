@@ -32,7 +32,7 @@ Server loads use SvelteKit's `fetch` and copy the `session` cookie into the
 request by hand:
 
 ```ts
-// routes/dashboard/catalog/+page.server.ts
+// routes/dashboard/[tenantId=uuid]/catalog/+page.server.ts
 export const load: PageServerLoad = async ({ cookies, fetch }) => {
   const sessionToken = cookies.get("session");
   // ...
@@ -49,16 +49,18 @@ return empty data, so the page renders as if there were nothing to show.
 
 Sessions live on the backend. On every request,
 [`hooks.server.ts`](../apps/frontend/src/hooks.server.ts) sends the `session`
-cookie to `GET /api/auth/me` and puts the answer in `locals.user`. A request for
-any `/dashboard` path without a valid session is redirected to `/login`.
+cookie, and the business the URL names, to `GET /api/auth/me` and puts the
+answer in `locals.user`. Its `role` is the role the user has in that business,
+and null outside one. A request for any `/dashboard` path without a valid
+session is redirected to `/login`.
 
 On the client, the `auth` object in
 [`lib/state/auth.svelte.ts`](../apps/frontend/src/lib/state/auth.svelte.ts)
-holds the user, their role, the active tenant and the tenant list. The root
-layout fills it in `onMount`, so the server renders every page as signed out and
-role-dependent parts appear after hydration. Its getters (`isAdmin`,
-`canEditCatalog`, `canAccessSimulator`, `canAccessProviders` and the rest)
-decide which tiles and buttons show.
+holds the user, their role in the open business and the list of their
+businesses. The root layout hydrates it from `locals.user`, so the server render
+already shows the right role. Its getters (`isAdmin`, `canEditCatalog`,
+`canAccessSimulator`, `canAccessProviders` and the rest) decide which tiles and
+buttons show.
 
 Role lists live in three places: the `auth` getters, the page guards, and the
 backend's `requireRole`. Nothing keeps them equal. The backend's check is the
@@ -66,19 +68,42 @@ one that holds.
 
 These pages check the role on the server:
 
-- [`dashboard/admin/+layout.server.ts`](../apps/frontend/src/routes/dashboard/admin/+layout.server.ts)
-  sends anyone but `admin` to `/dashboard`.
-- `reports/+page.server.ts` allows `admin`, `developer`, `supervisor`.
-- `asistente/probar/+page.server.ts` allows `admin`, `developer`.
-- `negocios/+page.server.ts` allows platform operators only.
+- [`[tenantId]/admin/+layout.server.ts`](../apps/frontend/src/routes/dashboard/[tenantId=uuid]/admin/+layout.server.ts)
+  sends anyone but `admin` to the business's home.
+- `[tenantId]/reports/+page.server.ts` allows `admin`, `developer`,
+  `supervisor`.
+- `[tenantId]/asistente/probar/+page.server.ts` allows `admin`, `developer`.
+- [`(platform)/+layout.server.ts`](<../apps/frontend/src/routes/dashboard/(platform)/+layout.server.ts>)
+  allows platform operators only, and sends anyone else to `/dashboard`.
 
 Other pages have no role guard. When the backend refuses their load with 403,
 the load returns empty data.
 
-The tenant selector sits in
-[`dashboard-nav.svelte`](../apps/frontend/src/lib/components/shared/dashboard-nav.svelte).
-It calls `POST /api/tenants/active` and reloads the page. The nav bar, and so
-the selector, is not shown on `/dashboard` itself.
+## The business in the URL
+
+Every page that shows a business's data lives under `/dashboard/<tenant id>/`.
+The URL is the only place the dashboard keeps the open business, so two tabs can
+work in two businesses, and a link names the business it points into.
+
+- `hooks.server.ts` reads the session in the URL's business. A business that
+  does not exist, is suspended or is not the user's sends them to `/dashboard`.
+- Its `handleFetch` adds `X-Tenant-Id` to a server load's `/api/` calls, and
+  `apiFetch` in [`lib/utils/api.ts`](../apps/frontend/src/lib/utils/api.ts) adds
+  the business of the current page to a browser call. A load or a component
+  never names the business itself.
+- `/dashboard` holds no business. It opens the business the session last named,
+  else a member's only business, else lists the businesses to pick from.
+- `(platform)/` holds the pages of VendeYa's own staff, which belong to no
+  business: Negocios, Reportes, Proveedores and Ajustes, with their own sidebar.
+- `[...path]` catches a link from before the business was in the URL, such as
+  `/dashboard/orders/42` in a WhatsApp alert, and opens it in the business last
+  named.
+
+`businessPath("/orders")` in
+[`lib/state/business.svelte.ts`](../apps/frontend/src/lib/state/business.svelte.ts)
+builds a link inside the open business. The switcher in
+[`app-sidebar.svelte`](../apps/frontend/src/lib/components/shared/app-sidebar.svelte)
+moves to the same section in another business with `samePageIn`.
 
 ## Route layout
 
@@ -87,38 +112,47 @@ routes/
   +page.server.ts                   sends to /dashboard or /login
   login/                            sign-in form, prerendered
   dashboard/
-    +page.svelte                    home: setup checklist and warnings
-    +layout.svelte                  sidebar, a drawer below md
-    conversations/  [phone]/        inbox and one conversation
-    asistente/                      the assistant's instructions, model and tools
-      probar/                       the simulator: admin, developer
-    clientes/  [customerId]/        customers and one customer
-    catalog/  inventory/[id]/       products; one product and its variants
-    inventario/                     stock per variant and the movement ledger
-    orders/  [orderId]/
-    envios/                         delivery zones and shipments
-    reports/                        admin, developer, supervisor
-    activity/                       system activity
-    providers/                      DNI lookup, platform operators
-    negocios/                       business management, platform operators
-    cuenta/                         the signed-in user's account
-    admin/                          admin only
-      users/  [userId]/  create/
-      channels/  orders/  audit/  settings/
+    +page.server.ts                 opens a business, or lists them to pick
+    +layout.svelte                  the shell, a drawer below md
+    [...path]/                      an old link, opened in the last business
+    (platform)/                     platform operators only, no business
+      negocios/                     businesses: create, open
+      reports/                      reports across businesses
+      providers/                    DNI lookup and provider checks
+      ajustes/                      Power BI and the provider switches
+    [tenantId=uuid]/                one business, named by the URL
+      +page.svelte                  home: setup checklist and warnings
+      conversations/  [phone]/      inbox and one conversation
+      asistente/                    the assistant's instructions, model and tools
+        probar/                     the simulator: admin, developer
+      clientes/  [customerId]/      customers and one customer
+      catalog/  inventory/[id]/     products; one product and its variants
+      inventario/                   stock per variant and the movement ledger
+      orders/  [orderId]/
+      envios/                       delivery zones and shipments
+      reports/                      admin, developer, supervisor
+      activity/                     system activity
+      cuenta/                       the signed-in user's account
+      admin/                        admin only
+        users/  [userId]/  create/
+        channels/  orders/  audit/  settings/
 ```
 
 ## Adding a page
 
-A page under `dashboard/` needs three things:
+A page under `dashboard/[tenantId=uuid]/` needs three things:
 
-1. **A route.** `routes/dashboard/<area>/+page.svelte`, and a `+page.server.ts`
-   if it loads data on the server. If only some roles may see it, check
-   `locals.user.role` there and `redirect(303, "/dashboard")`.
+1. **A route.** `routes/dashboard/[tenantId=uuid]/<area>/+page.svelte`, and a
+   `+page.server.ts` if it loads data on the server. If only some roles may see
+   it, check `locals.user.role` there and
+   ``redirect(303, `/dashboard/${params.tenantId}`)``.
 2. **A sidebar entry.** A `NavItem` in
-   [`app-sidebar.svelte`](../apps/frontend/src/lib/components/shared/app-sidebar.svelte),
-   pushed under the `auth` getter for a restricted page. Without it nothing
-   links to the page. A page under `admin/` gets a tab in the admin layout
-   instead.
+   [`app-sidebar.svelte`](../apps/frontend/src/lib/components/shared/app-sidebar.svelte)
+   with `href: businessPath("/<area>")`, pushed under the `auth` getter for a
+   restricted page. Without it nothing links to the page. A page under `admin/`
+   gets a tab in the admin layout instead. A platform page goes under
+   `(platform)/` and in
+   [`platform-sidebar.svelte`](../apps/frontend/src/lib/components/shared/platform-sidebar.svelte).
 3. **A title.** `<PageTitle title="..." />` sets the tab title, and
    `<PageHeader>` draws the visible heading inside the page container that
    [docs/design.md](./design.md) describes.
@@ -264,14 +298,14 @@ the ones an operator needs as `curl` commands.
 ## Onboarding a business
 
 `/dashboard/negocios` is the platform operator's business page: the tenant list,
-a form that posts `POST /api/tenants` with a name, and an Entrar button per
-business that pins the session through `POST /api/tenants/active`. People join
-the active business by invitation from Usuarios (`/dashboard/admin/users`):
+a form that posts `POST /api/tenants` with a name, and an Entrar link per
+business that opens `/dashboard/<tenant id>`. People join a business by
+invitation from its Usuarios page (`/dashboard/<tenant id>/admin/users`):
 `POST /api/admin/invitations` with `{ email, role }` answers a link the admin
 copies and sends. The link opens `/invitacion/<token>`. A business owner who is
 not VendeYa staff starts at `/registro`, which opens the business and logs them
-in as its admin. Each user's own profile and password are at
-`/dashboard/cuenta`.
+in as its admin. Each user's own profile, password and API tokens are on the
+Cuenta page of a business they belong to (`/dashboard/<tenant id>/cuenta`).
 
 While a business is unfinished, the home page and the Negocios page show a setup
 checklist (`lib/components/shared/setup-checklist.svelte`) fed by
