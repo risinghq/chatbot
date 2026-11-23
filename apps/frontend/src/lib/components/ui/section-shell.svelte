@@ -12,8 +12,8 @@ let { title, description, action, children }: Props = $props();
 </script>
 
 <section class="overflow-hidden rounded-md border border-border bg-surface">
-	<header class="flex items-start justify-between gap-4 border-b border-border-subtle px-4 py-3">
-		<div>
+	<header class="flex flex-col gap-3 border-b border-border-subtle px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+		<div class="min-w-0">
 			<h3 class="text-md text-fg">{title}</h3>
 			{#if description}
 				<p class="mt-1 max-w-prose text-sm text-pretty text-fg-muted">{description}</p>

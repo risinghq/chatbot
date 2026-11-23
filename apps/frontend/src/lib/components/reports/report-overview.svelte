@@ -160,7 +160,7 @@ const dayTitle = (day: ReportDay) =>
 {#snippet stat(label: string, value: string, hint: string)}
 	<div class="bg-surface px-4 py-3">
 		<p class="text-sm text-fg-muted">{label}</p>
-		<p class="mt-1 text-xl text-fg tabular-nums">{value}</p>
+		<p class="mt-1 text-lg whitespace-nowrap text-fg tabular-nums sm:text-xl">{value}</p>
 		<p class="mt-0.5 text-sm text-fg-muted tabular-nums">{hint}</p>
 	</div>
 {/snippet}
