@@ -102,10 +102,9 @@ the providers at hosts that do not resolve. `fakeGraph()` in
 send and fails any other request, so a test never reaches the network.
 
 `tests/unit/` needs no binding, so `bun test` runs it without starting a workerd
-per file. It holds the tenant scope guard, which fails on a query that bypasses
-the scope helpers in `db/query.ts`, and the pure logic tests. A test whose code
-imports `cloudflare:workers`, even through the logger, stays in workerd. So does
-the password test, because Bun's PBKDF2 differs from the runtime's.
+per file. It holds the pure logic tests. A test whose code imports
+`cloudflare:workers`, even through the logger, stays in workerd. So does the
+password test, because Bun's PBKDF2 differs from the runtime's.
 
 The tests that hold the architecture's boundaries are listed in
 [Architecture](./architecture.md#tests-that-enforce-structure).
@@ -117,10 +116,10 @@ These are what the code does today.
 - **Queries.** New code uses the Kysely `db` from
   [`db/index.ts`](../apps/backend/src/db/index.ts), not raw SQL strings.
 - **Tenant scope.** A read function takes `tenantId: string | null` and filters
-  with `tenantScope` (Kysely) or `tenantPredicate` (raw SQL), not a hand-built
-  `if (tenantId)` branch. A write takes the tenant from `activeTenantId(c)`. A
-  row fetched by id is checked with `canAccessTenant` and answers 404 when out
-  of scope. See [Tenancy](./tenancy.md#how-a-read-is-scoped).
+  with `tenantScope`, not a hand-built `if (tenantId)` branch. A write takes the
+  tenant from `activeTenantId(c)`. A row fetched by id is checked with
+  `canAccessTenant` and answers 404 when out of scope. See
+  [Tenancy](./tenancy.md#how-a-read-is-scoped).
 - **File keys** come from
   [`lib/storage-paths.ts`](../apps/backend/src/lib/storage-paths.ts), and each
   starts with the tenant's id.

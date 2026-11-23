@@ -188,11 +188,9 @@ name the owner (`user:<id>`), not the token.
 
 An unpinned member reads nothing until selecting a tenant.
 
-Read functions take `tenantId: string | null`. A Kysely read filters with
+Read functions take `tenantId: string | null` and filter with
 `.where(tenantScope(tenantId))` from
-[`db/index.ts`](../apps/backend/src/db/index.ts), and raw SQL with
-`tenantPredicate(tenantId)` from
-[`db/query.ts`](../apps/backend/src/db/query.ts). A concrete id filters to that
+[`db/index.ts`](../apps/backend/src/db/index.ts). A concrete id filters to that
 tenant. `null` means every open tenant, never every row. A row fetched by id is
 checked with `canAccessTenant`, and another tenant's row answers 404, not 403.
 
@@ -206,8 +204,8 @@ predicate inside an OR does not count. A query that fails the check throws
 tenant is known, such as a session token, uses `withoutTenantScope(reason)`.
 
 The minute sweep and the conversation objects read across tenants with
-`openTenantsOnly()` and `activeChannelAccountsOnly()`, so a suspended business
-or a switched-off number is skipped.
+`inOpenTenants` and `inActiveChannelAccounts` from `db/index.ts`, so a suspended
+business or a switched-off number is skipped.
 
 ## Channel accounts
 

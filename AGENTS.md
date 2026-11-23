@@ -8,9 +8,9 @@ only the rules those documents do not.
 ## Rules
 
 - **Tenant scope.** A read over a scope that may be null filters with
-  `tenantPredicate` from `apps/backend/src/db/query.ts`, never with a hand-built
-  `if (tenantId)` branch. Code that sweeps every tenant uses `openTenantsOnly`
-  and `activeChannelAccountsOnly`. See
+  `tenantScope` from `apps/backend/src/db/index.ts`, never with a hand-built
+  `if (tenantId)` branch. Code that sweeps every tenant uses `inOpenTenants` and
+  `inActiveChannelAccounts`. See
   [Tenancy](./docs/tenancy.md#how-a-read-is-scoped) for the current scope model.
 - **File paths** come from `apps/backend/src/lib/storage-paths.ts`.
 - **Core stays free of I/O.** If a turn needs the database, a provider or the
