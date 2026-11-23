@@ -29,43 +29,6 @@ const HELPER_MODULE = join("db", "query.ts");
  */
 const RULE_2_EXEMPT: Array<{ file: string; sql: string; reason: string }> = [
   {
-    file: join("conversation", "message-inbox.ts"),
-    sql: "FROM message_inbox WHERE message_id = ?",
-    reason:
-      "isQueued() dedupes by WhatsApp message id, before any tenant is resolved",
-  },
-  {
-    file: join("domains", "channels", "accounts.ts"),
-    sql: "WHERE verify_token_secret_id IS NOT NULL",
-    reason:
-      "listWithVerifyToken() answers Meta's webhook handshake, which carries " +
-      "no tenant - the token is the only discriminator",
-  },
-  {
-    file: join("domains", "channels", "accounts.ts"),
-    sql: "FROM channel_accounts WHERE channel_type = ? AND phone_number_id = ?",
-    reason:
-      "getByPhoneNumberId() resolves the receiving number of a webhook, " +
-      "which is how the tenant is found. Meta's phone_number_id is unique " +
-      "across tenants",
-  },
-  {
-    file: join("domains", "channels", "accounts.ts"),
-    sql: "FROM channel_accounts WHERE id = ?",
-    reason:
-      "getById() serves the platform-ops setting, the seed and the service " +
-      "itself, which hold an id no request chose. A route that takes an id " +
-      "from a request compares tenant_id with the active tenant and answers " +
-      "404 (routes/admin/channels.ts, routes/simulator.ts)",
-  },
-  {
-    file: join("domains", "channels", "accounts.ts"),
-    sql: "FROM channel_secrets WHERE id = ?",
-    reason:
-      "readSecret() reads the secret an account row points to, by that " +
-      "secret's own id",
-  },
-  {
     file: join("db", "query.ts"),
     sql: "SELECT id FROM channel_accounts WHERE status = 'active'",
     reason:

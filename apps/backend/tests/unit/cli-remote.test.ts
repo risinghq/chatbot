@@ -39,8 +39,8 @@ const calls: ApiCall[] = [];
 const channelAccounts = new Map<string, Record<string, unknown>>();
 
 function insertColumns(sql: string): string[] {
-  const list = /insert into \w+ \(([^)]*)\)/i.exec(sql)?.[1] ?? "";
-  return list.split(",").map((column) => column.trim());
+  const list = /insert into "?\w+"? \(([^)]*)\)/i.exec(sql)?.[1] ?? "";
+  return list.split(",").map((column) => column.trim().replaceAll('"', ""));
 }
 
 function d1Result(
@@ -165,9 +165,9 @@ function remoteEnv(): NodeJS.ProcessEnv {
 
 function statements(from = calls): Array<{ sql: string; params: unknown[] }> {
   return from.flatMap((call) =>
-    (call.batch ?? [{ sql: call.sql, params: call.params ?? [] }]).map(
+    (call.batch ?? [{ sql: call.sql ?? "", params: call.params ?? [] }]).map(
       (statement) => ({
-        sql: statement.sql ?? "",
+        sql: (statement.sql ?? "").replaceAll('"', ""),
         params: statement.params ?? [],
       }),
     ),
