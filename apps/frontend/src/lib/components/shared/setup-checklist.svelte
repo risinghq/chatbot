@@ -7,6 +7,7 @@ import { fetchApi } from "#lib/utils/api.js";
 type SetupStatus = {
   openai_configured: boolean;
   has_catalog: boolean;
+  has_payment_methods: boolean;
   tried_simulator: boolean;
   whatsapp_configured: boolean;
   has_members: boolean;
@@ -18,7 +19,7 @@ let status = $state<SetupStatus | null>(null);
 let loading = $state(true);
 
 // The order is the path a new business takes: the assistant needs a key to
-// think and a catalog to quote, the simulator proves both before a customer
+// think, a catalog to quote and a way to be paid, the simulator proves both before a customer
 // sees them, and only then does a number go live.
 const steps = $derived(
   status
@@ -36,6 +37,13 @@ const steps = $derived(
           hint: "Al menos un producto activo con precio. Es lo que el asistente cotiza.",
           action: "Abrir catálogo",
           href: "/dashboard/catalog",
+        },
+        {
+          done: status.has_payment_methods,
+          label: "Métodos de pago",
+          hint: "Cómo te pagan: Yape, transferencia, efectivo. El asistente los ofrece y cada pedido registra el suyo.",
+          action: "Agregar método",
+          href: "/dashboard/admin/orders",
         },
         {
           done: status.tried_simulator,

@@ -58,6 +58,7 @@ import { ProductService } from "../src/domains/catalog/products.ts";
 import { VariantService } from "../src/domains/catalog/variants.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
+import { PaymentMethodService } from "../src/domains/orders/settings.ts";
 
 const SHARED_PHONE = "51987654321";
 
@@ -2151,6 +2152,7 @@ describe("HTTP authorization", () => {
       expect(await status()).toEqual({
         openai_configured: false,
         has_catalog: false,
+        has_payment_methods: false,
         tried_simulator: false,
         whatsapp_configured: false,
         has_members: false,
@@ -2177,6 +2179,16 @@ describe("HTTP authorization", () => {
         is_active: 1,
       });
       expect((await status()).has_catalog).toBe(true);
+
+      // An order can only be paid with an active method, so a paused one
+      // stays pending.
+      await PaymentMethodService.create(tenantId, {
+        name: "Yape",
+        is_active: 0,
+      });
+      expect((await status()).has_payment_methods).toBe(false);
+      await PaymentMethodService.create(tenantId, { name: "Efectivo" });
+      expect((await status()).has_payment_methods).toBe(true);
 
       await insertConversation(await simulatorRef(tenantId, "51900000001"));
       expect((await status()).tried_simulator).toBe(true);

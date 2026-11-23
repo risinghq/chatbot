@@ -8,7 +8,8 @@ import { TenantSecrets } from "../settings/tenant-secrets.ts";
  * walks a new business through it. Each flag is read from the same rows the
  * feature itself checks, so the checklist and the running system can never
  * disagree: the assistant's OpenAI key, an active product with an active
- * variant it can sell, a conversation in the simulator, a number that can
+ * variant it can sell, an active payment method the assistant can offer and
+ * an order can be paid with, a conversation in the simulator, a number that can
  * receive (app secret) and answer (access token), and at least one member to
  * work the conversations.
  *
@@ -18,6 +19,7 @@ import { TenantSecrets } from "../settings/tenant-secrets.ts";
 export type TenantSetupStatus = {
   openai_configured: boolean;
   has_catalog: boolean;
+  has_payment_methods: boolean;
   tried_simulator: boolean;
   whatsapp_configured: boolean;
   has_members: boolean;
@@ -36,6 +38,7 @@ export async function tenantSetupStatus(
   const [
     openai,
     products,
+    paymentMethods,
     simulated,
     numbers,
     members,
@@ -58,6 +61,13 @@ export async function tenantSetupStatus(
               .where("v.is_active", "=", 1),
           ),
         ),
+    ),
+    exists(
+      db
+        .selectFrom("payment_methods")
+        .select("id")
+        .where("tenant_id", "=", tenantId)
+        .where("is_active", "=", 1),
     ),
     exists(
       db
@@ -93,6 +103,7 @@ export async function tenantSetupStatus(
   const required = {
     openai_configured: openai,
     has_catalog: products,
+    has_payment_methods: paymentMethods,
     tried_simulator: simulated,
     whatsapp_configured: numbers,
     has_members: members,

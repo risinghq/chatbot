@@ -264,7 +264,11 @@ function decide(paymentId: string, action: "confirm" | "reject") {
 								{#if methodItems.length > 0}
 									<Select id="payment-method" bind:value={paymentMethod} items={methodItems} placeholder="Elegir" />
 								{:else}
-									<a href="/dashboard/settings" class="block py-1.5 text-sm text-accent-text hover:underline">Agrega un método en Ajustes</a>
+									{#if auth.isAdmin}
+										<a href="/dashboard/admin/orders" class="block py-1.5 text-sm text-accent-text hover:underline">Agrega un método de pago</a>
+									{:else}
+										<span class="block py-1.5 text-sm text-fg-muted">Un administrador debe agregar un método de pago</span>
+									{/if}
 								{/if}
 							</FormField>
 							<FormField label="Operación" for="payment-reference" class="mb-3! sm:mb-0!">
