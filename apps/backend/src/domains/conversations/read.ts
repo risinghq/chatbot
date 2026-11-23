@@ -11,6 +11,7 @@ import { logAction } from "../../platform/audit/logger.ts";
 import {
   assignedAgentScope,
   type AuthScope,
+  writeTenantId,
 } from "../../platform/auth/scope.ts";
 
 /**
@@ -34,7 +35,7 @@ function visibleConversations(scope: AuthScope) {
         .limit(1)
         .as("customer_name"),
     )
-    .where(tenantScope(scope.tenantId, "cv.tenant_id"))
+    .where(tenantScope(writeTenantId(scope), "cv.tenant_id"))
     .$if(Boolean(agent), (q) =>
       q.where((eb) =>
         eb.or([
@@ -71,19 +72,13 @@ export type ConversationLookup =
 /**
  * Resolve a conversation the caller is allowed to see. One in another tenant,
  * or assigned to another agent, is reported as not found, so every route that
- * resolves `:phone` applies the rule. An unpinned platform operator can find a
- * conversation in any open tenant.
+ * resolves `:phone` applies the rule.
  */
 export async function lookupConversation(
   scope: AuthScope,
   phoneNumber: string,
   channelAccountId: string | null,
 ): Promise<ConversationLookup> {
-  // Neither pinned to a tenant nor platform staff: nothing is visible.
-  if (!scope.tenantId && !scope.isPlatformOperator) {
-    return { status: "not_found" };
-  }
-
   const matches = (await visibleConversations(scope)
     .where("cv.phone_number", "=", phoneNumber)
     .$if(Boolean(channelAccountId), (q) =>

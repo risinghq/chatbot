@@ -17,6 +17,11 @@ const sections = $derived.by((): NavSection[] => {
       icon: "card",
     });
   }
+  platform.push({
+    href: "/dashboard/ajustes",
+    label: "Ajustes",
+    icon: "sliders",
+  });
   const businesses: NavItem[] = auth.tenants.map((t) => ({
     href: `/dashboard/${t.id}`,
     label: t.name,

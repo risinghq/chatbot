@@ -13,7 +13,7 @@ import { formatCents } from "#lib/utils/money.js";
 let { scope }: { scope: "business" | "platform" } = $props();
 
 const endpoint = $derived(
-  scope === "platform" ? "/api/reports/summary/all" : "/api/reports/summary",
+  scope === "platform" ? "/api/platform/summary" : "/api/reports/summary",
 );
 
 const DAY_MS = 24 * 60 * 60 * 1000;

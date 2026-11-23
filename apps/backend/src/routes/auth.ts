@@ -1,9 +1,9 @@
 import { Hono, type Context } from "hono";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireAuth,
   requireBrowserSession,
+  requireTenantScope,
 } from "../middleware/auth.ts";
 import {
   checkTokenRequest,
@@ -60,17 +60,17 @@ async function startSession(c: Context, userId: string, tenantId?: string) {
     .executeTakeFirstOrThrow();
   const isPlatformOperator = user.is_platform_operator === 1;
 
-  // A user with one open membership starts pinned to it. A platform operator,
-  // and a user with several open memberships or none, starts unpinned and
-  // picks a tenant via POST /api/tenants/active.
-  const pinnedTenantId =
+  // A user with one open membership lands in it on /dashboard. A platform
+  // operator, and a user with several open memberships or none, lands on the
+  // business picker.
+  const lastTenantId =
     tenantId ?? (await defaultTenantForUser(user.id, isPlatformOperator));
-  const membership = pinnedTenantId
-    ? await MembershipService.get(pinnedTenantId, user.id)
+  const membership = lastTenantId
+    ? await MembershipService.get(lastTenantId, user.id)
     : null;
 
   const token = generateSessionToken();
-  const session = await createSession(token, user.id, pinnedTenantId);
+  const session = await createSession(token, user.id, lastTenantId);
   setSessionTokenCookie(c, token, session.expiresAt);
 
   return c.json({
@@ -83,7 +83,7 @@ async function startSession(c: Context, userId: string, tenantId?: string) {
       }),
       name: user.name,
       isPlatformOperator,
-      activeTenantId: pinnedTenantId,
+      lastTenantId,
       isAvailable: membership?.is_available === 1,
     },
     tenants: (await MembershipService.listForUser(user.id)).map((m) => ({
@@ -117,8 +117,7 @@ auth.post("/login", loginRateLimiter, async (c) => {
 
   // A user who is not a platform operator and belongs to no tenant has nothing
   // to log in to. Suspended tenants still count: a user whose tenants are all
-  // suspended logs in unpinned, as `validateSessionToken` leaves them after a
-  // suspension, so they can see they have no business to act in.
+  // suspended logs in with no business to land in, so they can see they have no business to act in.
   if (
     user.is_platform_operator !== 1 &&
     (await MembershipService.countForUser(user.id)) === 0
@@ -170,8 +169,8 @@ auth.post("/invitations/:token/accept", loginRateLimiter, async (c) => {
     );
   }
 
-  // A person with several businesses would start unpinned, but they came for
-  // this one.
+  // A person with several businesses would land on the picker, but they came
+  // for this one.
   return startSession(c, result.value.userId, result.value.tenantId);
 });
 
@@ -220,8 +219,8 @@ auth.get("/tokens", requireAuth, async (c) => {
 });
 
 /**
- * Mints a token that acts as the caller, pinned to the business the session
- * is in. The plain token is in this response and nowhere else.
+ * Mints a token that acts as the caller in the business the request names. The
+ * plain token is in this response and nowhere else.
  */
 auth.post("/tokens", requireAuth, requireBrowserSession, async (c) => {
   const body = await c.req.json().catch(() => ({}));
@@ -229,7 +228,7 @@ auth.post("/tokens", requireAuth, requireBrowserSession, async (c) => {
   if ("problem" in checked) return c.json({ error: checked.problem }, 400);
 
   const user = c.get("user");
-  const tenantId = c.get("session").activeTenantId;
+  const tenantId = c.get("scope").tenantId;
   const created = await createApiToken(user.id, checked, tenantId);
   await logAction(
     { userId: user.id, tenantId },
@@ -248,7 +247,7 @@ auth.delete("/tokens/:id", requireAuth, async (c) => {
     return c.json({ error: "No such token" }, 404);
   }
   await logAction(
-    { userId: user.id, tenantId: c.get("session").activeTenantId },
+    { userId: user.id, tenantId: c.get("scope").tenantId },
     "revoke_api_token",
     "api_token",
     id,
@@ -261,7 +260,7 @@ auth.delete("/tokens/:id", requireAuth, async (c) => {
  * Availability lives on the membership, so an agent who works for two
  * businesses going offline for one stays in the other's rotation.
  */
-auth.patch("/availability", requireAuth, requireActiveTenant, async (c) => {
+auth.patch("/availability", requireAuth, requireTenantScope, async (c) => {
   const user = c.get("user");
   const tenantId = activeTenantId(c);
   const { isAvailable } = await c.req.json();
@@ -273,7 +272,7 @@ auth.patch("/availability", requireAuth, requireActiveTenant, async (c) => {
   if (
     !(await MembershipService.setAvailability(tenantId, user.id, isAvailable))
   ) {
-    // A platform operator pinned to a tenant they are not a member of has no
+    // A platform operator in a business they are not a member of has no
     // rotation to be in.
     return c.json({ error: "No membership in the active tenant" }, 404);
   }

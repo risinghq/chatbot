@@ -10,10 +10,10 @@ type Tenant = { id: string; name: string; ai_configured?: boolean };
 export const load: PageServerLoad = async ({ locals, fetch }) => {
   const res = await fetch("/api/tenants").catch(() => null);
   const data = res?.ok
-    ? await res.json<{ tenants: Tenant[]; activeTenantId: string | null }>()
-    : { tenants: [], activeTenantId: null };
-  const pinned = data.tenants.find((t) => t.id === data.activeTenantId);
-  if (pinned) redirect(303, `/dashboard/${pinned.id}`);
+    ? await res.json<{ tenants: Tenant[]; lastTenantId: string | null }>()
+    : { tenants: [], lastTenantId: null };
+  const last = data.tenants.find((t) => t.id === data.lastTenantId);
+  if (last) redirect(303, `/dashboard/${last.id}`);
   const only = data.tenants.length === 1 ? data.tenants[0] : undefined;
   if (only && !locals.user?.isPlatformOperator) {
     redirect(303, `/dashboard/${only.id}`);

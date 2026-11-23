@@ -8,14 +8,14 @@ declare global {
         email: string;
         /**
          * Admin for a platform operator. Anyone else has their membership role
-         * in the active tenant, or null while none is selected.
+         * in the business the URL names, or null outside one.
          */
         role: string | null;
         name: string;
         /** VendeYa staff, who act across tenants rather than inside one. */
         isPlatformOperator: boolean;
-        /** Tenant the session is currently scoped to, if any. */
-        activeTenantId: string | null;
+        /** The business last opened, which /dashboard opens again. */
+        lastTenantId: string | null;
       } | null;
     }
   }

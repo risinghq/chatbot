@@ -1,20 +1,10 @@
-import {
-  db,
-  inOpenTenants,
-  tenantScope,
-  withoutTenantScope,
-} from "../../db/index.ts";
+import { db, tenantScope } from "../../db/index.ts";
 import { auditActorLabel } from "../../platform/audit/logger.ts";
 import type { SystemLogEntry, SystemLogStatus } from "@vendeya/types";
 
 export const SystemLogService = {
-  /**
-   * A null `tenantId` spans open tenants and adds the platform's own audit
-   * rows. An unpinned platform operator reaches it through
-   * routes/system-logs.ts.
-   */
   async getRecentLogs(
-    tenantId: string | null,
+    tenantId: string,
     limit: number = 100,
   ): Promise<SystemLogEntry[]> {
     const llmCalls = await db
@@ -36,12 +26,7 @@ export const SystemLogService = {
       .limit(limit)
       .execute();
 
-    const auditRows = await (tenantId
-      ? db
-      : withoutTenantScope(
-          "a platform audit row carries a null tenant_id no value ties",
-        )
-    )
+    const auditRows = await db
       .selectFrom("audit_log as a")
       .leftJoin("users as u", (join) => join.onRef("a.user_id", "=", "u.id"))
       .select([
@@ -55,14 +40,7 @@ export const SystemLogService = {
         "a.user_id",
         "a.actor",
       ])
-      .where((eb) =>
-        tenantId
-          ? eb("a.tenant_id", "=", tenantId)
-          : eb.or([
-              eb("a.tenant_id", "is", null),
-              inOpenTenants(eb, "a.tenant_id"),
-            ]),
-      )
+      .where("a.tenant_id", "=", tenantId)
       .orderBy("a.created_at", "desc")
       .limit(limit)
       .execute();

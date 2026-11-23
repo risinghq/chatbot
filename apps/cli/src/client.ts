@@ -34,6 +34,7 @@ export async function callApi(
     headers: {
       Authorization: `Bearer ${credentials.token}`,
       Accept: "application/json",
+      ...(credentials.business && { "X-Tenant-Id": credentials.business }),
       ...(body !== undefined &&
         !multipart && { "Content-Type": "application/json" }),
     },

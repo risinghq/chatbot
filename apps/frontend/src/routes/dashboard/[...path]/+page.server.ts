@@ -7,7 +7,7 @@ import type { PageServerLoad } from "./$types";
  * with none, the picker.
  */
 export const load: PageServerLoad = ({ locals, params, url }) => {
-  const business = locals.user?.activeTenantId;
+  const business = locals.user?.lastTenantId;
   if (!business) redirect(303, "/dashboard");
   redirect(303, `/dashboard/${business}/${params.path}${url.search}`);
 };

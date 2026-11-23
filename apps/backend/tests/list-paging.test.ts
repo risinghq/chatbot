@@ -133,7 +133,7 @@ describe("limit and offset on the list routes", () => {
   let app: Hono;
   let tenant: TenantFixture;
   let userId: string;
-  let auth: { Cookie: string };
+  let auth: { Cookie: string; "X-Tenant-Id": string };
 
   const get = (path: string, query: string) =>
     app.request(`${path}?${query}`, { headers: auth });
@@ -154,7 +154,7 @@ describe("limit and offset on the list routes", () => {
     ({ userId } = await createMember(tenant, "admin"));
     const token = generateSessionToken();
     await createSession(token, userId, tenant.tenantId);
-    auth = { Cookie: `session=${token}` };
+    auth = { Cookie: `session=${token}`, "X-Tenant-Id": tenant.tenantId };
   });
 
   describe.each(ROUTES)("$name", (route) => {

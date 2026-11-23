@@ -37,6 +37,7 @@ async function callerAs(
       method,
       headers: {
         Cookie: `session=${token}`,
+        "X-Tenant-Id": tenantId,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { SystemLogService } from "../domains/system/logs.ts";
-import { requireTenantScope } from "../middleware/auth.ts";
+import { activeTenantId, requireTenantScope } from "../middleware/auth.ts";
 import { queryLimit } from "../lib/http.ts";
 import { createLogger } from "../lib/logger.ts";
 
@@ -16,10 +16,7 @@ app.get("/", async (c) => {
   const limit = queryLimit(c, 100);
 
   try {
-    const logs = await SystemLogService.getRecentLogs(
-      c.get("scope").tenantId,
-      limit,
-    );
+    const logs = await SystemLogService.getRecentLogs(activeTenantId(c), limit);
     return c.json({ logs });
   } catch (error) {
     logger.error({ error }, "Error fetching system logs");

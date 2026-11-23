@@ -89,7 +89,11 @@ describe("replaying a conversation from a second WhatsApp number", () => {
   function load(body: unknown, auth = cookie) {
     return app.request("/api/simulator/load", {
       method: "POST",
-      headers: { Cookie: auth, "Content-Type": "application/json" },
+      headers: {
+        Cookie: auth,
+        "X-Tenant-Id": alpha.tenantId,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(body),
     });
   }
@@ -185,7 +189,7 @@ describe("listing simulated conversations", () => {
 
   function list() {
     return app.request("/api/simulator/conversations", {
-      headers: { Cookie: cookie },
+      headers: { Cookie: cookie, "X-Tenant-Id": tenant.tenantId },
     });
   }
 
@@ -206,7 +210,10 @@ describe("listing simulated conversations", () => {
   it("deletes the listed row and leaves the WhatsApp thread", async () => {
     const deleted = await app.request(
       `/api/simulator/conversations/${SIMULATED}`,
-      { method: "DELETE", headers: { Cookie: cookie } },
+      {
+        method: "DELETE",
+        headers: { Cookie: cookie, "X-Tenant-Id": tenant.tenantId },
+      },
     );
 
     expect(deleted.status).toBe(200);

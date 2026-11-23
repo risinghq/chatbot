@@ -24,7 +24,7 @@ import tenantRoutes from "../src/routes/tenants.ts";
 
 const CUSTOMER = "51900444001";
 
-type Auth = { cookie: string };
+type Auth = { cookie: string; tenantId: string | null };
 
 function buildApp() {
   const app = new Hono();
@@ -40,7 +40,7 @@ function buildApp() {
 async function login(userId: string, tenantId: string | null): Promise<Auth> {
   const token = generateSessionToken();
   await createSession(token, userId, tenantId);
-  return { cookie: `session=${token}` };
+  return { cookie: `session=${token}`, tenantId };
 }
 
 async function createOperator(): Promise<string> {
@@ -75,6 +75,7 @@ describe("conversation assignment", () => {
         method,
         headers: {
           Cookie: auth.cookie,
+          ...(auth.tenantId ? { "X-Tenant-Id": auth.tenantId } : {}),
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),

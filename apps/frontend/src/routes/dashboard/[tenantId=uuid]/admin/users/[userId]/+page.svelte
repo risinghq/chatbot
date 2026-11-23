@@ -13,13 +13,10 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Select from "#lib/components/ui/select.svelte";
 import Badge from "#lib/components/ui/badge.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
-import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import PermissionMatrix from "#lib/components/admin/permission-matrix.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import { roleLabels } from "#lib/utils/roles.js";
-
-let { data } = $props();
 
 let user = $state<any>(null);
 let originalRole = $state<string>("");
@@ -106,15 +103,12 @@ async function resetPassword() {
 }
 
 onMount(() => {
-  if (data.user?.activeTenantId) loadUser();
+  loadUser();
 });
 </script>
 
 <PageTitle title={user ? `Editar ${user.name}` : "Cargando..."} />
 
-{#if !data.user?.activeTenantId}
-<NeedsTenant />
-{:else}
 <div class="flex max-w-3xl flex-col gap-6">
 	<a href="{businessPath()}/admin/users" class="self-start text-sm text-fg-muted hover:text-fg">← Usuarios</a>
 
@@ -186,4 +180,3 @@ onMount(() => {
 		<div class="h-12 w-1/3 animate-pulse rounded-sm bg-sunken" aria-busy="true"></div>
 	{/if}
 </div>
-{/if}

@@ -33,10 +33,10 @@ The Cálidda API host is the same for every business, so `CALIDDA_BASE_URL` stay
 a platform variable on the Worker, not a setting. The Power BI report is one
 public report for every tenant, so its four ids are platform settings
 (`powerbi_resource_key`, `powerbi_report_id`, `powerbi_dataset_id`,
-`powerbi_model_id`) that a platform operator enters on the same page. A tenant
-with no login, or a platform with no report ids or no base URL, fails that
-provider's checks as unavailable, the same as an outage. Saving a login drops
-the tenant's cached FNB session and its breaker block, so the next check
+`powerbi_model_id`) that a platform operator enters on `/dashboard/ajustes`. A
+tenant with no login, or a platform with no report ids or no base URL, fails
+that provider's checks as unavailable, the same as an outage. Saving a login
+drops the tenant's cached FNB session and its breaker block, so the next check
 authenticates with the new credentials.
 
 Timeouts are 10 s for the FNB login, 15 s for the FNB query and 20 s for each
@@ -104,9 +104,10 @@ blocks (see [Operations](./operations.md#health)).
 ## The kill switches
 
 Two platform settings force a provider to fail for every tenant:
-`force_fnb_down` and `force_gaso_down`. A platform operator with no tenant
-selected sets them on the settings page, `/dashboard/admin/settings`. A tenant
-admin sees them but cannot change them
+`force_fnb_down` and `force_gaso_down`. A platform operator sets them on
+`/dashboard/ajustes`, which posts to `POST /api/platform/settings`
+([`routes/platform.ts`](../apps/backend/src/routes/platform.ts)). A tenant admin
+sees them, read-only, on the business's Ajustes page
 ([`domains/settings/system.ts`](../apps/backend/src/domains/settings/system.ts)).
 
 Forcing both down makes every check an outage.
@@ -124,5 +125,5 @@ consulted. `?tenant=<tenant id>` names the tenant whose Cálidda login the FNB
 leg runs on; without it FNB reports it needs a tenant and the answer comes from
 the Power BI report
 ([`routes/providers.ts`](../apps/backend/src/routes/providers.ts)). The
-dashboard's Proveedores tile, shown to platform operators only, offers the
-tenant picker and calls it.
+platform's Proveedores page, `/dashboard/providers`, offers the tenant picker
+and calls it.

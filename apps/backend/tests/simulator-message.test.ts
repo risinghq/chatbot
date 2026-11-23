@@ -59,7 +59,11 @@ describe("a simulated message", () => {
   function send() {
     return app.request("/api/simulator/message", {
       method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      headers: {
+        Cookie: cookie,
+        "X-Tenant-Id": tenantId,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
         phoneNumber: SIMULATOR_PHONE,
         message: "mmm lo voy a pensar",
@@ -78,7 +82,7 @@ describe("a simulated message", () => {
   it("reports whether the business has an OpenAI key", async () => {
     const status = async () => {
       const response = await app.request("/api/simulator/status", {
-        headers: { Cookie: cookie },
+        headers: { Cookie: cookie, "X-Tenant-Id": tenantId },
       });
       return response.json();
     };
@@ -121,7 +125,11 @@ describe("a simulated message", () => {
   it("creates a simulation with no WhatsApp number", async () => {
     const response = await app.request("/api/simulator/conversations", {
       method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      headers: {
+        Cookie: cookie,
+        "X-Tenant-Id": tenantId,
+        "Content-Type": "application/json",
+      },
       body: "{}",
     });
 

@@ -96,7 +96,7 @@ the deployment. A tenant admin brings people in by invitation
 link, `/invitacion/<token>`, shown once for the admin to send. Only the token's
 hash is stored, and the link lasts seven days. Whoever opens it joins the tenant
 with the invited role: an existing account by entering its password, a new
-person by choosing a name and password. Accepting logs them in, pinned to that
+person by choosing a name and password. Accepting logs them in and opens that
 tenant. A newer invitation to the same email replaces the pending one, and the
 hourly sweep deletes expired ones.
 
@@ -129,23 +129,35 @@ bun run account promote <email>
 keeps the memberships the account already has. See
 [Operations](./operations.md#accounts).
 
-## Sessions and the active tenant
+## Sessions and the business a request acts in
 
 Logging in creates a 30-day session and sets the `session` cookie
 ([`platform/auth/session.ts`](../apps/backend/src/platform/auth/session.ts)). A
 request with fewer than 15 days left renews the session for 30 more and sets the
 cookie again, so a session lasts 30 days from the last request that renewed it.
-Other responses send no cookie. The session carries `active_tenant_id`, the
-tenant it acts in. A member of exactly one open tenant starts pinned to it. An
-operator, and a member of several, starts unpinned and picks one:
+Other responses send no cookie.
+
+A browser request names the business it acts in with the `X-Tenant-Id` header:
 
 ```sh
-curl -X POST -b "session=<token>" -H 'content-type: application/json' \
-  -d '{"tenantId":"<id>"}' https://sales.rising.sh/api/tenants/active
+curl -b "session=<token>" -H "X-Tenant-Id: <tenant id>" \
+  https://sales.rising.sh/api/catalog/products
 ```
 
-The dashboard does this from the tenant selector. The active tenant is the only
-tenant input. No header or query parameter names a tenant.
+The dashboard keeps the business in the URL, `/dashboard/<tenant id>/…`, and
+sends its id on every call from the page
+([Dashboard](./dashboard.md#the-business-in-the-url)), so two tabs can work in
+two businesses. A request that names no business acts in none, and a route that
+needs one answers 403 `No active tenant`. A header naming a business the user is
+not a member of, or a suspended one, answers 404 `Tenant not found`. A platform
+operator may name any open business. No query parameter or body field names the
+business a request acts in.
+
+The session records `active_tenant_id`, the business its last request named.
+`/api/auth/me` and `/api/tenants` report it as `lastTenantId`, and `/dashboard`
+opens it. Logging in sets it to a member's only open business, and leaves it
+empty for an operator or a member of several. It decides nothing about a later
+request.
 
 Every request re-reads the membership, so a changed role or a removed membership
 takes effect on the next request. Changing a role ends no session.
@@ -158,21 +170,27 @@ It is a session row of kind `token`, sent as `Authorization: Bearer vy_…`, and
 it holds the same role and memberships as its owner. Only the SHA-256 of the
 token is stored; the plain token appears once, in the answer that created it.
 
-A token differs from a browser session in four ways:
+A token differs from a browser session in these ways:
 
 - It lasts the 1 to 365 days it was created with (90 by default) and never
   renews itself.
-- It has its own active tenant. Created on the dashboard, it starts in the
-  tenant the browser was in; created from the command line, it starts unpinned.
-  Switching its tenant leaves the browser session alone.
+- Created on the dashboard, it is bound to the business the page was in. It acts
+  there whether or not a request names it, and a request naming another business
+  answers 404. While that business is suspended, or its owner is no longer a
+  member, it acts nowhere; it keeps its binding and works again when the
+  business reopens.
+- Created from the command line (`account token create`), it is bound to none
+  and names its business on each request in `X-Tenant-Id`, as a browser does.
+  `vendeya businesses use` stores that id for the CLI
+  ([Operations](./operations.md#the-vendeya-command-line)).
 - It cannot create another token or change the password. Those answer 403 and
   need a browser login.
 - A bearer token is never accepted as a cookie, nor a cookie session as a
   bearer.
 
-A person lists and revokes their tokens on `/dashboard/cuenta` or with `GET` and
-`DELETE /api/auth/tokens`. Changing the password ends every token. Audit entries
-name the owner (`user:<id>`), not the token.
+A person lists and revokes their tokens on a business's Cuenta page or with
+`GET` and `DELETE /api/auth/tokens`. Changing the password ends every token.
+Audit entries name the owner (`user:<id>`), not the token.
 
 ## How a read is scoped
 
@@ -180,19 +198,19 @@ name the owner (`user:<id>`), not the token.
 `{ userId, tenantId, membershipRole, isPlatformOperator }`
 ([`platform/auth/scope.ts`](../apps/backend/src/platform/auth/scope.ts)).
 
-- A pinned caller reads only their tenant.
-- An unpinned operator reads across every `active` tenant.
-- An unpinned member is refused with 403 by `requireTenantScope`.
-- A write needs a concrete tenant. `requireActiveTenant` refuses an unpinned
-  caller, operator included.
+`tenantId` is the business the request acts in, or null when it names none. A
+route on tenant data sits behind `requireTenantScope`, which refuses a null
+`tenantId` with 403, operator or member. `activeTenantId(c)` in
+[`middleware/auth.ts`](../apps/backend/src/middleware/auth.ts) gives a handler
+the id, and throws the same 403 if a route forgot the gate.
 
-An unpinned member reads nothing until selecting a tenant.
-
-Read functions take `tenantId: string | null` and filter with
+Read functions take `tenantId: string` and filter with
 `.where(tenantScope(tenantId))` from
-[`db/index.ts`](../apps/backend/src/db/index.ts). A concrete id filters to that
-tenant. `null` means every open tenant, never every row. A row fetched by id is
-checked with `canAccessTenant`, and another tenant's row answers 404, not 403.
+[`db/index.ts`](../apps/backend/src/db/index.ts). A row fetched by id is looked
+up in that tenant only, so another tenant's row answers 404, not 403. No route
+reads one business's rows on behalf of another. The one read across businesses
+is the platform summary, `GET /api/platform/summary`, which counts over open
+tenants for operators.
 
 The Kysely builder checks every query as it is built
 ([`db/tenant-scope.ts`](../apps/backend/src/db/tenant-scope.ts)). Each
@@ -257,19 +275,21 @@ same scheme as `channel_secrets`
 ([`domains/settings/tenant-secrets.ts`](../apps/backend/src/domains/settings/tenant-secrets.ts)).
 The API never returns the password: `GET /api/admin/settings` reports
 `_has_calidda_password`, and posting a `calidda_password` value stores it
-encrypted — an empty value clears it — while a platform-scoped post refuses the
-key. A tenant with either part missing has no login, and its FNB checks take the
-unavailable path. Saving a login drops the tenant's cached FNB session and its
-breaker block. The login's FNB token cache in KV is keyed by tenant.
+encrypted — an empty value clears it — while `POST /api/platform/settings`
+refuses the key. A tenant with either part missing has no login, and its FNB
+checks take the unavailable path. Saving a login drops the tenant's cached FNB
+session and its breaker block. The login's FNB token cache in KV is keyed by
+tenant.
 
 ## The tenant's OpenAI key
 
-Each business brings its own OpenAI key. A tenant admin enters it on
-`/dashboard/admin/settings`, where it is stored in `tenant_secrets` under the
-key `openai_api_key`, write-only like the Cálidda password. There is no platform
-key: the turn builds the OpenAI client from the tenant's stored key, and a
-tenant with none takes the same unavailable path as an OpenAI outage. The
-dashboard's system status says the key is missing while it is unset.
+Each business brings its own OpenAI key. A tenant admin enters it on the
+business's Ajustes page, `/dashboard/<tenant id>/admin/settings`, where it is
+stored in `tenant_secrets` under the key `openai_api_key`, write-only like the
+Cálidda password. There is no platform key: the turn builds the OpenAI client
+from the tenant's stored key, and a tenant with none takes the same unavailable
+path as an OpenAI outage. The dashboard's system status says the key is missing
+while it is unset.
 
 The save asks OpenAI for its model list with the new key. When OpenAI answers
 401, the save fails with 400 (`reason: "invalid_openai_key"`) and writes none of
@@ -290,12 +310,13 @@ signature has passed for every number it names.
 
 Setting `tenants.status` to `suspended` closes a business:
 
-- its sessions lose their pin, and its members cannot pin it,
+- its browser sessions forget it as their last business, a request naming it
+  answers 404, and a token bound to it acts nowhere,
 - the webhook drops its messages,
 - the conversation objects and the sweep skip its queued messages and outbox
   rows,
 - its customers get no sends,
-- an operator's cross-tenant reads leave it out.
+- the platform summary leaves it out.
 
 Alerts about it still go out. Nothing in the dashboard or the API suspends a
 tenant. It is a SQL update, run from `apps/backend`:

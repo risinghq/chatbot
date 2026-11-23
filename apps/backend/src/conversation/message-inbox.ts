@@ -5,7 +5,6 @@ import {
   db,
   inActiveChannelAccounts,
   inOpenTenants,
-  tenantScope,
   withoutTenantScope,
 } from "../db/index.ts";
 
@@ -375,31 +374,6 @@ export async function markTurnsHandedOff(
     .where("status", "=", "failed")
     .where("handed_off_at", "is", null)
     .execute();
-}
-
-/** Queue depth. `tenantId` null counts across open tenants, as an unpinned platform operator reads it. */
-export async function countPending(
-  tenantId: string | null = null,
-): Promise<number> {
-  const row = await db
-    .selectFrom("message_inbox")
-    .select((eb) => eb.fn.countAll<number>().as("count"))
-    .where("status", "=", "pending")
-    .where(tenantScope(tenantId))
-    .executeTakeFirst();
-  return row?.count ?? 0;
-}
-
-export async function countFailed(
-  tenantId: string | null = null,
-): Promise<number> {
-  const row = await db
-    .selectFrom("message_inbox")
-    .select((eb) => eb.fn.countAll<number>().as("count"))
-    .where("status", "=", "failed")
-    .where(tenantScope(tenantId))
-    .executeTakeFirst();
-  return row?.count ?? 0;
 }
 
 /** Delete processed inbox rows processed before `before` (epoch ms). */

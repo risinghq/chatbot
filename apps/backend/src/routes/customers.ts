@@ -9,7 +9,6 @@ import {
 import { logAction } from "../platform/audit/logger.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireRole,
   requireTenantScope,
 } from "../middleware/auth.ts";
@@ -30,7 +29,7 @@ customers.use("/*", requireTenantScope);
 
 customers.get("/", async (c) => {
   return c.json(
-    await CustomerService.list(c.get("scope").tenantId, {
+    await CustomerService.list(activeTenantId(c), {
       search: c.req.query("search") || undefined,
       limit: queryLimit(c, 50),
       offset: queryOffset(c),
@@ -40,14 +39,14 @@ customers.get("/", async (c) => {
 
 customers.get("/:id", async (c) => {
   const customer = await CustomerService.get(
-    c.get("scope").tenantId,
+    activeTenantId(c),
     pathParam(c, "id"),
   );
   if (!customer) return c.json({ error: "Customer not found" }, 404);
   return c.json(customer);
 });
 
-customers.post("/", requireActiveTenant, requireCustomerWrite, async (c) => {
+customers.post("/", requireCustomerWrite, async (c) => {
   const tenantId = activeTenantId(c);
   const body = await jsonObject(c);
   if (!body) {
@@ -70,56 +69,46 @@ customers.post("/", requireActiveTenant, requireCustomerWrite, async (c) => {
   return c.json(customer, 201);
 });
 
-customers.patch(
-  "/:id",
-  requireActiveTenant,
-  requireCustomerWrite,
-  async (c) => {
-    const tenantId = activeTenantId(c);
-    const id = pathParam(c, "id");
-    const body = await jsonObject(c);
-    if (!body) {
-      return c.json({ error: "Request body must be a JSON object" }, 400);
-    }
-    const fields = parseCustomerFields(body, true);
-    if (typeof fields === "string") return c.json({ error: fields }, 400);
+customers.patch("/:id", requireCustomerWrite, async (c) => {
+  const tenantId = activeTenantId(c);
+  const id = pathParam(c, "id");
+  const body = await jsonObject(c);
+  if (!body) {
+    return c.json({ error: "Request body must be a JSON object" }, 400);
+  }
+  const fields = parseCustomerFields(body, true);
+  if (typeof fields === "string") return c.json({ error: fields }, 400);
 
-    const customer = await CustomerService.update(tenantId, id, fields);
-    if (!customer) return c.json({ error: "Customer not found" }, 404);
+  const customer = await CustomerService.update(tenantId, id, fields);
+  if (!customer) return c.json({ error: "Customer not found" }, 404);
 
-    await logAction(
-      { userId: c.get("user").id, tenantId },
-      "update_customer",
-      "customer",
-      id,
-      { fields: Object.keys(fields) },
-    );
-    return c.json(customer);
-  },
-);
+  await logAction(
+    { userId: c.get("user").id, tenantId },
+    "update_customer",
+    "customer",
+    id,
+    { fields: Object.keys(fields) },
+  );
+  return c.json(customer);
+});
 
-customers.delete(
-  "/:id",
-  requireActiveTenant,
-  requireCustomerDelete,
-  async (c) => {
-    const tenantId = activeTenantId(c);
-    const id = pathParam(c, "id");
-    if (!(await CustomerService.delete(tenantId, id))) {
-      return c.json({ error: "Customer not found" }, 404);
-    }
-    await logAction(
-      { userId: c.get("user").id, tenantId },
-      "delete_customer",
-      "customer",
-      id,
-      {},
-    );
-    return c.body(null, 204);
-  },
-);
+customers.delete("/:id", requireCustomerDelete, async (c) => {
+  const tenantId = activeTenantId(c);
+  const id = pathParam(c, "id");
+  if (!(await CustomerService.delete(tenantId, id))) {
+    return c.json({ error: "Customer not found" }, 404);
+  }
+  await logAction(
+    { userId: c.get("user").id, tenantId },
+    "delete_customer",
+    "customer",
+    id,
+    {},
+  );
+  return c.body(null, 204);
+});
 
-customers.get("/:id/addresses", requireActiveTenant, async (c) => {
+customers.get("/:id/addresses", async (c) => {
   const tenantId = activeTenantId(c);
   const id = pathParam(c, "id");
   if (!(await CustomerService.get(tenantId, id))) {
@@ -128,30 +117,24 @@ customers.get("/:id/addresses", requireActiveTenant, async (c) => {
   return c.json(await CustomerService.addresses(tenantId, id));
 });
 
-customers.post(
-  "/:id/addresses",
-  requireActiveTenant,
-  requireCustomerWrite,
-  async (c) => {
-    const tenantId = activeTenantId(c);
-    const id = pathParam(c, "id");
-    const body = await jsonObject(c);
-    if (!body) {
-      return c.json({ error: "Request body must be a JSON object" }, 400);
-    }
-    const fields = parseAddressFields(body);
-    if (typeof fields === "string") return c.json({ error: fields }, 400);
+customers.post("/:id/addresses", requireCustomerWrite, async (c) => {
+  const tenantId = activeTenantId(c);
+  const id = pathParam(c, "id");
+  const body = await jsonObject(c);
+  if (!body) {
+    return c.json({ error: "Request body must be a JSON object" }, 400);
+  }
+  const fields = parseAddressFields(body);
+  if (typeof fields === "string") return c.json({ error: fields }, 400);
 
-    if (!(await CustomerService.get(tenantId, id))) {
-      return c.json({ error: "Customer not found" }, 404);
-    }
-    return c.json(await CustomerService.addAddress(tenantId, id, fields), 201);
-  },
-);
+  if (!(await CustomerService.get(tenantId, id))) {
+    return c.json({ error: "Customer not found" }, 404);
+  }
+  return c.json(await CustomerService.addAddress(tenantId, id, fields), 201);
+});
 
 customers.delete(
   "/:id/addresses/:addressId",
-  requireActiveTenant,
   requireCustomerWrite,
   async (c) => {
     const deleted = await CustomerService.deleteAddress(

@@ -7,7 +7,7 @@ import {
   isTenantRole,
 } from "../../domains/tenants/index.ts";
 import { meetsPasswordMinimum } from "../../domains/accounts/index.ts";
-import { activeTenantId, requireActiveTenant } from "../../middleware/auth.ts";
+import { activeTenantId, requireTenantScope } from "../../middleware/auth.ts";
 import { MIN_PASSWORD_LENGTH } from "@vendeya/types";
 import { batch, db, withoutTenantScope } from "../../db/index.ts";
 
@@ -28,7 +28,7 @@ const sessionsOf = () =>
  * (routes/admin/invitations.ts), so no admin picks another person's password
  * when they join.
  */
-users.use("/*", requireActiveTenant);
+users.use("/*", requireTenantScope);
 
 // List members of the active tenant
 users.get("/", async (c) => {

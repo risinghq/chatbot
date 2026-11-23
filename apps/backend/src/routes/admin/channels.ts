@@ -5,15 +5,15 @@ import { isEncryptionAvailable } from "../../platform/crypto/secrets.ts";
 import { logAction } from "../../platform/audit/logger.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requirePlatformOperator,
+  requireTenantScope,
 } from "../../middleware/auth.ts";
 import { publicOrigin } from "../../config.ts";
 import type { ChannelAccount } from "@vendeya/types";
 
 const channels = new Hono();
 
-channels.use("/*", requireActiveTenant);
+channels.use("/*", requireTenantScope);
 
 /**
  * Access token and app secret never leave the server. The verify token does:

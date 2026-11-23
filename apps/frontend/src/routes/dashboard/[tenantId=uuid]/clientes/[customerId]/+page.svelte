@@ -122,7 +122,7 @@ async function remove(customer: Customer) {
 				{#if auth.canDeleteCustomers && data.orders.length === 0}
 					<Button variant="danger" size="sm" onclick={() => remove(customer)} disabled={isSaving}>Eliminar cliente</Button>
 				{/if}
-				{#if canEdit && auth.activeTenantId}
+				{#if canEdit}
 					<Button size="sm" href="{businessPath()}/orders/nuevo?customer={customer.id}">Nuevo pedido</Button>
 				{/if}
 			</div>

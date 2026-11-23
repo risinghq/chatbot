@@ -36,6 +36,7 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import reportRoutes from "../src/routes/reports.ts";
+import platformRoutes from "../src/routes/platform.ts";
 
 const CUSTOMER = "51900333444";
 
@@ -43,6 +44,7 @@ function buildApp() {
   const app = new Hono();
   app.use("/api/*", requireAuth);
   app.route("/api/reports", reportRoutes);
+  app.route("/api/platform", platformRoutes);
   app.onError(errorHandler);
   return app;
 }
@@ -50,11 +52,11 @@ function buildApp() {
 async function login(
   tenant: TenantFixture,
   role: "admin" | "sales_agent" = "admin",
-): Promise<{ Cookie: string }> {
+): Promise<Record<string, string>> {
   const { userId } = await createMember(tenant, role);
   const token = generateSessionToken();
   await createSession(token, userId, tenant.tenantId);
-  return { Cookie: `session=${token}` };
+  return { Cookie: `session=${token}`, "X-Tenant-Id": tenant.tenantId };
 }
 
 function rowCount(buffer: ArrayBuffer): number {
@@ -67,7 +69,7 @@ describe("report routes", () => {
   const originalTz = process.env.TZ;
   let app: ReturnType<typeof buildApp>;
   let tenant: TenantFixture;
-  let auth: { Cookie: string };
+  let auth: Record<string, string>;
 
   const get = (path: string, headers: Record<string, string> = auth) =>
     app.request(path, { headers });
@@ -360,7 +362,7 @@ describe("report routes", () => {
       expect(summary.orders.count).toBe(0);
     });
 
-    it("gives the operator a line per business on /summary/all", async () => {
+    it("gives the operator a line per business on the platform summary", async () => {
       const other = await createTenantFixture("report-routes-second");
       await insertConversation(other.ref(CUSTOMER));
       await inbound(CUSTOMER, at("2026-07-01T10:00:00-05:00"));
@@ -386,7 +388,7 @@ describe("report routes", () => {
 
       const summary = (await (
         await get(
-          "/api/reports/summary/all?startDate=2026-07-01&endDate=2026-07-01",
+          "/api/platform/summary?startDate=2026-07-01&endDate=2026-07-01",
           { Cookie: `session=${token}` },
         )
       ).json()) as ReportSummary;
@@ -444,7 +446,7 @@ describe("report routes", () => {
     });
 
     it("keeps the platform summary to operators", async () => {
-      expect((await get("/api/reports/summary/all")).status).toBe(403);
+      expect((await get("/api/platform/summary")).status).toBe(403);
     });
 
     it("answers the business summary only inside a business", async () => {

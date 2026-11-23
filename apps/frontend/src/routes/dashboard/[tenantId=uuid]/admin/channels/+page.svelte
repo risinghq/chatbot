@@ -9,9 +9,6 @@ import EmptyState from "#lib/components/ui/empty-state.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
-import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
-
-let { data } = $props();
 
 type ChannelAccount = {
   id: string;
@@ -148,51 +145,47 @@ function secretPlaceholder(stored: boolean) {
 }
 
 onMount(() => {
-  if (data.user?.activeTenantId) load();
+  load();
 });
 </script>
 
-{#if !data.user?.activeTenantId}
-	<NeedsTenant />
-{:else}
-	<div class="flex flex-col gap-6">
-		<SectionShell
-			title="Números de WhatsApp"
-			description="El token de acceso y el app secret de Meta se guardan cifrados. Copia la URL del webhook y el token de verificación en la configuración del webhook de tu app de Meta."
-			action={auth.isPlatformOperator && accounts.length > 0 && !adding ? addAction : undefined}
-		>
-			{#if loading}
-				<div class="flex flex-col gap-3 p-4" aria-busy="true">
-					<div class="h-8 animate-pulse rounded-sm bg-sunken"></div>
-					<div class="h-8 animate-pulse rounded-sm bg-sunken"></div>
-				</div>
-			{:else if accounts.length === 0 && !adding}
-				<EmptyState
-					title="Sin números conectados"
-					description={auth.isPlatformOperator
-						? "Agrega el número de WhatsApp Business del negocio con su phone number id de Meta."
-						: "El equipo de VendeYa conecta el número de tu negocio. Escríbeles para empezar."}
-				>
-					{#snippet action()}
-						{#if auth.isPlatformOperator}
-							<Button onclick={() => (adding = true)}>Agregar número</Button>
-						{/if}
-					{/snippet}
-				</EmptyState>
-			{:else}
-				<ul class="divide-y divide-border-subtle">
-					{#each accounts as account (account.id)}
-						<li>{@render accountRow(account)}</li>
-					{/each}
-				</ul>
-			{/if}
-		</SectionShell>
-
-		{#if adding}
-			{@render createForm()}
+<div class="flex flex-col gap-6">
+	<SectionShell
+		title="Números de WhatsApp"
+		description="El token de acceso y el app secret de Meta se guardan cifrados. Copia la URL del webhook y el token de verificación en la configuración del webhook de tu app de Meta."
+		action={auth.isPlatformOperator && accounts.length > 0 && !adding ? addAction : undefined}
+	>
+		{#if loading}
+			<div class="flex flex-col gap-3 p-4" aria-busy="true">
+				<div class="h-8 animate-pulse rounded-sm bg-sunken"></div>
+				<div class="h-8 animate-pulse rounded-sm bg-sunken"></div>
+			</div>
+		{:else if accounts.length === 0 && !adding}
+			<EmptyState
+				title="Sin números conectados"
+				description={auth.isPlatformOperator
+					? "Agrega el número de WhatsApp Business del negocio con su phone number id de Meta."
+					: "El equipo de VendeYa conecta el número de tu negocio. Escríbeles para empezar."}
+			>
+				{#snippet action()}
+					{#if auth.isPlatformOperator}
+						<Button onclick={() => (adding = true)}>Agregar número</Button>
+					{/if}
+				{/snippet}
+			</EmptyState>
+		{:else}
+			<ul class="divide-y divide-border-subtle">
+				{#each accounts as account (account.id)}
+					<li>{@render accountRow(account)}</li>
+				{/each}
+			</ul>
 		{/if}
-	</div>
-{/if}
+	</SectionShell>
+
+	{#if adding}
+		{@render createForm()}
+	{/if}
+</div>
 
 {#snippet addAction()}
 	<Button size="sm" variant="secondary" onclick={() => (adding = true)}>Agregar número</Button>

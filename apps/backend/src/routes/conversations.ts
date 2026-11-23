@@ -10,18 +10,14 @@ import * as ConversationRead from "../domains/conversations/read.ts";
 import { ConversationBusyError } from "../conversation/locks.ts";
 import { refOf } from "../conversation/store.ts";
 import * as ConversationWrite from "../domains/conversations/write.ts";
-import { requireActiveTenant, requireTenantScope } from "../middleware/auth.ts";
+import { requireTenantScope } from "../middleware/auth.ts";
 
 const conversations = new Hono();
 
-// Reads span tenants for a platform operator who has not pinned one. Writes
-// also take `requireActiveTenant`, because a write must land in a tenant the
-// caller has selected.
 conversations.use("/*", requireTenantScope);
 
 /**
- * Resolves `:phone` within the caller's scope: the pinned tenant, or every open
- * tenant for an unpinned platform operator. A conversation outside that scope
+ * Resolves `:phone` within the request's business. A conversation outside it
  * is indistinguishable from one that does not exist.
  */
 async function resolve(
@@ -94,7 +90,7 @@ conversations.get("/:phone", async (c) => {
   );
 });
 
-conversations.post("/:phone/takeover", requireActiveTenant, async (c) => {
+conversations.post("/:phone/takeover", async (c) => {
   const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
@@ -115,7 +111,7 @@ conversations.post("/:phone/takeover", requireActiveTenant, async (c) => {
   }
 });
 
-conversations.post("/:phone/message", requireActiveTenant, async (c) => {
+conversations.post("/:phone/message", async (c) => {
   const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
@@ -136,7 +132,7 @@ conversations.post("/:phone/message", requireActiveTenant, async (c) => {
   return c.json(result);
 });
 
-conversations.post("/:phone/release", requireActiveTenant, async (c) => {
+conversations.post("/:phone/release", async (c) => {
   const found = await resolve(c);
   if ("error" in found) return found.error;
   const conv = found.conversation;
@@ -154,32 +150,28 @@ conversations.post("/:phone/release", requireActiveTenant, async (c) => {
   }
 });
 
-conversations.post(
-  "/:phone/decline-assignment",
-  requireActiveTenant,
-  async (c) => {
-    const found = await resolve(c);
-    if ("error" in found) return found.error;
-    const conv = found.conversation;
+conversations.post("/:phone/decline-assignment", async (c) => {
+  const found = await resolve(c);
+  if ("error" in found) return found.error;
+  const conv = found.conversation;
 
-    const user = c.get("user");
+  const user = c.get("user");
 
-    try {
-      const result = await ConversationWrite.declineAssignment(
-        refOf(conv),
-        user.id,
-      );
+  try {
+    const result = await ConversationWrite.declineAssignment(
+      refOf(conv),
+      user.id,
+    );
 
-      if (!result.success) {
-        return c.json({ error: result.error }, 403);
-      }
-
-      return c.json({ success: true });
-    } catch (error) {
-      return refuseIfBusy(c, error);
+    if (!result.success) {
+      return c.json({ error: result.error }, 403);
     }
-  },
-);
+
+    return c.json({ success: true });
+  } catch (error) {
+    return refuseIfBusy(c, error);
+  }
+});
 
 conversations.get("/:phone/replay", async (c) => {
   const user = c.get("user");

@@ -82,10 +82,39 @@ describe("vendeya", () => {
     });
   });
 
-  test("`businesses use none` clears the active business", async () => {
+  test("`businesses use` names the business on every later request", async () => {
     const h = harness({ env: AUTHED });
+    expect(await main(["businesses", "use", "b1"], h.io)).toBe(0);
+    expect(h.sent[0]).toMatchObject({
+      url: "http://local/api/auth/me",
+      headers: { "X-Tenant-Id": "b1" },
+    });
+    expect(await main(["businesses", "list"], h.io)).toBe(0);
+    expect(h.sent[1]?.headers["X-Tenant-Id"]).toBe("b1");
+
     expect(await main(["businesses", "use", "none"], h.io)).toBe(0);
-    expect(h.sent[0]?.body).toEqual({ tenantId: null });
+    expect(h.sent[2]?.headers).not.toHaveProperty("X-Tenant-Id");
+    expect(await main(["businesses", "list"], h.io)).toBe(0);
+    expect(h.sent[3]?.headers).not.toHaveProperty("X-Tenant-Id");
+  });
+
+  test("`businesses use` stores nothing for a business the server refuses", async () => {
+    const h = harness({
+      env: AUTHED,
+      reply: (sent) =>
+        sent.headers["X-Tenant-Id"]
+          ? { status: 404, body: { error: "Tenant not found" } }
+          : { body: [] },
+    });
+    expect(await main(["businesses", "use", "b2"], h.io)).toBe(1);
+    expect(await main(["businesses", "list"], h.io)).toBe(0);
+    expect(h.sent[1]?.headers).not.toHaveProperty("X-Tenant-Id");
+  });
+
+  test("VENDEYA_BUSINESS names the business for one shell", async () => {
+    const h = harness({ env: { ...AUTHED, VENDEYA_BUSINESS: "b3" } });
+    expect(await main(["businesses", "list"], h.io)).toBe(0);
+    expect(h.sent[0]?.headers["X-Tenant-Id"]).toBe("b3");
   });
 
   test("a refusal exits 1 with the server's error", async () => {

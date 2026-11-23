@@ -9,8 +9,9 @@ const tokens = () =>
 /**
  * API tokens let a program, such as the `vendeya` CLI or an AI agent, act as
  * the person who created them. A token is a session of kind `token`, so it
- * passes the same role, tenant and suspension checks as a browser login and
- * pins a tenant the same way. It never slides: it ends at its expiry, when its
+ * passes the same role, tenant and suspension checks as a browser login. A
+ * token made for a business is bound to it; one made without names its
+ * business in each request, as a browser does. It never slides: it ends at its expiry, when its
  * owner revokes it, or when its owner changes their password.
  */
 
@@ -59,7 +60,7 @@ export function checkTokenRequest(input: {
 }
 
 /**
- * Creates a token for `userId`, pinned to `tenantId` when given. The caller has
+ * Creates a token for `userId`, bound to `tenantId` when given. The caller has
  * checked the user may act in that tenant. The plain token is returned once;
  * only its hash is stored.
  */

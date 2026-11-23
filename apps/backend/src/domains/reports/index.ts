@@ -9,17 +9,13 @@ import { db, tenantScope } from "../../db/index.ts";
 import { OrderReads } from "../orders/index.ts";
 
 type ActivityReportParams = {
-  /**
-   * Null spans open tenants. Only an unpinned platform operator's request
-   * passes it.
-   */
-  tenantId: string | null;
+  tenantId: string;
   startDate: Date;
   endDate: Date;
 };
 
 type OrderReportParams = {
-  tenantId: string | null;
+  tenantId: string;
   startDate?: Date;
   endDate?: Date;
   status?: OrderStatus;
@@ -113,7 +109,7 @@ export const ReportService = {
     );
   },
 
-  getTodayContactCount: async (tenantId: string | null) => {
+  getTodayContactCount: async (tenantId: string) => {
     const [startTimestamp] = limaDayBounds();
     const row = await db
       .selectFrom("conversations")

@@ -40,9 +40,15 @@ describe("the orders page load", () => {
   let token: string;
   let orderId: string;
 
-  /** What SvelteKit passes to `load`: a relative URL is answered in-process. */
-  const kitFetch = ((input: string | URL | Request, init?: RequestInit) =>
-    app.request(String(input), init)) as typeof fetch;
+  /**
+   * What SvelteKit passes to `load`: a relative URL is answered in-process,
+   * with the business header `handleFetch` adds from the page's URL.
+   */
+  const kitFetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set("X-Tenant-Id", tenant.tenantId);
+    return app.request(String(input), { ...init, headers });
+  }) as typeof fetch;
 
   const cookies = { get: (name: string) => (name === "session" ? token : "") };
   const pageUrl = (query = "") =>

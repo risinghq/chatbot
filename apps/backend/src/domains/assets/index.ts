@@ -32,26 +32,11 @@ export const AssetService = {
     return (await AssetService.getById(data.tenantId, id))!;
   },
 
-  /**
-   * A null `tenantId` reads across open tenants. Pass it only when the caller
-   * checks tenant access itself, as GET /api/assets/:id does.
-   */
-  getById: async (tenantId: string | null, id: string): Promise<Asset | null> =>
+  getById: async (tenantId: string, id: string): Promise<Asset | null> =>
     (await db
       .selectFrom("assets")
       .selectAll()
       .where("id", "=", id)
-      .where(tenantScope(tenantId))
-      .executeTakeFirst()) ?? null,
-
-  getByStorageKey: async (
-    tenantId: string | null,
-    storageKey: string,
-  ): Promise<Asset | null> =>
-    (await db
-      .selectFrom("assets")
-      .selectAll()
-      .where("storage_key", "=", storageKey)
       .where(tenantScope(tenantId))
       .executeTakeFirst()) ?? null,
 

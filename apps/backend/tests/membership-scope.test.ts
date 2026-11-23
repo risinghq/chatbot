@@ -32,7 +32,7 @@ import adminChannelRoutes from "../src/routes/admin/channels.ts";
 import { takeoverConversation } from "../src/domains/conversations/write.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 
-type Auth = { cookie: string };
+type Auth = { cookie: string; tenantId: string | null };
 
 function buildApp() {
   const app = new Hono();
@@ -49,7 +49,7 @@ function buildApp() {
 async function login(userId: string, tenantId: string | null): Promise<Auth> {
   const token = generateSessionToken();
   await createSession(token, userId, tenantId);
-  return { cookie: `session=${token}` };
+  return { cookie: `session=${token}`, tenantId };
 }
 
 /** A platform operator, optionally keeping one membership as `promote` does. */
@@ -99,6 +99,7 @@ describe("membership scope", () => {
         method,
         headers: {
           Cookie: auth.cookie,
+          ...(auth.tenantId ? { "X-Tenant-Id": auth.tenantId } : {}),
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),

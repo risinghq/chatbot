@@ -146,7 +146,11 @@ describe("the password through the settings API", () => {
   function postSettings(body: unknown) {
     return app.request("/api/admin/settings", {
       method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      headers: {
+        Cookie: cookie,
+        "X-Tenant-Id": tenant.tenantId,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(body),
     });
   }
@@ -178,7 +182,7 @@ describe("the password through the settings API", () => {
     expect(await postResponse.text()).not.toContain(password);
 
     const getResponse = await app.request("/api/admin/settings", {
-      headers: { Cookie: cookie },
+      headers: { Cookie: cookie, "X-Tenant-Id": tenant.tenantId },
     });
     const settings = await getResponse.json<Record<string, string>>();
 

@@ -21,12 +21,9 @@ import Input from "#lib/components/ui/input.svelte";
 import Modal from "#lib/components/ui/modal.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 import Select from "#lib/components/ui/select.svelte";
-import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
-
-let { data } = $props();
 
 const KIND_LABELS: Record<StockMovementKind, string> = {
   receive: "Entrada",
@@ -68,7 +65,6 @@ async function load() {
 let requestedVariant = page.url.searchParams.get("variant");
 
 $effect(() => {
-  if (!data.user?.activeTenantId) return;
   load().then(() => {
     const row = requestedVariant && rowByVariant.get(requestedVariant);
     requestedVariant = null;
@@ -217,62 +213,57 @@ const movementColumns = [
 <PageTitle title="Inventario" />
 
 <Page>
-	{#if !data.user?.activeTenantId}
-		<PageHeader title="Inventario" />
-		<NeedsTenant />
+	<PageHeader title="Inventario" subtitle="Cuántas unidades hay de cada variante y qué movió el stock.">
+		{#snippet actions()}
+			{#if locations.length > 1}
+				<Select
+					id="location-filter"
+					bind:value={locationFilter}
+					items={[{ value: "", label: "Todas las ubicaciones" }, ...locationItems]}
+					onchange={() => load()}
+					class="w-56"
+				/>
+			{/if}
+			{#if canMove}
+				<Button size="sm" variant="secondary" onclick={() => { locationDraft = ""; locationError = ""; locationOpen = true; }}>
+					Nueva ubicación
+				</Button>
+				{#if rows.length > 0}
+					<Button size="sm" onclick={() => openMove(null)}>Registrar movimiento</Button>
+				{/if}
+			{/if}
+		{/snippet}
+	</PageHeader>
+
+	{#if !loading && rows.length === 0}
+		<div class="rounded-md border border-border bg-surface">
+			<EmptyState
+				title="Todavía no hay variantes"
+				description="El stock se lleva por variante. Crea un producto y agrégale al menos una variante con su SKU."
+			>
+				{#snippet action()}
+					<Button href="{businessPath()}/catalog">Ir al catálogo</Button>
+				{/snippet}
+			</EmptyState>
+		</div>
 	{:else}
-		<PageHeader title="Inventario" subtitle="Cuántas unidades hay de cada variante y qué movió el stock.">
-			{#snippet actions()}
-				{#if locations.length > 1}
-					<Select
-						id="location-filter"
-						bind:value={locationFilter}
-						items={[{ value: "", label: "Todas las ubicaciones" }, ...locationItems]}
-						onchange={() => load()}
-						class="w-56"
-					/>
-				{/if}
-				{#if canMove}
-					<Button size="sm" variant="secondary" onclick={() => { locationDraft = ""; locationError = ""; locationOpen = true; }}>
-						Nueva ubicación
-					</Button>
-					{#if rows.length > 0}
-						<Button size="sm" onclick={() => openMove(null)}>Registrar movimiento</Button>
-					{/if}
-				{/if}
-			{/snippet}
-		</PageHeader>
-
-		{#if !loading && rows.length === 0}
+		<div class="flex flex-col gap-6">
 			<div class="rounded-md border border-border bg-surface">
-				<EmptyState
-					title="Todavía no hay variantes"
-					description="El stock se lleva por variante. Crea un producto y agrégale al menos una variante con su SKU."
-				>
-					{#snippet action()}
-						<Button href="{businessPath()}/catalog">Ir al catálogo</Button>
-					{/snippet}
-				</EmptyState>
+				<DataTable
+					data={rows}
+					{columns}
+					{loading}
+					keyField="variant_id"
+					onRowClick={canMove ? openMove : undefined}
+				/>
 			</div>
-		{:else}
-			<div class="flex flex-col gap-6">
-				<div class="rounded-md border border-border bg-surface">
-					<DataTable
-						data={rows}
-						{columns}
-						{loading}
-						keyField="variant_id"
-						onRowClick={canMove ? openMove : undefined}
-					/>
-				</div>
 
-				{#if movements.length > 0}
-					<SectionShell title="Últimos movimientos" description="Cada cambio de stock queda registrado. No se edita ni se borra: un error se corrige con un ajuste.">
-						<DataTable data={movements} columns={movementColumns} keyField="id" />
-					</SectionShell>
-				{/if}
-			</div>
-		{/if}
+			{#if movements.length > 0}
+				<SectionShell title="Últimos movimientos" description="Cada cambio de stock queda registrado. No se edita ni se borra: un error se corrige con un ajuste.">
+					<DataTable data={movements} columns={movementColumns} keyField="id" />
+				</SectionShell>
+			{/if}
+		</div>
 	{/if}
 </Page>
 

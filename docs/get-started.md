@@ -132,19 +132,26 @@ their photos. The wording varies between runs.
 The same conversation through the API, with both servers running:
 
 ```sh
-curl -c cookies.txt -H 'content-type: application/json' \
+tenant=$(curl -s -c cookies.txt -H 'content-type: application/json' \
   -d '{"email":"admin@example.com","password":"<password>"}' \
-  http://localhost:5173/api/auth/login
-phone=$(curl -s -b cookies.txt -X POST \
+  http://localhost:5173/api/auth/login |
+  sed -E 's/.*"lastTenantId":"([^"]+)".*/\1/')
+phone=$(curl -s -b cookies.txt -H "X-Tenant-Id: $tenant" -X POST \
   http://localhost:5173/api/simulator/conversations |
   sed -E 's/.*"phone_number":"([0-9]+)".*/\1/')
 for m in hola '¿tienen celulares?'; do
-  curl -b cookies.txt -H 'content-type: application/json' \
+  curl -b cookies.txt -H "X-Tenant-Id: $tenant" \
+    -H 'content-type: application/json' \
     -d "{\"phoneNumber\":\"$phone\",\"message\":\"$m\"}" \
     http://localhost:5173/api/simulator/message
 done
-curl -b cookies.txt http://localhost:5173/api/simulator/conversation/$phone
+curl -b cookies.txt -H "X-Tenant-Id: $tenant" \
+  http://localhost:5173/api/simulator/conversation/$phone
 ```
+
+The login answers the business it opens, the seeded admin's only one, as
+`lastTenantId`. Each later request names it in `X-Tenant-Id`
+([Tenancy](./tenancy.md#sessions-and-the-business-a-request-acts-in)).
 
 The server chooses the new conversation's phone number and returns it in
 `phone_number`. It takes one past the highest simulated number (`519` and eight
@@ -156,8 +163,9 @@ number another simulation holds.
 
 Without an OpenAI key, the simulator answers 409 with
 `{"reason":"no_openai_key"}` and the page asks for the key. Each tenant brings
-its own key: the admin enters it on `/dashboard/admin/settings`, under OpenAI. A
-turn that fails after that answers 500 with `{"status":"failed","error":"..."}`.
+its own key: the admin enters it on the business's Ajustes page
+(`/dashboard/<tenant id>/admin/settings`), under OpenAI. A turn that fails after
+that answers 500 with `{"status":"failed","error":"..."}`.
 
 The `vendeya` command line drives the same routes: `simulate start`, then
 `simulate say <phone> <message>` prints the assistant's replies

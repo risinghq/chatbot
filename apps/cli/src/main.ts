@@ -6,7 +6,9 @@ import { COMMANDS, findCommand, UsageError } from "./commands.ts";
 import {
   DEFAULT_URL,
   forgetCredentials,
+  type Credentials,
   resolveCredentials,
+  storeBusiness,
   storeCredentials,
 } from "./credentials.ts";
 
@@ -64,7 +66,7 @@ function help(): string {
     "",
     "Every answer is JSON on stdout; an error is JSON on stderr.",
     "Exit 0 on success, 1 when the server refuses, 2 on a usage mistake.",
-    "VENDEYA_TOKEN and VENDEYA_URL override the stored login.",
+    "VENDEYA_TOKEN, VENDEYA_URL and VENDEYA_BUSINESS override the stored login.",
     "",
     ...rows.map(([usage, summary]) => `  ${usage.padEnd(width)}  ${summary}`),
   ].join("\n");
@@ -120,6 +122,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         options: values,
         call: (method, path, body) =>
           callApi(credentials, method, path, body, io.fetcher),
+        useBusiness: (business) => useBusiness(credentials, business, io),
         readStdin: io.readStdin,
         readFile: io.readFile ?? readLocalFile,
       });
@@ -161,6 +164,27 @@ async function login(url: string | undefined, io: Io): Promise<number> {
   const file = await storeCredentials(io.env, credentials);
   io.stdout(json({ loggedIn: true, url: credentials.url, file, me }));
   return 0;
+}
+
+/**
+ * The server answers /api/auth/me with 404 for a business the account cannot
+ * open, so nothing is stored for it.
+ */
+async function useBusiness(
+  credentials: Credentials,
+  business: string | null,
+  io: Io,
+): Promise<unknown> {
+  const { business: _current, ...login } = credentials;
+  const me = await callApi(
+    business ? { ...login, business } : login,
+    "GET",
+    "/api/auth/me",
+    undefined,
+    io.fetcher,
+  );
+  await storeBusiness(io.env, business);
+  return { business, me };
 }
 
 if (import.meta.main) {

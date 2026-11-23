@@ -32,8 +32,8 @@ curl http://localhost:8787/cdn-cgi/local/scheduled
 
 Nothing is checked when a Worker starts. A missing LLM key shows up the first
 time it is used. The provider credentials are not on the Worker at all: each
-tenant's Cálidda login and the platform's Power BI report ids are settings,
-entered on `/dashboard/admin/settings` (see
+tenant's Cálidda login is a setting on the business's Ajustes page, and the
+platform's Power BI report ids are settings on `/dashboard/ajustes` (see
 [Eligibility](./eligibility.md#the-two-providers)). A tenant with no Cálidda
 login, or a platform with no report ids, gets the unavailable path on every
 check.
@@ -110,8 +110,8 @@ API, act across tenants or change platform settings. Create a new operator, or
 promote an existing account, with `--remote`.
 
 The command line cannot reset a password. The API resets a password only for a
-member of the caller's active tenant (`POST /api/admin/users/:id/password`), so
-an operator with no membership who lost theirs is replaced: create a new
+member of the business the request names (`POST /api/admin/users/:id/password`),
+so an operator with no membership who lost theirs is replaced: create a new
 operator.
 
 Logins are limited to 10 attempts a minute for each client address, counted by
@@ -124,7 +124,8 @@ API, with an API token ([Tenancy](./tenancy.md#api-tokens)). It is how an agent
 works on VendeYa: it can do only what the token's owner can do, and the server
 checks every request. Unlike `account`, it never touches the database.
 
-Make a token on `/dashboard/cuenta`, or for an operator with no browser:
+Make a token on the Cuenta page of a business, or for an operator with no
+browser:
 
 ```sh
 bun run account token create <email> --name <name> [--days <1-365>] [--remote]
@@ -158,7 +159,15 @@ bun run vendeya payments confirm <order id> <payment id>
 each error is JSON on stderr. The exit code is 0 on success, 1 when the server
 refuses, and 2 on a usage mistake. Secrets are read from stdin only, and
 `settings set` refuses a secret key. Every delete, including `api DELETE`, needs
-`--yes`. `VENDEYA_TOKEN` and `VENDEYA_URL` override the stored login.
+`--yes`.
+
+`businesses use <id>` checks that the account can open the business, then stores
+its id beside the token; every later command names it in `X-Tenant-Id`.
+`businesses use none` forgets it. A token made on
+`/dashboard/<tenant id>/cuenta` is bound to that business and cannot use
+another; one made by `account token create` names whichever business
+`businesses use` stored ([Tenancy](./tenancy.md#api-tokens)). `VENDEYA_TOKEN`,
+`VENDEYA_URL` and `VENDEYA_BUSINESS` override the stored login.
 
 ## Files
 
@@ -269,7 +278,8 @@ it gets sales alerts only through the assigned agent. The dev target is
 values:
 
 ```sh
-curl -X POST -b "session=<token>" -H 'content-type: application/json' \
+curl -X POST -b "session=<token>" -H "X-Tenant-Id: <tenant id>" \
+  -H 'content-type: application/json' \
   -d '{"whatsapp_group_sales":"<number or group id>"}' \
   https://sales.rising.sh/api/admin/settings
 ```
@@ -301,10 +311,12 @@ the actor (`user:<id>` or `cli:<os user>`), the tenant, the action and the
 resource. The writer is
 [`platform/audit/logger.ts`](../apps/backend/src/platform/audit/logger.ts).
 
-Admins read it at `/dashboard/admin/audit`, backed by `GET /api/admin/audit`. A
-pinned admin sees their tenant. An unpinned operator also sees platform actions.
-A `send_message` row whose delivery WhatsApp did not confirm carries a "Entrega
-sin confirmar" mark; see [the send](./conversation.md#the-send).
+Admins read a business's entries on its Auditoría page
+(`/dashboard/<tenant id>/admin/audit`), backed by `GET /api/admin/audit`, which
+answers only the business the request names. Platform actions, with no tenant,
+stay in the table and are read with `wrangler d1 execute`. A `send_message` row
+whose delivery WhatsApp did not confirm carries a "Entrega sin confirmar" mark;
+see [the send](./conversation.md#the-send).
 
 ## Reading the database
 

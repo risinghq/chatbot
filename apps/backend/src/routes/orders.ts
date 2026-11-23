@@ -17,7 +17,6 @@ import { assignedAgentScope, hasRole } from "../platform/auth/scope.ts";
 import { refOf } from "../conversation/store.ts";
 import {
   activeTenantId,
-  requireActiveTenant,
   requireRole,
   requireTenantScope,
 } from "../middleware/auth.ts";
@@ -58,7 +57,7 @@ async function resolveCustomer(tenantId: string, ref: CustomerRef) {
 }
 
 app.get("/metrics", async (c) => {
-  return c.json(await OrderReads.metrics(c.get("scope").tenantId, agentOf(c)));
+  return c.json(await OrderReads.metrics(activeTenantId(c), agentOf(c)));
 });
 
 app.get("/", async (c) => {
@@ -73,7 +72,7 @@ app.get("/", async (c) => {
   const endDate = c.req.query("endDate");
 
   const orders = await OrderReads.list(
-    c.get("scope").tenantId,
+    activeTenantId(c),
     {
       status: status as OrderStatus | undefined,
       customerId: c.req.query("customer_id") || undefined,
@@ -107,7 +106,7 @@ app.get("/shipments", async (c) => {
   }
 
   const shipments = await OrderReads.shipments(
-    c.get("scope").tenantId,
+    activeTenantId(c),
     statuses as OrderStatus[],
     queryLimit(c, 100),
     agentOf(c),
@@ -136,7 +135,7 @@ app.get("/by-conversation/:phone", async (c) => {
 
 app.get("/:id", async (c) => {
   const order = await OrderReads.detail(
-    c.get("scope").tenantId,
+    activeTenantId(c),
     pathParam(c, "id"),
     agentOf(c),
   );
@@ -144,7 +143,7 @@ app.get("/:id", async (c) => {
   return c.json(order);
 });
 
-app.post("/", requireActiveTenant, requireOrderDesk, async (c) => {
+app.post("/", requireOrderDesk, async (c) => {
   const tenantId = activeTenantId(c);
   const body = await jsonObject(c);
   if (!body) {
@@ -186,7 +185,7 @@ app.post("/", requireActiveTenant, requireOrderDesk, async (c) => {
   return c.json(order, 201);
 });
 
-app.post("/:id/transition", requireActiveTenant, async (c) => {
+app.post("/:id/transition", async (c) => {
   const tenantId = activeTenantId(c);
   const id = pathParam(c, "id");
   const body = await jsonObject(c);
@@ -217,7 +216,7 @@ app.post("/:id/transition", requireActiveTenant, async (c) => {
   return c.json(order);
 });
 
-app.post("/:id/payments", requireActiveTenant, requireOrderDesk, async (c) => {
+app.post("/:id/payments", requireOrderDesk, async (c) => {
   const tenantId = activeTenantId(c);
   const id = pathParam(c, "id");
   const body = await jsonObject(c);
@@ -248,7 +247,6 @@ for (const [action, status] of [
 ] as const) {
   app.post(
     `/:id/payments/:paymentId/${action}`,
-    requireActiveTenant,
     requireMoneyDecision,
     async (c) => {
       const tenantId = activeTenantId(c);
@@ -276,7 +274,7 @@ for (const [action, status] of [
   );
 }
 
-app.patch("/:id/shipment", requireActiveTenant, requireOrderDesk, async (c) => {
+app.patch("/:id/shipment", requireOrderDesk, async (c) => {
   const tenantId = activeTenantId(c);
   const id = pathParam(c, "id");
   const body = await jsonObject(c);

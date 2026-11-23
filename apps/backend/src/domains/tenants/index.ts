@@ -33,7 +33,6 @@ export const TenantService = {
   /**
    * Whether the tenant is open for access. Suspension closes a business to
    * everyone, platform operators included, and a missing tenant is closed too.
-   * `canAccessTenant` in platform/auth/scope.ts applies it to unpinned callers.
    */
   isOpen: async (id: string): Promise<boolean> =>
     (

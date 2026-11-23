@@ -74,7 +74,7 @@ describe("the password minimum", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(cookie && { Cookie: cookie }),
+        ...(cookie && { Cookie: cookie, "X-Tenant-Id": tenant.tenantId }),
       },
       body: JSON.stringify(body),
     });

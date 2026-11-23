@@ -9,7 +9,6 @@ import type {
 import { goto } from "$app/navigation";
 import CustomerPicker from "#lib/components/orders/customer-picker.svelte";
 import ProductPicker from "#lib/components/orders/product-picker.svelte";
-import NeedsTenant from "#lib/components/shared/needs-tenant.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
@@ -156,9 +155,7 @@ async function submit() {
 	</a>
 	<PageHeader title="Nuevo pedido" subtitle="Registra una venta tomada por teléfono, en tienda o por chat." />
 
-	{#if !auth.activeTenantId}
-		<NeedsTenant />
-	{:else if !auth.canTakeOrders}
+	{#if !auth.canTakeOrders}
 		<div class="rounded-md border border-border bg-surface">
 			<EmptyState title="Sin permiso" description="Tu rol no puede registrar pedidos. Pídeselo a quien administra el negocio." />
 		</div>

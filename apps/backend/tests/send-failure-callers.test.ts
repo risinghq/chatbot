@@ -115,7 +115,11 @@ describe("a send WhatsApp did not accept", () => {
     function reply(content = "Hola, soy Ana") {
       return app.request(`/api/conversations/${CUSTOMER}/message`, {
         method: "POST",
-        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        headers: {
+          Cookie: cookie,
+          "X-Tenant-Id": tenant.tenantId,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ content }),
       });
     }

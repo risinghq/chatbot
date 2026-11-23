@@ -16,7 +16,6 @@ import { signedWebhookRequest } from "./helpers/webhook.ts";
 import { MessageStore } from "../src/adapters/whatsapp/message-store.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
-import { canAccessTenant } from "../src/platform/auth/scope.ts";
 import { OrderReads } from "../src/domains/orders/index.ts";
 import {
   listConversations,
@@ -33,6 +32,7 @@ import {
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { MembershipService } from "../src/domains/tenants/index.ts";
 import { seedProducts } from "../src/db/seeds/products.ts";
+import { TenantScopeRequiredError } from "../src/platform/auth/scope.ts";
 
 /**
  * The same customer phone number, messaging two different businesses. The
@@ -179,20 +179,14 @@ describe("tenant isolation", () => {
         storageKey: `${beta.tenantId}/contracts/x.pdf`,
       });
 
-      const alphaAdmin = await createMember(alpha, "admin");
-
+      // /api/assets/:id serves only what this scoped read returns.
       expect(
         await AssetService.getById(alpha.tenantId, betaAsset.id),
       ).toBeNull();
+      expect(
+        (await AssetService.getById(beta.tenantId, betaAsset.id))?.id,
+      ).toBe(betaAsset.id);
       expect(await AssetService.listForTenant(alpha.tenantId)).toHaveLength(0);
-
-      // This is the check /api/assets/:id makes before serving any bytes.
-      expect(await canAccessTenant(alphaAdmin.scope, betaAsset.tenant_id)).toBe(
-        false,
-      );
-      expect(await canAccessTenant(alphaAdmin.scope, alpha.tenantId)).toBe(
-        true,
-      );
     });
 
     it("does not return another tenant's LLM traces", async () => {
@@ -235,32 +229,29 @@ describe("tenant isolation", () => {
   });
 
   describe("platform operators", () => {
-    it("read across tenants only while unpinned, and are scoped once pinned", async () => {
+    it("read only the business they name, and none without one", async () => {
       await insertConversation(alphaRef, { clientName: "Alpha Client" });
       await insertConversation(betaRef, { clientName: "Beta Client" });
 
-      const unpinned = {
+      const noBusiness = {
         userId: "op-1",
         tenantId: null,
         membershipRole: null,
         isPlatformOperator: true,
       };
 
-      const acrossTenants = (await listConversations(unpinned, undefined))
-        .filter((r) => [alpha.tenantId, beta.tenantId].includes(r.tenant_id))
-        .map((r) => r.tenant_id);
-
-      expect(acrossTenants.sort()).toEqual(
-        [alpha.tenantId, beta.tenantId].sort(),
+      await expect(listConversations(noBusiness, undefined)).rejects.toThrow(
+        TenantScopeRequiredError,
       );
 
-      const pinned = { ...unpinned, tenantId: alpha.tenantId };
-      const scoped = await listConversations(pinned, undefined);
+      const inAlpha = { ...noBusiness, tenantId: alpha.tenantId };
+      const scoped = await listConversations(inAlpha, undefined);
 
+      expect(scoped.length).toBeGreaterThan(0);
       expect(scoped.every((r) => r.tenant_id === alpha.tenantId)).toBe(true);
     });
 
-    it("refuses a user who is neither a member nor platform staff", async () => {
+    it("refuses a user who names no business", async () => {
       await insertConversation(alphaRef, { clientName: "Alpha Client" });
 
       const outsider = {
@@ -270,9 +261,9 @@ describe("tenant isolation", () => {
         isPlatformOperator: false,
       };
 
-      expect(
-        (await lookupConversation(outsider, SHARED_PHONE, null)).status,
-      ).toBe("not_found");
+      await expect(
+        lookupConversation(outsider, SHARED_PHONE, null),
+      ).rejects.toThrow(TenantScopeRequiredError);
     });
   });
 

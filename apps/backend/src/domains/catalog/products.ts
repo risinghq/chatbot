@@ -24,12 +24,8 @@ const EDITABLE: readonly (keyof ProductFields)[] = [
   "specs_json",
 ];
 
-/**
- * `tenantId` null reads across tenants (platform operators only). Writes always
- * take a concrete tenant.
- */
 export const ProductService = {
-  getAll: async (tenantId: string | null): Promise<Product[]> => {
+  getAll: async (tenantId: string): Promise<Product[]> => {
     const rows = await db
       .selectFrom("products as p")
       .selectAll("p")
@@ -66,10 +62,7 @@ export const ProductService = {
     }));
   },
 
-  getById: async (
-    tenantId: string | null,
-    id: string,
-  ): Promise<Product | null> =>
+  getById: async (tenantId: string, id: string): Promise<Product | null> =>
     (await db
       .selectFrom("products")
       .selectAll()
@@ -127,7 +120,7 @@ export const ProductService = {
     return await ProductService.getById(tenantId, id);
   },
 
-  getCategories: async (tenantId: string | null): Promise<string[]> => {
+  getCategories: async (tenantId: string): Promise<string[]> => {
     const rows = await db
       .selectFrom("products")
       .select("category")

@@ -22,11 +22,7 @@ import { tenantSetupStatus } from "../../domains/tenants/setup.ts";
 import { clearFnbState } from "../../adapters/providers/fnb-client.ts";
 import { getRecentLLMCalls } from "../../intelligence/tracker.ts";
 import { queryLimit } from "../../lib/http.ts";
-import {
-  activeTenantId,
-  requireActiveTenant,
-  requireTenantScope,
-} from "../../middleware/auth.ts";
+import { activeTenantId, requireTenantScope } from "../../middleware/auth.ts";
 import { db, tenantScope, withoutTenantScope } from "../../db/index.ts";
 
 const system = new Hono();
@@ -34,7 +30,7 @@ const system = new Hono();
 system.use("/*", requireTenantScope);
 
 system.get("/llm-errors", async (c) => {
-  const scope = c.get("scope");
+  const tenantId = activeTenantId(c);
   const phoneFilter = c.req.query("phone");
   const operationFilter = c.req.query("operation");
   const limit = queryLimit(c, 100);
@@ -51,7 +47,7 @@ system.get("/llm-errors", async (c) => {
       "created_at",
     ])
     .where("status", "=", "error")
-    .where(tenantScope(scope.tenantId))
+    .where(tenantScope(tenantId))
     .$if(Boolean(phoneFilter), (q) =>
       q.where("phone_number", "=", phoneFilter!),
     )
@@ -73,16 +69,15 @@ system.get("/llm-errors", async (c) => {
 system.get("/llm-calls", async (c) => {
   const limit = queryLimit(c, 50);
   return c.json({
-    calls: await getRecentLLMCalls(c.get("scope").tenantId, limit),
+    calls: await getRecentLLMCalls(activeTenantId(c), limit),
   });
 });
 
 system.get("/audit", async (c) => {
-  const scope = c.get("scope");
   const userIdFilter = c.req.query("user_id");
   const limit = queryLimit(c, 100);
 
-  const logs = await getAuditTrail(scope.tenantId, userIdFilter, limit);
+  const logs = await getAuditTrail(activeTenantId(c), userIdFilter, limit);
 
   const userIds = [
     ...new Set(logs.flatMap((l) => (l.user_id === null ? [] : [l.user_id]))),
@@ -112,22 +107,15 @@ system.get("/audit", async (c) => {
 
 /**
  * What the active business still needs before it can sell. The dashboard's
- * setup checklist reads this; a caller with no tenant pinned has no business
- * to report on, so `activeTenantId` refuses it.
+ * setup checklist reads this.
  */
-system.get("/setup-status", requireActiveTenant, async (c) => {
+system.get("/setup-status", async (c) => {
   return c.json(await tenantSetupStatus(activeTenantId(c)));
 });
 
 system.get("/settings", async (c) => {
-  const scope = c.get("scope");
+  const tenantId = activeTenantId(c);
   const platform = await SystemSettings.getAll();
-
-  if (!scope.tenantId) {
-    // A platform operator with no tenant selected reads every platform setting
-    // under its own name.
-    return c.json({ ...platform, _scope: "platform" });
-  }
 
   // The dashboard posts back whatever this returns. Internal rows are dropped
   // here as well as refused on the write, so a save never resubmits the
@@ -136,7 +124,7 @@ system.get("/settings", async (c) => {
   // server, and a plaintext row written straight into `tenant_settings` would
   // otherwise be handed to the browser.
   const tenant = Object.fromEntries(
-    Object.entries(await TenantSettings.getAll(scope.tenantId)).filter(
+    Object.entries(await TenantSettings.getAll(tenantId)).filter(
       ([key]) =>
         !isInternalTenantSettingKey(key) && !isTenantSecretSettingKey(key),
     ),
@@ -150,7 +138,7 @@ system.get("/settings", async (c) => {
         async (key) =>
           [
             `_has_${key}`,
-            (await TenantSecrets.has(scope.tenantId!, key)) ? "true" : "false",
+            (await TenantSecrets.has(tenantId, key)) ? "true" : "false",
           ] as const,
       ),
     ),
@@ -180,36 +168,11 @@ system.get("/settings", async (c) => {
 
 system.post("/settings", async (c) => {
   const user = c.get("user");
-  const scope = c.get("scope");
+  const tenantId = activeTenantId(c);
   const settings = await c.req.json();
 
   const updates: Record<string, string> = {};
   const rejected: string[] = [];
-
-  if (!scope.tenantId) {
-    // Platform operator, no tenant selected: writes land on platform config.
-    for (const [key, value] of Object.entries(settings)) {
-      if (key.startsWith("_")) continue;
-      // A tenant secret has no meaning at platform scope, and storing it here
-      // would keep a plaintext password.
-      if (isTenantSecretSettingKey(key)) {
-        rejected.push(key);
-        continue;
-      }
-      await SystemSettings.set(key, String(value));
-      updates[key] = String(value);
-    }
-
-    await logAction(
-      { userId: user.id, tenantId: null },
-      "update_platform_settings",
-      "system",
-      null,
-      updates,
-    );
-
-    return c.json({ success: true, updates, rejected, scope: "platform" });
-  }
 
   // Checked before anything is written, so a wrong key fails the whole save
   // and the business hears it now, not in a customer's conversation.
@@ -244,26 +207,26 @@ system.post("/settings", async (c) => {
     if (isTenantSecretSettingKey(key)) {
       const text = String(value);
       if (text) {
-        await TenantSecrets.set(scope.tenantId, key, text);
+        await TenantSecrets.set(tenantId, key, text);
         updates[key] = "<stored>";
       } else {
-        await TenantSecrets.clear(scope.tenantId, key);
+        await TenantSecrets.clear(tenantId, key);
         updates[key] = "<cleared>";
       }
       continue;
     }
-    await TenantSettings.set(scope.tenantId, key, String(value));
+    await TenantSettings.set(tenantId, key, String(value));
     updates[key] = String(value);
   }
 
   // A changed Cálidda login must not keep the old account's session token or
   // a block the old credentials caused. The next check re-authenticates.
   if (Object.keys(settings).some((key) => key.startsWith("calidda_"))) {
-    await clearFnbState(scope.tenantId);
+    await clearFnbState(tenantId);
   }
 
   await logAction(
-    { userId: user.id, tenantId: scope.tenantId },
+    { userId: user.id, tenantId },
     "update_settings",
     "system",
     null,

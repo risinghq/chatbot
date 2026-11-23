@@ -18,6 +18,7 @@ import customers from "./routes/customers.ts";
 import { deliveryZones, paymentMethods } from "./routes/order-settings.ts";
 import health from "./routes/health.ts";
 import orders from "./routes/orders.ts";
+import platform from "./routes/platform.ts";
 import providerRoutes from "./routes/providers.ts";
 import reports from "./routes/reports.ts";
 import simulator from "./routes/simulator.ts";
@@ -80,6 +81,7 @@ app.route("/api/admin", admin);
 
 app.route("/api/reports", reports);
 app.route("/api/providers", providerRoutes);
+app.route("/api/platform", platform);
 
 app.onError(errorHandler);
 
