@@ -116,6 +116,11 @@ simulator.post("/conversations", async (c) => {
   return c.json(await ensureConversation(ref, true));
 });
 
+// What the simulator needs before a message can get an answer.
+simulator.get("/status", async (c) =>
+  c.json({ hasOpenAiKey: await hasOpenAiApiKey(activeTenantId(c)) }),
+);
+
 // Send message in simulator
 simulator.post("/message", async (c) => {
   const { phoneNumber, message } = await c.req.json();
