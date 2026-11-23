@@ -1,4 +1,5 @@
 <script lang="ts">
+import { businessPath } from "#lib/state/business.svelte.js";
 import type { Conversation } from "@vendeya/types";
 import EmptyState from "#lib/components/ui/empty-state.svelte";
 import ConversationItem from "./conversation-item.svelte";
@@ -30,7 +31,7 @@ function conversationKey(conv: Conversation): string {
 		{#each conversations as conv (conversationKey(conv))}
 			<ConversationItem
 				conversation={conv}
-				href="/dashboard/conversations/{conv.phone_number}?channel={conv.channel_account_id}"
+				href="{businessPath()}/conversations/{conv.phone_number}?channel={conv.channel_account_id}"
 			/>
 		{/each}
 

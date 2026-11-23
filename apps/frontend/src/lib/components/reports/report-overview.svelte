@@ -4,9 +4,17 @@ import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import DataTable from "#lib/components/ui/data-table.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
-import { auth } from "#lib/state/auth.svelte.js";
+import { goto } from "$app/navigation";
+import { apiFetch } from "#lib/utils/api.js";
 import { limaDateString } from "#lib/utils/formatters.js";
 import { formatCents } from "#lib/utils/money.js";
+
+/** One business's summary, or the platform's with a line per business. */
+let { scope }: { scope: "business" | "platform" } = $props();
+
+const endpoint = $derived(
+  scope === "platform" ? "/api/reports/summary/all" : "/api/reports/summary",
+);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -31,7 +39,7 @@ $effect(() => {
   // A slow answer for an earlier period must not replace a newer one.
   let current = true;
   failed = false;
-  fetch(`/api/reports/summary?${params}`)
+  apiFetch(`${endpoint}?${params}`)
     .then((res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json() as Promise<ReportSummary>;
@@ -148,7 +156,7 @@ const dayTitle = (day: ReportDay) =>
 			data={summary.businesses}
 			keyField="tenantId"
 			emptyMessage="No hay negocios activos."
-			onRowClick={(b) => auth.selectTenant(b.tenantId)}
+			onRowClick={(b) => goto(`/dashboard/${b.tenantId}/reports`)}
 			columns={[
 				{ header: "Negocio", cell: nameCell },
 				{ header: "Contactos", cell: contactsCell, align: "right" },

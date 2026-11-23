@@ -1,13 +1,14 @@
 <script lang="ts">
+import { businessPath } from "#lib/state/business.svelte.js";
 import { page } from "$app/state";
 import { auth } from "#lib/state/auth.svelte.js";
 
 let { class: className = "" }: { class?: string } = $props();
 
 const tabs = $derived([
-  { href: "/dashboard/asistente", label: "Configuración" },
+  { href: businessPath("/asistente"), label: "Configuración" },
   ...(auth.canAccessSimulator
-    ? [{ href: "/dashboard/asistente/probar", label: "Probar" }]
+    ? [{ href: businessPath("/asistente/probar"), label: "Probar" }]
     : []),
 ]);
 </script>

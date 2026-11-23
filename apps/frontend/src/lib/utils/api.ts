@@ -11,6 +11,36 @@ export class ApiError extends Error {
   }
 }
 
+/** The header that names the business a request acts in. */
+export const TENANT_HEADER = "X-Tenant-Id";
+
+const BUSINESS_PATH =
+  /^\/dashboard\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
+
+/** The business a dashboard path is in, or null outside one. */
+export function businessInPath(pathname: string): string | null {
+  return BUSINESS_PATH.exec(pathname)?.[1] ?? null;
+}
+
+/**
+ * `fetch` for the backend. In the browser a request names the business of the
+ * page it comes from, so two tabs can work in two businesses. A server load
+ * gets the same header from `handleFetch` in hooks.server.ts.
+ */
+export function apiFetch(
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const business =
+    typeof window === "undefined"
+      ? null
+      : businessInPath(window.location.pathname);
+  if (!business) return fetch(url, init);
+  const headers = new Headers(init.headers);
+  if (!headers.has(TENANT_HEADER)) headers.set(TENANT_HEADER, business);
+  return fetch(url, { ...init, headers });
+}
+
 export async function fetchApi<T>(
   endpoint: string,
   options: FetchOptions = {},
@@ -23,7 +53,7 @@ export async function fetchApi<T>(
     url = `${endpoint}?${query}`;
   }
 
-  const response = await fetch(url, init);
+  const response = await apiFetch(url, init);
 
   if (!response.ok) {
     const error = await response

@@ -1,5 +1,6 @@
-import type { Handle } from "@sveltejs/kit/hooks";
+import type { Handle, HandleFetch } from "@sveltejs/kit/hooks";
 import { env } from "cloudflare:workers";
+import { TENANT_HEADER } from "#lib/utils/api.js";
 
 /**
  * The backend answers /api and /media. In production its Worker routes catch
@@ -11,17 +12,31 @@ function isBackendPath(pathname: string): boolean {
   return pathname.startsWith("/api/") || pathname.startsWith("/media/");
 }
 
+const redirectTo = (location: string) =>
+  new Response(null, { status: 302, headers: { location } });
+
 export const handle: Handle = async ({ event, resolve }) => {
   if (isBackendPath(event.url.pathname)) {
     return env.BACKEND.fetch(event.request);
   }
 
+  // A page under /dashboard/[tenantId] acts in that business. The session is
+  // read in it, so `locals.user` carries the role the user has there.
+  const business = event.params.tenantId ?? null;
+
   const sessionToken = event.cookies.get("session");
   if (sessionToken) {
+    const headers: Record<string, string> = {
+      cookie: `session=${sessionToken}`,
+    };
+    if (business) headers[TENANT_HEADER] = business;
     const response = await env.BACKEND.fetch(
       new URL("/api/auth/me", event.url),
-      { headers: { cookie: `session=${sessionToken}` } },
+      { headers },
     ).catch(() => null);
+
+    // The business does not exist, is closed, or is not the user's.
+    if (business && response?.status === 404) return redirectTo("/dashboard");
 
     if (response?.ok) {
       const data = await response.json<{ user: App.Locals["user"] }>();
@@ -30,11 +45,23 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   if (event.url.pathname.startsWith("/dashboard") && !event.locals.user) {
-    return new Response(null, {
-      status: 302,
-      headers: { location: "/login" },
-    });
+    return redirectTo("/login");
   }
 
   return resolve(event);
+};
+
+/** A server load's request to the backend names the page's business. */
+export const handleFetch: HandleFetch = ({ event, request, fetch }) => {
+  const business = event.params.tenantId;
+  const url = new URL(request.url);
+  if (
+    business &&
+    url.origin === event.url.origin &&
+    url.pathname.startsWith("/api/") &&
+    !request.headers.has(TENANT_HEADER)
+  ) {
+    request.headers.set(TENANT_HEADER, business);
+  }
+  return fetch(request);
 };

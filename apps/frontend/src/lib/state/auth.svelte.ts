@@ -1,7 +1,6 @@
 import { browser } from "$app/env";
 import { page } from "$app/state";
 import { fetchApi } from "#lib/utils/api.js";
-import { showTenantSelector } from "#lib/state/tenant-switching.js";
 
 type User = {
   email: string;
@@ -116,13 +115,6 @@ function createAuthState() {
     get tenants() {
       return state.tenants;
     },
-    get canSwitchTenant() {
-      return showTenantSelector({
-        tenantCount: state.tenants.length,
-        activeTenantId: this.activeTenantId,
-        isPlatformOperator: this.isPlatformOperator,
-      });
-    },
     get isAvailable() {
       return sessionUser()?.isAvailable === true;
     },
@@ -163,21 +155,6 @@ function createAuthState() {
         }
       } catch {
         state.tenants = [];
-      }
-    },
-    /**
-     * Repoint the session at another tenant. The whole dashboard is scoped to
-     * it, so the page is reloaded rather than trying to invalidate every store.
-     */
-    async selectTenant(tenantId: string | null) {
-      await fetchApi("/api/tenants/active", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId }),
-      });
-
-      if (browser) {
-        window.location.reload();
       }
     },
     async logout() {
