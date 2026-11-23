@@ -117,7 +117,17 @@ export {
 } from "./orders.ts";
 export { MIN_PASSWORD_LENGTH } from "./accounts.ts";
 export type { AssistantModel, AssistantSettings } from "./assistant.ts";
-export { ASSISTANT_MODELS, ASSISTANT_TEXT_LIMIT } from "./assistant.ts";
+export {
+  ASSISTANT_MODELS,
+  ASSISTANT_TEXT_LIMIT,
+  MODEL_PRICES,
+} from "./assistant.ts";
+export type {
+  ReportBusiness,
+  ReportDay,
+  ReportProduct,
+  ReportSummary,
+} from "./reports.ts";
 export {
   isTenantSecretSettingKey,
   TENANT_SECRET_SETTING_KEYS,

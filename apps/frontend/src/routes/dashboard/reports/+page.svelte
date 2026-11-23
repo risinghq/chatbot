@@ -1,4 +1,5 @@
 <script lang="ts">
+import ReportOverview from "#lib/components/reports/report-overview.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
@@ -95,10 +96,14 @@ async function generateOrders(e: Event) {
 
 <PageTitle title="Reportes" />
 
-<Page width="narrow">
-	<PageHeader title="Reportes" subtitle="Descarga los datos en Excel." />
+<Page>
+	<PageHeader title="Reportes" subtitle="Cómo van las ventas, y los datos en Excel." />
 
-	<div class="flex flex-col gap-6">
+	<div class="mb-6 flex flex-col gap-6">
+		<ReportOverview />
+	</div>
+
+	<div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
 		<form onsubmit={generateActivity}>
 			<SectionShell
 				title="Actividad"

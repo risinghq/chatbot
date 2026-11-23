@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { ORDER_STATUSES, type OrderStatus } from "@vendeya/types";
 import { limaDateString, limaDayBounds, limaRangeEdge } from "../db/query.ts";
 import { ReportService } from "../domains/reports/index.ts";
+import { reportSummary } from "../domains/reports/summary.ts";
 import { requireRole, requireTenantScope } from "../middleware/auth.ts";
 
 const XLSX_TYPE =
@@ -20,6 +21,33 @@ reports.get("/today-count", async (c) => {
     c.get("scope").tenantId,
   );
   return c.json({ count });
+});
+
+/** Longest range the summary answers, so its day series stays a page long. */
+const SUMMARY_MAX_DAYS = 366;
+
+reports.get("/summary", async (c) => {
+  const startDateStr = c.req.query("startDate");
+  const endDateStr = c.req.query("endDate");
+  const startMs = startDateStr
+    ? limaRangeEdge(startDateStr, "start", "startDate")
+    : limaDayBounds()[0];
+  const endMs = endDateStr
+    ? limaRangeEdge(endDateStr, "end", "endDate")
+    : limaDayBounds()[1];
+  if (endMs < startMs) {
+    return c.json({ error: "endDate must not be before startDate" }, 400);
+  }
+  if (endMs - startMs >= SUMMARY_MAX_DAYS * 24 * 60 * 60 * 1000) {
+    return c.json(
+      { error: `the range must be at most ${SUMMARY_MAX_DAYS} days` },
+      400,
+    );
+  }
+
+  return c.json(
+    await reportSummary({ tenantId: c.get("scope").tenantId, startMs, endMs }),
+  );
 });
 
 reports.get("/activity", async (c) => {

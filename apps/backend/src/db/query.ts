@@ -120,6 +120,19 @@ export function limaDateString(timestamp: number): string {
   return new Date(timestamp - LIMA_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** Every Lima calendar date from the one holding `startMs` to the one holding `endMs`. */
+export function limaDates(startMs: number, endMs: number): string[] {
+  const dates: string[] = [];
+  for (let at = limaDayBounds(undefined, startMs)[0]; at <= endMs; at += DAY_MS)
+    dates.push(limaDateString(at));
+  return dates;
+}
+
+/** SQL for the Lima calendar date `YYYY-MM-DD` of a ms timestamp column. */
+export function limaDateSql(column: string): string {
+  return `strftime('%Y-%m-%d', (${column} - ${LIMA_OFFSET_MS}) / 1000, 'unixepoch')`;
+}
+
 /**
  * One end of a query range in ms. A `YYYY-MM-DD` value opens or closes that Lima
  * day. An ISO timestamp with a zone is taken as the exact instant.
