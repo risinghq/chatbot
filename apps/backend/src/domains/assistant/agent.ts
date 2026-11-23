@@ -13,6 +13,7 @@ import { caliddaLogin } from "../settings/calidda.ts";
 import { TenantService } from "../tenants/index.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { AssistantSettingsService } from "./settings.ts";
+import { toWhatsAppText } from "./whatsapp-text.ts";
 import {
   runTool,
   toolsFor,
@@ -232,7 +233,10 @@ export async function runAgent(input: {
     }
 
     if (!allowTools || completion.toolCalls.length === 0) {
-      return { reply: completion.content?.trim() ?? "", effects };
+      return {
+        reply: toWhatsAppText(completion.content?.trim() ?? ""),
+        effects,
+      };
     }
 
     messages.push({
