@@ -28,7 +28,14 @@ stock.get("/", async (c) => {
   if (locationId && !(await StockService.getLocation(tenantId, locationId))) {
     return c.json({ error: "Location not found" }, 404);
   }
-  return c.json(await StockService.levels(tenantId, locationId));
+  const productId = c.req.query("product_id") || undefined;
+  return c.json(
+    await StockService.levels(
+      tenantId,
+      locationId,
+      productId ? [productId] : undefined,
+    ),
+  );
 });
 
 stock.get("/locations", async (c) => {

@@ -5,6 +5,7 @@ import type {
   StockMovementKind,
   StockRow,
 } from "@vendeya/types";
+import { page } from "$app/state";
 import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { auth } from "#lib/state/auth.svelte.js";
 import { toast } from "#lib/state/toast.svelte.js";
@@ -62,8 +63,16 @@ async function load() {
   }
 }
 
+// A product page links here with `?variant=` to register that variant's stock.
+let requestedVariant = page.url.searchParams.get("variant");
+
 $effect(() => {
-  if (data.user?.activeTenantId) load();
+  if (!data.user?.activeTenantId) return;
+  load().then(() => {
+    const row = requestedVariant && rowByVariant.get(requestedVariant);
+    requestedVariant = null;
+    if (row && canMove) openMove(row);
+  });
 });
 
 // Manual movements. Orders reserve, release and ship on their own.

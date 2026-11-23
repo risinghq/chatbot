@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ProductVariant } from "@vendeya/types";
+import type { ProductVariant, StockRow } from "@vendeya/types";
 import { toast } from "#lib/state/toast.svelte.js";
 import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { formatCents, parseCents } from "#lib/utils/money.js";
@@ -14,10 +14,16 @@ import SectionShell from "#lib/components/ui/section-shell.svelte";
 type Props = {
   productId: string;
   variants: ProductVariant[];
+  /** The product's stock rows, summed over every location. */
+  stock: StockRow[];
   canEdit: boolean;
 };
 
-let { productId, variants: initial, canEdit }: Props = $props();
+let { productId, variants: initial, stock, canEdit }: Props = $props();
+
+let available = $derived(
+  new Map(stock.map((row) => [row.variant_id, row.available])),
+);
 
 let saved = $state<ProductVariant[] | null>(null);
 let variants = $derived(saved ?? initial);
@@ -112,12 +118,13 @@ const columns = [
   },
   { header: "Precio", cell: priceCell, align: "right" as const },
   { header: "Costo", cell: costCell, align: "right" as const },
+  { header: "Disponible", cell: stockCell, align: "right" as const },
 ];
 </script>
 
 <SectionShell
   title="Variantes"
-  description="Cada variante tiene su SKU, precio y stock. Un producto de una sola forma lleva una variante sin nombre."
+  description="Cada variante tiene su SKU, precio y stock. Un producto de una sola forma lleva una variante sin nombre. El stock se registra en Inventario."
 >
   {#snippet action()}
     {#if canEdit}
@@ -189,4 +196,15 @@ const columns = [
 
 {#snippet costCell(v: ProductVariant)}
   <span class="text-fg-muted tabular-nums">{formatCents(v.cost_cents)}</span>
+{/snippet}
+
+<!-- The row click edits the variant, so the link keeps its click to itself. -->
+{#snippet stockCell(v: ProductVariant)}
+  <a
+    href="/dashboard/inventario?variant={encodeURIComponent(v.id)}"
+    class="text-accent-text tabular-nums hover:underline"
+    onclick={(e) => e.stopPropagation()}
+  >
+    {available.get(v.id) ?? 0}
+  </a>
 {/snippet}
