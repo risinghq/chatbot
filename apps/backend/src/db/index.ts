@@ -53,6 +53,29 @@ export function tenantScope(tenantId: string | null, column = "tenant_id") {
     tenantId ? eb(eb.ref(column), "=", tenantId) : inOpenTenants(eb, column);
 }
 
+/**
+ * Accounts a background worker may send on: a send on a `pending` or
+ * `disabled` number is refused, so a query that dequeues work leaves those
+ * accounts out. `column` is the outer channel_account_id reference and
+ * `tenantColumn` the qualified tenant_id of the same outer row, which ties
+ * the account to a tenant for the scope check.
+ */
+export function inActiveChannelAccounts(
+  eb: ExpressionBuilder<Database, any>,
+  column: string,
+  tenantColumn: string,
+): Expression<SqlBool> {
+  return eb(
+    eb.ref(column),
+    "in",
+    eb
+      .selectFrom("channel_accounts as ca")
+      .select("ca.id")
+      .where("ca.status", "=", "active")
+      .whereRef("ca.tenant_id", "=", tenantColumn as never),
+  );
+}
+
 /** What D1 binds. `undefined` is bound as NULL, as an absent optional field means. */
 export type Binding = string | number | boolean | null | undefined;
 
