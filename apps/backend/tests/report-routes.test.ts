@@ -16,7 +16,7 @@ import {
 import process from "node:process";
 import { Hono } from "hono";
 import * as XLSX from "xlsx";
-import { run } from "../src/db/index.ts";
+import { run } from "./helpers/db.ts";
 import { TenantSecrets } from "../src/domains/settings/tenant-secrets.ts";
 
 import {

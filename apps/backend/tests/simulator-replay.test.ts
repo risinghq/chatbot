@@ -16,7 +16,7 @@ import {
   type TenantFixture,
 } from "./helpers/tenancy.ts";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import {
   createSession,

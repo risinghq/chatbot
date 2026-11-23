@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as XLSX from "xlsx";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import {
   createTenantFixture,
   createMember,

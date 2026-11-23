@@ -1,6 +1,7 @@
 import { newId } from "@vendeya/utils";
 import type { ConversationStatus } from "@vendeya/types";
-import { batch, getOne, stmt } from "../index.ts";
+import type { Compilable } from "kysely";
+import { batch, db } from "../index.ts";
 
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -94,19 +95,27 @@ export const TEST_CONVERSATIONS: TestConversation[] = [
 ];
 
 export async function seedTestData(tenantId: string, channelAccountId: string) {
-  const exists = await getOne(
-    "SELECT 1 FROM conversations WHERE tenant_id = ? LIMIT 1",
-    [tenantId],
-  );
+  const exists = await db
+    .selectFrom("conversations")
+    .select("tenant_id")
+    .where("tenant_id", "=", tenantId)
+    .limit(1)
+    .executeTakeFirst();
   if (exists) return;
 
   const now = Date.now();
-  const statements: D1PreparedStatement[] = [];
+  const statements: Compilable[] = [];
 
   // The fixture names an agent by id. The seeds create no user accounts, so
   // link the agent only when that user exists.
   const agentExists = async (id: string): Promise<boolean> =>
-    Boolean(await getOne("SELECT 1 FROM users WHERE id = ?", [id]));
+    Boolean(
+      await db
+        .selectFrom("users")
+        .select("id")
+        .where("id", "=", id)
+        .executeTakeFirst(),
+    );
 
   for (const conversation of TEST_CONVERSATIONS) {
     const lastActivityAt =
@@ -122,33 +131,24 @@ export async function seedTestData(tenantId: string, channelAccountId: string) {
         : null;
 
     statements.push(
-      stmt(
-        `INSERT INTO customers (id, tenant_id, name, phone, document_type, document_number)
-         VALUES (?, ?, ?, ?, 'dni', ?)`,
-        [
-          newId(),
-          tenantId,
-          conversation.clientName,
-          conversation.phoneNumber,
-          conversation.dni,
-        ],
-      ),
-      stmt(
-        `INSERT INTO conversations (
-          tenant_id, channel_account_id, phone_number, status, assigned_agent,
-          assignment_notified_at, is_simulation, last_activity_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          tenantId,
-          channelAccountId,
-          conversation.phoneNumber,
-          conversation.status,
-          assignedAgent,
-          assignmentNotifiedAt,
-          0,
-          lastActivityAt,
-        ],
-      ),
+      db.insertInto("customers").values({
+        id: newId(),
+        tenant_id: tenantId,
+        name: conversation.clientName,
+        phone: conversation.phoneNumber,
+        document_type: "dni",
+        document_number: conversation.dni,
+      }),
+      db.insertInto("conversations").values({
+        tenant_id: tenantId,
+        channel_account_id: channelAccountId,
+        phone_number: conversation.phoneNumber,
+        status: conversation.status,
+        assigned_agent: assignedAgent,
+        assignment_notified_at: assignmentNotifiedAt,
+        is_simulation: 0,
+        last_activity_at: lastActivityAt,
+      }),
     );
 
     for (const message of conversation.messages) {
@@ -157,21 +157,16 @@ export async function seedTestData(tenantId: string, channelAccountId: string) {
       const createdAt = now + message.offsetMs;
 
       statements.push(
-        stmt(
-          `INSERT INTO messages (
-            id, tenant_id, channel_account_id, phone_number, direction, type, content, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            messageId,
-            tenantId,
-            channelAccountId,
-            conversation.phoneNumber,
-            direction,
-            "text",
-            message.text,
-            createdAt,
-          ],
-        ),
+        db.insertInto("messages").values({
+          id: messageId,
+          tenant_id: tenantId,
+          channel_account_id: channelAccountId,
+          phone_number: conversation.phoneNumber,
+          direction,
+          type: "text",
+          content: message.text,
+          created_at: createdAt,
+        }),
       );
     }
   }

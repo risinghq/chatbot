@@ -350,7 +350,7 @@ async function recordTurn(
   handOff: HandOff | null,
   inboxIds: string | undefined,
 ): Promise<void> {
-  const statements: (D1PreparedStatement | Compilable)[] = [
+  const statements: Compilable[] = [
     handOff ? handOffUpdate(ref, handOff.reason) : activityUpdate(ref),
   ];
   if (inboxIds) statements.push(markAsProcessed(inboxIds));

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import { notificationRules } from "../src/domains/notifications/config.ts";
 import { evaluateNotifications } from "../src/domains/notifications/evaluator.ts";
 import {

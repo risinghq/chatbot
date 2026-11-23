@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { getOne } from "../src/db/index.ts";
+import { getOne } from "./helpers/db.ts";
 import { createTenantFixture, type TenantFixture } from "./helpers/tenancy.ts";
 import { chunkedSpaces, signWebhookBody } from "./helpers/webhook.ts";
 

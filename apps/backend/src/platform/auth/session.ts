@@ -231,8 +231,8 @@ export async function validateSessionToken(
 
     // A member whose pin is dropped has no tenant scope, so `requireTenantScope`
     // refuses them. For a platform operator no pin is the cross-tenant view, so
-    // the reads exclude suspended tenants themselves (`tenantPredicate` in
-    // db/query.ts, `canAccessTenant` in auth/scope.ts). POST /api/tenants/active
+    // the reads exclude suspended tenants themselves (`tenantScope` in
+    // db/index.ts, `canAccessTenant` in auth/scope.ts). POST /api/tenants/active
     // refuses a suspended tenant.
     if (!tenantIsOpen || !stillAMember) {
       await setSessionTenant(session.id, null);

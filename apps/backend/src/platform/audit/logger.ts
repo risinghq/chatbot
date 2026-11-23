@@ -1,7 +1,12 @@
 import { newId } from "@vendeya/utils";
-import { tenantOrPlatformPredicate } from "../../db/query.ts";
+import type { Compilable } from "kysely";
 import type { AuditLog } from "@vendeya/types";
-import { type Binding, getAll, stmt } from "../../db/index.ts";
+import {
+  batch,
+  db,
+  inOpenTenants,
+  withoutTenantScope,
+} from "../../db/index.ts";
 
 /**
  * Who did it and inside which tenant. `tenantId` is null only for actions taken
@@ -42,21 +47,17 @@ function insert(
   resourceType: string,
   resourceId: string | null,
   metadata: Record<string, any>,
-): D1PreparedStatement {
-  return stmt(
-    `INSERT INTO audit_log (id, tenant_id, user_id, actor, action, resource_type, resource_id, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      newId(),
-      tenantId,
-      userId,
-      actor,
-      action,
-      resourceType,
-      resourceId,
-      JSON.stringify(metadata),
-    ],
-  );
+): Compilable {
+  return db.insertInto("audit_log").values({
+    id: newId(),
+    tenant_id: tenantId,
+    user_id: userId,
+    actor,
+    action,
+    resource_type: resourceType,
+    resource_id: resourceId,
+    metadata: JSON.stringify(metadata),
+  });
 }
 
 /** The audit row for a dashboard action, for a caller that batches it with the change. */
@@ -66,7 +67,7 @@ export function auditStatement(
   resourceType: string,
   resourceId: string | null = null,
   metadata: Record<string, any> = {},
-): D1PreparedStatement {
+): Compilable {
   return insert(
     `user:${actor.userId}`,
     actor.userId,
@@ -86,7 +87,7 @@ export function cliAuditStatement(
   resourceType: string,
   resourceId: string | null,
   metadata: Record<string, any> = {},
-): D1PreparedStatement {
+): Compilable {
   return insert(
     `cli:${operator.name}`,
     null,
@@ -105,7 +106,9 @@ export async function logAction(
   resourceId: string | null = null,
   metadata: Record<string, any> = {},
 ): Promise<void> {
-  await auditStatement(actor, action, resourceType, resourceId, metadata).run();
+  await batch([
+    auditStatement(actor, action, resourceType, resourceId, metadata),
+  ]);
 }
 
 /**
@@ -118,23 +121,18 @@ export async function getAuditTrail(
   userId?: string,
   limit: number = 100,
 ): Promise<AuditLog[]> {
-  const conditions: string[] = [];
-  const params: Binding[] = [];
+  const scoped = tenantId
+    ? db.selectFrom("audit_log").selectAll().where("tenant_id", "=", tenantId)
+    : withoutTenantScope(
+        "a platform audit row carries a null tenant_id no value ties",
+      )
+        .selectFrom("audit_log")
+        .selectAll()
+        .where((eb) => eb.or([eb("tenant_id", "is", null), inOpenTenants(eb)]));
 
-  conditions.push(tenantOrPlatformPredicate(tenantId));
-  if (tenantId) params.push(tenantId);
-  if (userId) {
-    conditions.push("user_id = ?");
-    params.push(userId);
-  }
-
-  params.push(limit);
-
-  return getAll<AuditLog>(
-    `SELECT * FROM audit_log
-     WHERE ${conditions.join(" AND ")}
-     ORDER BY created_at DESC
-     LIMIT ?`,
-    params,
-  );
+  return (await scoped
+    .$if(Boolean(userId), (q) => q.where("user_id", "=", userId!))
+    .orderBy("created_at", "desc")
+    .limit(limit)
+    .execute()) as AuditLog[];
 }

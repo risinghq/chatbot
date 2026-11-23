@@ -1,7 +1,6 @@
 import { newId } from "@vendeya/utils";
-import { tenantPredicate } from "../../db/query.ts";
 import type { Asset, AssetKind, AssetVisibility } from "@vendeya/types";
-import { getAll, getOne, run } from "../../db/index.ts";
+import { db, tenantScope } from "../../db/index.ts";
 
 export const AssetService = {
   create: async (data: {
@@ -16,20 +15,19 @@ export const AssetService = {
   }): Promise<Asset> => {
     const id = data.id ?? newId();
 
-    await run(
-      `INSERT INTO assets (id, tenant_id, kind, visibility, storage_key, content_type, byte_size, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+    await db
+      .insertInto("assets")
+      .values({
         id,
-        data.tenantId,
-        data.kind,
-        data.visibility,
-        data.storageKey,
-        data.contentType ?? null,
-        data.byteSize ?? null,
-        data.createdBy ?? null,
-      ],
-    );
+        tenant_id: data.tenantId,
+        kind: data.kind,
+        visibility: data.visibility,
+        storage_key: data.storageKey,
+        content_type: data.contentType ?? null,
+        byte_size: data.byteSize ?? null,
+        created_by: data.createdBy ?? null,
+      })
+      .execute();
 
     return (await AssetService.getById(data.tenantId, id))!;
   },
@@ -39,41 +37,49 @@ export const AssetService = {
    * checks tenant access itself, as GET /api/assets/:id does.
    */
   getById: async (tenantId: string | null, id: string): Promise<Asset | null> =>
-    (await getOne<Asset>(
-      `SELECT * FROM assets WHERE id = ? AND ${tenantPredicate(tenantId)}`,
-      tenantId ? [id, tenantId] : [id],
-    )) ?? null,
+    (await db
+      .selectFrom("assets")
+      .selectAll()
+      .where("id", "=", id)
+      .where(tenantScope(tenantId))
+      .executeTakeFirst()) ?? null,
 
   getByStorageKey: async (
     tenantId: string | null,
     storageKey: string,
   ): Promise<Asset | null> =>
-    (await getOne<Asset>(
-      `SELECT * FROM assets WHERE storage_key = ? AND ${tenantPredicate(tenantId)}`,
-      tenantId ? [storageKey, tenantId] : [storageKey],
-    )) ?? null,
+    (await db
+      .selectFrom("assets")
+      .selectAll()
+      .where("storage_key", "=", storageKey)
+      .where(tenantScope(tenantId))
+      .executeTakeFirst()) ?? null,
 
   listForTenant: async (tenantId: string, kind?: AssetKind): Promise<Asset[]> =>
-    await getAll<Asset>(
-      `SELECT * FROM assets WHERE tenant_id = ? ${kind ? "AND kind = ?" : ""}
-       ORDER BY created_at DESC`,
-      kind ? [tenantId, kind] : [tenantId],
-    ),
+    await db
+      .selectFrom("assets")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .$if(Boolean(kind), (q) => q.where("kind", "=", kind!))
+      .orderBy("created_at", "desc")
+      .execute(),
 
   deleteById: async (tenantId: string, id: string): Promise<void> => {
-    await run("DELETE FROM assets WHERE id = ? AND tenant_id = ?", [
-      id,
-      tenantId,
-    ]);
+    await db
+      .deleteFrom("assets")
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .execute();
   },
 
   deleteByStorageKey: async (
     tenantId: string,
     storageKey: string,
   ): Promise<void> => {
-    await run("DELETE FROM assets WHERE storage_key = ? AND tenant_id = ?", [
-      storageKey,
-      tenantId,
-    ]);
+    await db
+      .deleteFrom("assets")
+      .where("storage_key", "=", storageKey)
+      .where("tenant_id", "=", tenantId)
+      .execute();
   },
 };

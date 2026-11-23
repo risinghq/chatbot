@@ -17,7 +17,7 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import { logAction } from "../src/platform/audit/logger.ts";
-import { batch, stmt } from "../src/db/index.ts";
+import { batch, stmt } from "./helpers/db.ts";
 import adminRoutes from "../src/routes/admin.ts";
 import orderRoutes from "../src/routes/orders.ts";
 import systemLogRoutes from "../src/routes/system-logs.ts";

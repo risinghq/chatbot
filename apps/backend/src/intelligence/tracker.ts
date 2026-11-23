@@ -1,9 +1,8 @@
 import { newId } from "@vendeya/utils";
-import { tenantPredicate } from "../db/query.ts";
-import type { Binding } from "../db/index.ts";
+import { sql } from "kysely";
 import type { ConversationRef } from "@vendeya/types";
 import { createLogger } from "../lib/logger.ts";
-import { getAll, run } from "../db/index.ts";
+import { db, tenantScope } from "../db/index.ts";
 
 const logger = createLogger("llm-tracker");
 
@@ -37,39 +36,32 @@ export async function trackLLMCall(data: LLMCallData): Promise<void> {
 }
 
 async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
-  const id = newId();
   const contextJson = data.contextMetadata
     ? JSON.stringify(data.contextMetadata)
     : null;
 
-  await run(
-    `INSERT INTO llm_calls (
-      id, tenant_id, channel_account_id, phone_number, operation, model,
-      prompt, user_message, response,
-      status, error_type, error_message,
-      latency_ms, tokens_prompt, tokens_completion, tokens_total,
-      context_metadata
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      data.ref.tenantId,
-      data.ref.channelAccountId,
-      data.ref.phoneNumber,
-      data.operation,
-      data.model,
-      data.prompt,
-      data.userMessage,
-      data.response || null,
-      data.status,
-      data.errorType || null,
-      data.errorMessage || null,
-      data.latencyMs,
-      data.tokensPrompt || null,
-      data.tokensCompletion || null,
-      data.tokensTotal || null,
-      contextJson,
-    ],
-  );
+  await db
+    .insertInto("llm_calls")
+    .values({
+      id: newId(),
+      tenant_id: data.ref.tenantId,
+      channel_account_id: data.ref.channelAccountId,
+      phone_number: data.ref.phoneNumber,
+      operation: data.operation,
+      model: data.model,
+      prompt: data.prompt,
+      user_message: data.userMessage,
+      response: data.response || null,
+      status: data.status,
+      error_type: data.errorType || null,
+      error_message: data.errorMessage || null,
+      latency_ms: data.latencyMs,
+      tokens_prompt: data.tokensPrompt || null,
+      tokens_completion: data.tokensCompletion || null,
+      tokens_total: data.tokensTotal || null,
+      context_metadata: contextJson,
+    })
+    .execute();
 }
 
 /** `tenantId` null spans tenants and is only reachable by platform operators. */
@@ -77,15 +69,13 @@ export async function getRecentLLMCalls(
   tenantId: string | null,
   limit: number = 50,
 ) {
-  const params: Binding[] = tenantId ? [tenantId, limit] : [limit];
-
-  return await getAll(
-    `SELECT * FROM llm_calls
-     WHERE ${tenantPredicate(tenantId)}
-     ORDER BY created_at DESC
-     LIMIT ?`,
-    params,
-  );
+  return await db
+    .selectFrom("llm_calls")
+    .selectAll()
+    .where(tenantScope(tenantId))
+    .orderBy("created_at", "desc")
+    .limit(limit)
+    .execute();
 }
 
 /**
@@ -95,22 +85,21 @@ export async function getLLMErrorStats(
   tenantId: string | null,
   hoursBack: number = 24,
 ) {
-  const conditions = ["created_at > datetime('now', '-' || ? || ' hours')"];
-  const params: Binding[] = [hoursBack];
-
-  conditions.push(tenantPredicate(tenantId));
-  if (tenantId) params.push(tenantId);
-
-  return await getAll(
-    `SELECT
-       operation,
-       COUNT(*) as total_calls,
-       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
-       ROUND(AVG(latency_ms), 2) as avg_latency_ms
-     FROM llm_calls
-     WHERE ${conditions.join(" AND ")}
-     GROUP BY operation
-     ORDER BY total_calls DESC`,
-    params,
-  );
+  return await db
+    .selectFrom("llm_calls")
+    .select((eb) => [
+      "operation",
+      eb.fn.countAll<number>().as("total_calls"),
+      sql<number>`sum(case when status = 'error' then 1 else 0 end)`.as(
+        "error_count",
+      ),
+      sql<number>`round(avg(latency_ms), 2)`.as("avg_latency_ms"),
+    ])
+    .where(
+      sql<boolean>`created_at > datetime('now', '-' || ${hoursBack} || ' hours')`,
+    )
+    .where(tenantScope(tenantId))
+    .groupBy("operation")
+    .orderBy("total_calls", "desc")
+    .execute();
 }

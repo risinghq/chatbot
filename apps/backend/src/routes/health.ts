@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { getAllStatus } from "../adapters/providers/health.ts";
-import { getOne } from "../db/index.ts";
+import { db } from "../db/index.ts";
 import { createLogger } from "../lib/logger.ts";
 
 const logger = createLogger("health");
 
 async function databaseUp(): Promise<boolean> {
   try {
-    await getOne("SELECT 1 AS up");
+    await db.selectNoFrom((eb) => eb.lit(1).as("up")).executeTakeFirst();
     return true;
   } catch (error) {
     logger.error({ error }, "Health check could not reach the database");

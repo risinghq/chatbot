@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type { ConversationRef } from "@vendeya/types";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import { answerMessage } from "../src/conversation/handler/index.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import {

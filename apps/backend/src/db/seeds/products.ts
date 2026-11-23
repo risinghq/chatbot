@@ -1,7 +1,7 @@
 import { ProductService } from "../../domains/catalog/products.ts";
 import { VariantService } from "../../domains/catalog/variants.ts";
 import { StockService } from "../../domains/stock/index.ts";
-import { getOne } from "../index.ts";
+import { db } from "../index.ts";
 import { DEMO_PRODUCTS } from "../seed-data/products.ts";
 
 /** Units of each demo product received into the default location. */
@@ -12,10 +12,12 @@ const DEMO_STOCK = 10;
  * A business that already has products is left alone.
  */
 export async function seedProducts(tenantId: string): Promise<void> {
-  const exists = await getOne(
-    "SELECT 1 FROM products WHERE tenant_id = ? LIMIT 1",
-    [tenantId],
-  );
+  const exists = await db
+    .selectFrom("products")
+    .select("id")
+    .where("tenant_id", "=", tenantId)
+    .limit(1)
+    .executeTakeFirst();
   if (exists) return;
 
   const location = await StockService.defaultLocation(tenantId);

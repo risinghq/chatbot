@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { newId } from "@vendeya/utils";
-import { getAll, getOne, run } from "../src/db/index.ts";
+import { getAll, getOne, run } from "./helpers/db.ts";
 import type { AccountErrorReason } from "../src/domains/accounts/errors.ts";
 import { AccountService } from "../src/domains/accounts/index.ts";
 import {

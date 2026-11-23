@@ -1,7 +1,10 @@
-import { tenantOrPlatformPredicate, tenantPredicate } from "../../db/query.ts";
-import type { Binding } from "../../db/index.ts";
+import {
+  db,
+  inOpenTenants,
+  tenantScope,
+  withoutTenantScope,
+} from "../../db/index.ts";
 import { auditActorLabel } from "../../platform/audit/logger.ts";
-import { getAll } from "../../db/index.ts";
 import type { SystemLogEntry, SystemLogStatus } from "@vendeya/types";
 
 export const SystemLogService = {
@@ -14,45 +17,71 @@ export const SystemLogService = {
     tenantId: string | null,
     limit: number = 100,
   ): Promise<SystemLogEntry[]> {
-    const llmParams: Binding[] = tenantId ? [tenantId, limit] : [limit];
+    const llmCalls = await db
+      .selectFrom("llm_calls")
+      .select([
+        "id",
+        "created_at",
+        "operation",
+        "status",
+        "phone_number",
+        "latency_ms",
+        "prompt",
+        "response",
+        "error_message",
+        "context_metadata",
+      ])
+      .where(tenantScope(tenantId))
+      .orderBy("created_at", "desc")
+      .limit(limit)
+      .execute();
 
-    // Get LLM Calls
-    const llmCalls = await getAll<any>(
-      `SELECT
-         id, created_at, operation, status, phone_number, latency_ms,
-         prompt, response, error_message, context_metadata
-       FROM llm_calls
-       WHERE ${tenantPredicate(tenantId)}
-       ORDER BY created_at DESC LIMIT ?`,
-      llmParams,
-    );
-
-    // Get Audit Logs
-    const auditLogs = await getAll<any>(
-      `SELECT
-         a.id, a.created_at, a.action, a.resource_type, a.resource_id, a.metadata,
-         u.name as actor_name, a.user_id, a.actor
-       FROM audit_log a
-       LEFT JOIN users u ON a.user_id = u.id
-       WHERE ${tenantOrPlatformPredicate(tenantId, "a.tenant_id")}
-       ORDER BY a.created_at DESC LIMIT ?`,
-      tenantId ? [tenantId, limit] : [limit],
-    );
+    const auditRows = await (tenantId
+      ? db
+      : withoutTenantScope(
+          "a platform audit row carries a null tenant_id no value ties",
+        )
+    )
+      .selectFrom("audit_log as a")
+      .leftJoin("users as u", (join) => join.onRef("a.user_id", "=", "u.id"))
+      .select([
+        "a.id",
+        "a.created_at",
+        "a.action",
+        "a.resource_type",
+        "a.resource_id",
+        "a.metadata",
+        "u.name as actor_name",
+        "a.user_id",
+        "a.actor",
+      ])
+      .where((eb) =>
+        tenantId
+          ? eb("a.tenant_id", "=", tenantId)
+          : eb.or([
+              eb("a.tenant_id", "is", null),
+              inOpenTenants(eb, "a.tenant_id"),
+            ]),
+      )
+      .orderBy("a.created_at", "desc")
+      .limit(limit)
+      .execute();
 
     const normalized: SystemLogEntry[] = [
       ...llmCalls.map((c) => ({
         id: c.id,
-        timestamp: c.created_at,
+        timestamp: c.created_at as unknown as string,
         source: "llm" as const,
         event: c.operation,
         status: (c.status as SystemLogStatus) || "info",
         actor: c.phone_number,
-        summary:
-          c.status === "error" ? c.error_message : `${c.latency_ms}ms latency`,
+        summary: (c.status === "error"
+          ? c.error_message
+          : `${c.latency_ms}ms latency`) as string,
         metadata: c.context_metadata ? JSON.parse(c.context_metadata) : {},
         original_data: c,
       })),
-      ...auditLogs.map((a) => ({
+      ...auditRows.map((a) => ({
         id: a.id,
         timestamp: new Date(a.created_at).toISOString(),
         source: "audit" as const,

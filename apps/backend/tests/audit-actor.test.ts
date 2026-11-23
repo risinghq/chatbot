@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 
-import { getAll, getOne, run } from "../src/db/index.ts";
+import { batch, getAll, getOne, run } from "./helpers/db.ts";
 import {
   createMember,
   createTenantFixture,
@@ -87,14 +87,18 @@ describe("audit actors", () => {
     let cliRowId: string;
 
     beforeEach(async () => {
-      await cliAuditStatement(
-        SOMEONE,
-        tenant.tenantId,
-        action,
-        "user",
-        "u-target",
-        { email: "maria@example.com" },
-      ).run();
+      await batch([
+        cliAuditStatement(
+          SOMEONE,
+          tenant.tenantId,
+          action,
+          "user",
+          "u-target",
+          {
+            email: "maria@example.com",
+          },
+        ),
+      ]);
       cliRowId = (await rowsFor(action))[0]!.id;
     });
 
@@ -164,6 +168,41 @@ describe("audit actors", () => {
 
       const person = mine.find((log) => log.user_id === userId)!;
       expect(person.user_name).toBe("Test User");
+    });
+  });
+
+  describe("empty query filters", () => {
+    it("ignores ?phone= on llm-errors and ?user_id= on audit", async () => {
+      const { userId } = await createMember(tenant);
+      const llmId = crypto.randomUUID();
+      await run(
+        `INSERT INTO llm_calls
+           (id, tenant_id, channel_account_id, phone_number, operation, model,
+            prompt, user_message, status, error_message, latency_ms)
+         VALUES (?, ?, ?, ?, 'classify', 'test-model', 'p', 'm', 'error', 'boom', 5)`,
+        [llmId, tenant.tenantId, tenant.channelAccountId, "51900000001"],
+      );
+      await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
+
+      const app = new Hono();
+      app.use("/api/*", requireAuth);
+      app.use("/api/admin/*", requireRole("admin"));
+      app.route("/api/admin", adminRoutes);
+      const cookie = await login(userId, tenant.tenantId);
+
+      const errors = (await (
+        await app.request("/api/admin/llm-errors?phone=", {
+          headers: { Cookie: cookie },
+        })
+      ).json()) as { errors: Array<{ id: string }> };
+      expect(errors.errors.map((e) => e.id)).toContain(llmId);
+
+      const audit = (await (
+        await app.request("/api/admin/audit?user_id=", {
+          headers: { Cookie: cookie },
+        })
+      ).json()) as { logs: Array<{ action: string }> };
+      expect(audit.logs.map((l) => l.action)).toContain(action);
     });
   });
 

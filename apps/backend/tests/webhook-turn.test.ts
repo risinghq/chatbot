@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getAll, getOne } from "../src/db/index.ts";
+import { getAll, getOne } from "./helpers/db.ts";
 import {
   fakeGraph,
   permanentFailure,

@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import type { Product, ProductImage } from "@vendeya/types";
 
 import { imageStorage } from "../src/adapters/storage/images.ts";
-import { getOne } from "../src/db/index.ts";
+import { getOne } from "./helpers/db.ts";
 import {
   MAX_PRODUCT_IMAGES,
   ProductImageService,

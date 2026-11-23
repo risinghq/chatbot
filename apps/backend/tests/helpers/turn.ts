@@ -7,7 +7,7 @@ import {
 import { env } from "cloudflare:workers";
 import { expect, vi } from "vitest";
 import worker from "../../src/index.ts";
-import { run } from "../../src/db/index.ts";
+import { run } from "./db.ts";
 import { conversationStub } from "../../src/conversation/stub.ts";
 import type { ConversationObject } from "../../src/conversation/object.ts";
 import { TIMEOUTS } from "../../src/config/timeouts.ts";

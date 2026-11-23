@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import { sweep } from "../src/sweep.ts";
 import {
   createTenantFixture,

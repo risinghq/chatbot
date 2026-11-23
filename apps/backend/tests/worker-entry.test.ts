@@ -6,7 +6,7 @@ import {
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import worker from "../src/index.ts";
-import { run } from "../src/db/index.ts";
+import { run } from "./helpers/db.ts";
 import { TEST_BINDINGS } from "./bindings.ts";
 import { backendFetch } from "./helpers/turn.ts";
 import { logsDuring } from "./helpers/logs.ts";

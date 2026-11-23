@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationRef, DomainEvent } from "@vendeya/types";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import { answerMessage } from "../src/conversation/handler/index.ts";
 import { checkAndReassignTimeouts } from "../src/domains/conversations/assignment.ts";
 import { eventBus } from "../src/shared/events/index.ts";

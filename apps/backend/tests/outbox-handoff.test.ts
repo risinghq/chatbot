@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getAll, getOne, run } from "../src/db/index.ts";
+import { getAll, getOne, run } from "./helpers/db.ts";
 import {
   createMember,
   createTenantFixture,

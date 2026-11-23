@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getOne } from "../src/db/index.ts";
+import { getOne } from "./helpers/db.ts";
 import {
   InvalidDateError,
   limaDates,

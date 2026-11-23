@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { type FakeModel, fakeModel, withOpenAiKey } from "./helpers/model.ts";

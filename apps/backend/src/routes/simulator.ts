@@ -16,8 +16,9 @@ import {
   requireRole,
 } from "../middleware/auth.ts";
 import type { Conversation, ConversationRef } from "@vendeya/types";
+import { sql } from "kysely";
 import { createLogger } from "../lib/logger.ts";
-import { getAll, getOne, run } from "../db/index.ts";
+import { db } from "../db/index.ts";
 
 const logger = createLogger("simulator");
 
@@ -72,13 +73,19 @@ const SIMULATED_FIRST_PHONE = 51900000001;
  */
 async function nextSimulatedPhone(ref: ConversationRef): Promise<string> {
   const highest = (
-    await getOne<{ phone: number | null }>(
-      `SELECT MAX(CAST(phone_number AS INTEGER)) AS phone FROM conversations
-     WHERE tenant_id = ? AND channel_account_id = ? AND is_simulation = 1
-       AND phone_number GLOB '519[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
-       AND phone_number != ?`,
-      [ref.tenantId, ref.channelAccountId, SIMULATOR_PHONE],
-    )
+    await db
+      .selectFrom("conversations")
+      .select(
+        sql<number | null>`max(cast(phone_number as integer))`.as("phone"),
+      )
+      .where("tenant_id", "=", ref.tenantId)
+      .where("channel_account_id", "=", ref.channelAccountId)
+      .where("is_simulation", "=", 1)
+      .where(
+        sql<boolean>`phone_number glob '519[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'`,
+      )
+      .where("phone_number", "!=", SIMULATOR_PHONE)
+      .executeTakeFirst()
   )?.phone;
 
   let candidate = highest ? highest + 1 : SIMULATED_FIRST_PHONE;
@@ -98,12 +105,14 @@ async function nextSimulatedPhone(ref: ConversationRef): Promise<string> {
  */
 simulator.get("/conversations", async (c) => {
   const ref = await simulatorRef(c, SIMULATOR_PHONE);
-  const conversations = await getAll<Conversation>(
-    `SELECT * FROM conversations
-     WHERE tenant_id = ? AND channel_account_id = ? AND is_simulation = 1
-     ORDER BY last_activity_at DESC`,
-    [ref.tenantId, ref.channelAccountId],
-  );
+  const conversations = (await db
+    .selectFrom("conversations")
+    .selectAll()
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("is_simulation", "=", 1)
+    .orderBy("last_activity_at", "desc")
+    .execute()) as unknown as Conversation[];
 
   return c.json(conversations);
 });
@@ -206,11 +215,12 @@ simulator.delete("/conversations/:phone", async (c) => {
     return c.json({ error: "Can only delete simulation conversations" }, 403);
   }
 
-  await run(
-    `DELETE FROM conversations
-     WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-    [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-  );
+  await db
+    .deleteFrom("conversations")
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .execute();
 
   await WhatsAppService.clearMessageHistory(ref);
 

@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { getOne } from "../src/db/index.ts";
+import { getOne } from "./helpers/db.ts";
 import {
   addChannelAccount,
   createTenantFixture,
@@ -122,7 +122,7 @@ describe("webhook signature", () => {
       "../src/domains/channels/accounts.ts"
     ).then((m) => ({ getById: m.ChannelAccountService.getById }));
     const account = (await getById(noSecret.channelAccountId))!;
-    await (await import("../src/db/index.ts")).run(
+    await (await import("./helpers/db.ts")).run(
       "UPDATE channel_accounts SET app_secret_secret_id = NULL WHERE id = ?",
       [account.id],
     );

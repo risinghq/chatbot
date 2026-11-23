@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { db, getAll, run } from "../src/db/index.ts";
+import { db, getAll, run } from "./helpers/db.ts";
 import {
   createTenantFixture,
   insertConversation,

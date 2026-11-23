@@ -8,7 +8,7 @@ import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import { hashPassword } from "../src/platform/auth/password.ts";
 import { frontendPath, importFrontend } from "./helpers/frontend.ts";
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import type { Product } from "@vendeya/types";
 
 import {

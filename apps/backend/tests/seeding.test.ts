@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { env } from "cloudflare:workers";
 import { demoChannelAccount } from "../src/db/seeds/demo.ts";
-import { getAll, getOne } from "../src/db/index.ts";
+import { getAll, getOne } from "./helpers/db.ts";
 import { seedProducts } from "../src/db/seeds/products.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { TenantService } from "../src/domains/tenants/index.ts";

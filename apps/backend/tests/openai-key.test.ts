@@ -24,7 +24,7 @@ import {
   createSession,
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
-import { getOne } from "../src/db/index.ts";
+import { getOne } from "./helpers/db.ts";
 import adminSystemRoutes from "../src/routes/admin/system.ts";
 
 const SECRET = "sk-tenant-secret-key";

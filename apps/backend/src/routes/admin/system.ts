@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { tenantPredicate } from "../../db/query.ts";
 import {
   auditActorLabel,
   logAction,
@@ -28,7 +27,7 @@ import {
   requireActiveTenant,
   requireTenantScope,
 } from "../../middleware/auth.ts";
-import { getAll } from "../../db/index.ts";
+import { db, tenantScope, withoutTenantScope } from "../../db/index.ts";
 
 const system = new Hono();
 
@@ -40,39 +39,28 @@ system.get("/llm-errors", async (c) => {
   const operationFilter = c.req.query("operation");
   const limit = queryLimit(c, 100);
 
-  const conditions = ["status = 'error'"];
-  const params: (string | number)[] = [];
-
-  conditions.push(tenantPredicate(scope.tenantId));
-  if (scope.tenantId) params.push(scope.tenantId);
-
-  if (phoneFilter) {
-    conditions.push("phone_number = ?");
-    params.push(phoneFilter);
-  }
-  if (operationFilter) {
-    conditions.push("operation = ?");
-    params.push(operationFilter);
-  }
-
-  params.push(limit);
-
-  const errors = await getAll<{
-    id: string;
-    phone_number: string;
-    operation: string;
-    error_type: string | null;
-    error_message: string | null;
-    context_metadata: string | null;
-    created_at: string;
-  }>(
-    `SELECT id, phone_number, operation, error_type, error_message,
-            context_metadata, created_at
-     FROM llm_calls
-     WHERE ${conditions.join(" AND ")}
-     ORDER BY created_at DESC LIMIT ?`,
-    params,
-  );
+  const errors = await db
+    .selectFrom("llm_calls")
+    .select([
+      "id",
+      "phone_number",
+      "operation",
+      "error_type",
+      "error_message",
+      "context_metadata",
+      "created_at",
+    ])
+    .where("status", "=", "error")
+    .where(tenantScope(scope.tenantId))
+    .$if(Boolean(phoneFilter), (q) =>
+      q.where("phone_number", "=", phoneFilter!),
+    )
+    .$if(Boolean(operationFilter), (q) =>
+      q.where("operation", "=", operationFilter!),
+    )
+    .orderBy("created_at", "desc")
+    .limit(limit)
+    .execute();
 
   return c.json({
     errors: errors.map((e) => ({
@@ -100,10 +88,11 @@ system.get("/audit", async (c) => {
     ...new Set(logs.flatMap((l) => (l.user_id === null ? [] : [l.user_id]))),
   ];
   const dbUsers = userIds.length
-    ? await getAll<{ id: string; email: string; name: string }>(
-        `SELECT id, email, name FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`,
-        userIds,
-      )
+    ? await withoutTenantScope("users are global, keyed by id")
+        .selectFrom("users")
+        .select(["id", "email", "name"])
+        .where("id", "in", userIds)
+        .execute()
     : [];
 
   const userMap = new Map(dbUsers.map((u) => [u.id, u]));

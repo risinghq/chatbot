@@ -1,6 +1,6 @@
 import type { ConversationRef, OrderDetail } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
-import { run } from "../../src/db/index.ts";
+import { run } from "./db.ts";
 import { ChannelAccountService } from "../../src/domains/channels/accounts.ts";
 import { CustomerService } from "../../src/domains/customers/index.ts";
 import { OrderWrites } from "../../src/domains/orders/index.ts";

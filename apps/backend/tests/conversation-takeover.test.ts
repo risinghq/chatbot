@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { runInDurableObject } from "cloudflare:test";
 import { Hono } from "hono";
 
-import { getAll, getOne, run } from "../src/db/index.ts";
+import { getAll, getOne, run } from "./helpers/db.ts";
 import {
   createMember,
   createTenantFixture,

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { DomainEvent } from "@vendeya/types";
 
-import { getAll, getOne, run } from "../src/db/index.ts";
+import { getAll, getOne, run } from "./helpers/db.ts";
 import { storeIncomingMessage } from "../src/conversation/message-inbox.ts";
 import { conversationStub } from "../src/conversation/stub.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";

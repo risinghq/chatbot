@@ -1,66 +1,4 @@
 /**
- * Cross-tenant reads of a tenant's rows span only active tenants. An operator's
- * session drops its pin when the tenant is suspended (platform/auth/session.ts),
- * but an unpinned operator already reads every tenant, so the exclusion has to
- * live in the read.
- */
-const OPEN_TENANTS = "(SELECT id FROM tenants WHERE status = 'active')";
-
-/**
- * A concrete `tenantId` filters to that tenant. Null is the cross-tenant read.
- * An unpinned platform operator reaches it, and so does a background worker that
- * passes null on purpose. It spans open tenants, never every row.
- */
-export function tenantPredicate(
-  tenantId: string | null,
-  column = "tenant_id",
-): string {
-  // The null branch binds nothing, so callers build their params as
-  // `tenantId ? [other, tenantId] : [other]`.
-  return tenantId ? `${column} = ?` : openTenantsOnly(column);
-}
-
-/**
- * Limits a query with no tenant parameter to open tenants. The background
- * workers that sweep every tenant's queue use it, so a message queued before a
- * suspension is not answered after it and a suspended tenant's conversations
- * are not reassigned.
- */
-export function openTenantsOnly(column = "tenant_id"): string {
-  return `${column} IN ${OPEN_TENANTS}`;
-}
-
-/**
- * Accounts a background worker may send on. A send on a `pending` or `disabled`
- * number is refused, so a query that dequeues work leaves those accounts out.
- * The row stays queued, and re-enabling the number resumes it.
- */
-export function activeChannelAccountsOnly(
-  column = "channel_account_id",
-): string {
-  return `${column} IN (SELECT id FROM channel_accounts WHERE status = 'active')`;
-}
-
-/**
- * For `audit_log` and `notification_traces`, whose `tenant_id` is nullable. A
- * null row belongs to the platform, not to a suspended business, so a
- * cross-tenant read keeps it.
- */
-export function tenantOrPlatformPredicate(
-  tenantId: string | null,
-  column = "tenant_id",
-): string {
-  return tenantId
-    ? `${column} = ?`
-    : `(${column} IS NULL OR ${column} IN ${OPEN_TENANTS})`;
-}
-
-/** Convert Unix timestamp (ms) to ISO string */
-export function toISOString(timestamp: number | null): string | null {
-  return timestamp ? new Date(timestamp).toISOString() : null;
-}
-
-/**
  * A date query parameter that is not a real calendar date or timestamp.
  * `middleware/error.ts` answers it as 400.
  */
@@ -131,6 +69,11 @@ export function limaDates(startMs: number, endMs: number): string[] {
 /** SQL for the Lima calendar date `YYYY-MM-DD` of a ms timestamp column. */
 export function limaDateSql(column: string): string {
   return `strftime('%Y-%m-%d', (${column} - ${LIMA_OFFSET_MS}) / 1000, 'unixepoch')`;
+}
+
+/** Convert Unix timestamp (ms) to ISO string */
+export function toISOString(timestamp: number | null): string | null {
+  return timestamp ? new Date(timestamp).toISOString() : null;
 }
 
 /**

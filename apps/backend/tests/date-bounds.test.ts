@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as XLSX from "xlsx";
 
-import { getOne, run } from "../src/db/index.ts";
+import { getOne, run } from "./helpers/db.ts";
 import { limaDayBounds, limaRangeEdge } from "../src/db/query.ts";
 import {
   createTenantFixture,

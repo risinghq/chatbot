@@ -18,7 +18,7 @@ import type {
   StockRow,
 } from "@vendeya/types";
 
-import { getAll } from "../src/db/index.ts";
+import { getAll } from "./helpers/db.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
 import {

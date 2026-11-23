@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DomainEvent } from "@vendeya/types";
 
-import { db, getAll, getOne } from "../src/db/index.ts";
+import { db, getAll, getOne } from "./helpers/db.ts";
 import { MAX_TOOL_CALLS } from "../src/domains/assistant/agent.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { VariantService } from "../src/domains/catalog/variants.ts";

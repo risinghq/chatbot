@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ProductVariant } from "@vendeya/types";
 
-import { db } from "../src/db/index.ts";
+import { db } from "./helpers/db.ts";
 import { AssistantSettingsService } from "../src/domains/assistant/settings.ts";
 import {
   runTool,

@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 
-import { getAll } from "../src/db/index.ts";
+import { getAll } from "./helpers/db.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import {
   createSession,

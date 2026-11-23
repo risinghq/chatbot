@@ -26,7 +26,7 @@ export class UnscopedQueryError extends Error {
   constructor(readonly tables: string[]) {
     super(
       `Query reads ${tables.join(", ")} with no tenant predicate. Add ` +
-        `.where("tenant_id", "=", tenantId), use openTenantsOnly() for a ` +
+        `.where("tenant_id", "=", tenantId), use inOpenTenants() for a ` +
         `cross-tenant read, or withoutTenantScope(reason) for a read keyed ` +
         `by something globally unique.`,
     );

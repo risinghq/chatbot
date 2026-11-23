@@ -11,7 +11,7 @@ import { CheckEligibilityHandler } from "../src/domains/eligibility/handlers/che
 import { PowerBIProvider } from "../src/domains/eligibility/providers/powerbi-provider.ts";
 import { ProviderError } from "../src/domains/eligibility/providers/provider.ts";
 import { isErr } from "../src/shared/result/index.ts";
-import { getOne } from "../src/db/index.ts";
+import { getOne } from "./helpers/db.ts";
 import { fakeJwt } from "./helpers/jwt.ts";
 import {
   createMember,
