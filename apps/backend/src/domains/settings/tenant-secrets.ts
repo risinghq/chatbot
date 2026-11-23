@@ -5,14 +5,13 @@ import { newId } from "@vendeya/utils";
  * the server: the settings API reports that one is set, not what it is.
  */
 
-import { batch, getOne, stmt } from "../../db/index.ts";
+import { sql } from "kysely";
+import { batch, db } from "../../db/index.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { decryptSecret, encryptSecret } from "../../platform/crypto/secrets.ts";
 
 const logger = createLogger("tenant-secrets");
 
-/**
- */
 type SecretRow = {
   id: string;
   ciphertext: string;
@@ -25,10 +24,12 @@ async function readRow(
   key: string,
 ): Promise<SecretRow | null> {
   return (
-    (await getOne<SecretRow>(
-      "SELECT id, ciphertext, iv, key_id FROM tenant_secrets WHERE tenant_id = ? AND key = ?",
-      [tenantId, key],
-    )) ?? null
+    (await db
+      .selectFrom("tenant_secrets")
+      .select(["id", "ciphertext", "iv", "key_id"])
+      .where("tenant_id", "=", tenantId)
+      .where("key", "=", key)
+      .executeTakeFirst()) ?? null
   );
 }
 
@@ -61,38 +62,38 @@ export const TenantSecrets = {
 
     if (existing) {
       await batch([
-        stmt(
-          `UPDATE tenant_secrets
-           SET ciphertext = ?, iv = ?, key_id = ?, updated_at = unixepoch('now', 'subsec') * 1000
-           WHERE id = ?`,
-          [encrypted.ciphertext, encrypted.iv, encrypted.keyId, existing.id],
-        ),
+        db
+          .updateTable("tenant_secrets")
+          .set({
+            ciphertext: encrypted.ciphertext,
+            iv: encrypted.iv,
+            key_id: encrypted.keyId,
+            updated_at: sql`unixepoch('now', 'subsec') * 1000`,
+          })
+          .where("id", "=", existing.id)
+          .where("tenant_id", "=", tenantId),
       ]);
       return;
     }
 
     await batch([
-      stmt(
-        `INSERT INTO tenant_secrets (id, tenant_id, key, ciphertext, iv, key_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          newId(),
-          tenantId,
-          key,
-          encrypted.ciphertext,
-          encrypted.iv,
-          encrypted.keyId,
-        ],
-      ),
+      db.insertInto("tenant_secrets").values({
+        id: newId(),
+        tenant_id: tenantId,
+        key,
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        key_id: encrypted.keyId,
+      }),
     ]);
   },
 
   async clear(tenantId: string, key: string): Promise<void> {
     await batch([
-      stmt("DELETE FROM tenant_secrets WHERE tenant_id = ? AND key = ?", [
-        tenantId,
-        key,
-      ]),
+      db
+        .deleteFrom("tenant_secrets")
+        .where("tenant_id", "=", tenantId)
+        .where("key", "=", key),
     ]);
   },
 };

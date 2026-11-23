@@ -5,7 +5,8 @@ import type {
   MessageDirection,
   StoredMessageType,
 } from "./types.ts";
-import { getAll, getOne, run } from "../../db/index.ts";
+import { sql } from "kysely";
+import { db } from "../../db/index.ts";
 
 /**
  * Message history is keyed by the full conversation identity, so the same
@@ -22,22 +23,21 @@ export const MessageStore = {
     productId?: string,
   ): Promise<string> {
     const id = newId();
-    await run(
-      `INSERT INTO messages (id, tenant_id, channel_account_id, phone_number, direction, type, content, status, whatsapp_message_id, product_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+    await db
+      .insertInto("messages")
+      .values({
         id,
-        ref.tenantId,
-        ref.channelAccountId,
-        ref.phoneNumber,
+        tenant_id: ref.tenantId,
+        channel_account_id: ref.channelAccountId,
+        phone_number: ref.phoneNumber,
         direction,
         type,
         content,
         status,
-        whatsappMessageId ?? null,
-        productId ?? null,
-      ],
-    );
+        whatsapp_message_id: whatsappMessageId ?? null,
+        product_id: productId ?? null,
+      })
+      .execute();
 
     // The outbox row keeps this id, so a retry moves this row rather than
     // writing a second one for the same reply.
@@ -48,11 +48,13 @@ export const MessageStore = {
     ref: ConversationRef,
     whatsappMessageId: string,
   ): Promise<string | null> {
-    const result = await getOne<{ product_id: string | null }>(
-      `SELECT product_id FROM messages
-       WHERE whatsapp_message_id = ? AND tenant_id = ? AND channel_account_id = ?`,
-      [whatsappMessageId, ref.tenantId, ref.channelAccountId],
-    );
+    const result = await db
+      .selectFrom("messages")
+      .select("product_id")
+      .where("whatsapp_message_id", "=", whatsappMessageId)
+      .where("tenant_id", "=", ref.tenantId)
+      .where("channel_account_id", "=", ref.channelAccountId)
+      .executeTakeFirst();
     return result?.product_id ?? null;
   },
 
@@ -61,11 +63,14 @@ export const MessageStore = {
     whatsappMessageId: string,
   ): Promise<ConversationMessage | null> {
     return (
-      (await getOne<ConversationMessage>(
-        `SELECT * FROM messages
-         WHERE whatsapp_message_id = ? AND tenant_id = ? AND channel_account_id = ?`,
-        [whatsappMessageId, ref.tenantId, ref.channelAccountId],
-      )) ?? null
+      (await db
+        .selectFrom("messages")
+        .selectAll()
+        .where("whatsapp_message_id", "=", whatsappMessageId)
+        .where("tenant_id", "=", ref.tenantId)
+        .where("channel_account_id", "=", ref.channelAccountId)
+        .$castTo<ConversationMessage>()
+        .executeTakeFirst()) ?? null
     );
   },
 
@@ -73,20 +78,25 @@ export const MessageStore = {
     ref: ConversationRef,
     limit: number = 50,
   ): Promise<ConversationMessage[]> {
-    return await getAll<ConversationMessage>(
-      `SELECT * FROM messages
-       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-       ORDER BY created_at DESC, ROWID DESC
-       LIMIT ?`,
-      [ref.tenantId, ref.channelAccountId, ref.phoneNumber, limit],
-    );
+    return await db
+      .selectFrom("messages")
+      .selectAll()
+      .where("tenant_id", "=", ref.tenantId)
+      .where("channel_account_id", "=", ref.channelAccountId)
+      .where("phone_number", "=", ref.phoneNumber)
+      .orderBy("created_at", "desc")
+      .orderBy(sql`rowid desc`)
+      .limit(limit)
+      .$castTo<ConversationMessage>()
+      .execute();
   },
 
   async clear(ref: ConversationRef): Promise<void> {
-    await run(
-      `DELETE FROM messages
-       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-      [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-    );
+    await db
+      .deleteFrom("messages")
+      .where("tenant_id", "=", ref.tenantId)
+      .where("channel_account_id", "=", ref.channelAccountId)
+      .where("phone_number", "=", ref.phoneNumber)
+      .execute();
   },
 };

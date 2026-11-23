@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { createLogger } from "../../lib/logger.ts";
 import { TenantSettings } from "../settings/system.ts";
 import type { DomainEvent } from "@vendeya/types";
-import { getOne } from "../../db/index.ts";
+import { db } from "../../db/index.ts";
 
 const logger = createLogger("notification-resolver");
 
@@ -101,15 +101,16 @@ async function resolveAssignedAgent(
       return undefined;
     }
 
-    const result = await getOne<{ phone_number: string }>(
-      `SELECT u.phone_number
-       FROM conversations c
-       JOIN users u ON c.assigned_agent = u.id
-       WHERE c.tenant_id = ? AND c.channel_account_id = ? AND c.phone_number = ?`,
-      [event.tenantId, event.channelAccountId, customerPhone],
-    );
+    const result = await db
+      .selectFrom("conversations as c")
+      .innerJoin("users as u", "c.assigned_agent", "u.id")
+      .select("u.phone_number")
+      .where("c.tenant_id", "=", event.tenantId)
+      .where("c.channel_account_id", "=", event.channelAccountId)
+      .where("c.phone_number", "=", customerPhone)
+      .executeTakeFirst();
 
-    return result?.phone_number;
+    return result?.phone_number ?? undefined;
   }
 
   logger.warn(

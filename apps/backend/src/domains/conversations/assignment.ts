@@ -1,4 +1,3 @@
-import { activeChannelAccountsOnly, openTenantsOnly } from "../../db/query.ts";
 import { conversationStub } from "../../conversation/stub.ts";
 import { findConversation, handOff } from "../../conversation/store.ts";
 import { CustomerService } from "../customers/index.ts";
@@ -6,14 +5,9 @@ import { createLogger } from "../../lib/logger.ts";
 import { eventBus, createEvent } from "../../shared/events/index.ts";
 import { TenantSettings } from "../settings/system.ts";
 import type { ConversationRef } from "@vendeya/types";
-import { getAll, getOne, run } from "../../db/index.ts";
+import { db, inActiveChannelAccounts, inOpenTenants } from "../../db/index.ts";
 
 const logger = createLogger("assignment");
-
-type Agent = {
-  id: string;
-  phone_number: string | null;
-};
 
 const AGENT_INDEX_KEY = "last_agent_index";
 
@@ -28,13 +22,6 @@ const ACCEPT_WINDOW_MS = 5 * 60 * 1000;
 const MAX_REASSIGNS_PER_SWEEP = 1_000;
 
 const ASSIGNED_REASON = "agent_assigned";
-
-const IDENTITY_WHERE =
-  "tenant_id = ? AND channel_account_id = ? AND phone_number = ?";
-
-function identityParams(ref: ConversationRef): [string, string, string] {
-  return [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
-}
 
 /**
  * Round-robin over the agents of one tenant. The caller holds the conversation
@@ -58,14 +45,16 @@ export async function assignNextAgentHeld(
   // Agents are found through membership, so a sales agent in tenant A is never
   // handed tenant B's client. Availability is read from the membership too, so
   // going offline for one business leaves the agent in the other's rotation.
-  const agents = await getAll<Agent>(
-    `SELECT u.id, u.phone_number FROM users u
-     JOIN tenant_memberships m ON m.user_id = u.id
-     WHERE m.tenant_id = ? AND m.role = 'sales_agent'
-       AND m.is_available = 1 AND u.is_active = 1
-     ORDER BY u.id`,
-    [ref.tenantId],
-  );
+  const agents = await db
+    .selectFrom("users as u")
+    .innerJoin("tenant_memberships as m", "m.user_id", "u.id")
+    .select(["u.id", "u.phone_number"])
+    .where("m.tenant_id", "=", ref.tenantId)
+    .where("m.role", "=", "sales_agent")
+    .where("m.is_available", "=", 1)
+    .where("u.is_active", "=", 1)
+    .orderBy("u.id")
+    .execute();
 
   if (agents.length === 0) {
     logger.warn({ tenantId: ref.tenantId }, "No available agents");
@@ -97,12 +86,16 @@ export async function assignNextAgentHeld(
     return null;
   }
 
-  await run(
-    `UPDATE conversations
-     SET assigned_agent = ?, assignment_notified_at = ?
-     WHERE ${IDENTITY_WHERE}`,
-    [assignedAgent.id, Date.now(), ...identityParams(ref)],
-  );
+  await db
+    .updateTable("conversations")
+    .set({
+      assigned_agent: assignedAgent.id,
+      assignment_notified_at: Date.now(),
+    })
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .execute();
 
   if (assignedAgent.phone_number) {
     await eventBus.emit(
@@ -142,22 +135,23 @@ export async function checkAndReassignTimeouts(
   // leave its messages. Nobody can answer the customer there, so reassigning
   // every five minutes would only page agents for nothing. Its assignment
   // stands until the number is back.
-  const timedOutConversations = await getAll<{
-    tenant_id: string;
-    channel_account_id: string;
-    phone_number: string;
-  }>(
-    `SELECT tenant_id, channel_account_id, phone_number
-     FROM conversations
-     WHERE assignment_notified_at IS NOT NULL
-       AND assignment_notified_at < ?
-       AND status = 'human_takeover'
-       AND ${openTenantsOnly()}
-       AND ${activeChannelAccountsOnly()}
-     ORDER BY assignment_notified_at
-     LIMIT ?`,
-    [cutoff, maxReassigns],
-  );
+  const timedOutConversations = await db
+    .selectFrom("conversations")
+    .select(["tenant_id", "channel_account_id", "phone_number"])
+    .where("assignment_notified_at", "is not", null)
+    .where("assignment_notified_at", "<", cutoff)
+    .where("status", "=", "human_takeover")
+    .where(inOpenTenants)
+    .where((eb) =>
+      inActiveChannelAccounts(
+        eb,
+        "channel_account_id",
+        "conversations.tenant_id",
+      ),
+    )
+    .orderBy("assignment_notified_at")
+    .limit(maxReassigns)
+    .execute();
 
   await Promise.all(
     timedOutConversations.map(async (conv) => {
@@ -190,14 +184,16 @@ export async function reassignIfStillWaiting(
   ref: ConversationRef,
   cutoff: number,
 ): Promise<void> {
-  const current = await getOne<{ assigned_agent: string | null }>(
-    `SELECT assigned_agent FROM conversations
-     WHERE ${IDENTITY_WHERE}
-       AND assignment_notified_at IS NOT NULL
-       AND assignment_notified_at < ?
-       AND status = 'human_takeover'`,
-    [...identityParams(ref), cutoff],
-  );
+  const current = await db
+    .selectFrom("conversations")
+    .select("assigned_agent")
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .where("assignment_notified_at", "is not", null)
+    .where("assignment_notified_at", "<", cutoff)
+    .where("status", "=", "human_takeover")
+    .executeTakeFirst();
   if (!current) return;
 
   logger.info(
@@ -209,12 +205,13 @@ export async function reassignIfStillWaiting(
     "Reassigning timed-out conversation",
   );
 
-  await run(
-    `UPDATE conversations
-     SET assignment_notified_at = NULL, assigned_agent = NULL
-     WHERE ${IDENTITY_WHERE}`,
-    identityParams(ref),
-  );
+  await db
+    .updateTable("conversations")
+    .set({ assignment_notified_at: null, assigned_agent: null })
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .execute();
 
   await assignNextAgentHeld(ref);
 }

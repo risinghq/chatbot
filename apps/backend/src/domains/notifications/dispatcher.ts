@@ -5,7 +5,7 @@ import { ChannelAccountService } from "../channels/accounts.ts";
 import { NotificationResolver } from "./resolver.ts";
 import type { NotificationDecision } from "./evaluator.ts";
 import type { ChannelAccount, DomainEvent } from "@vendeya/types";
-import { run } from "../../db/index.ts";
+import { db, withoutTenantScope } from "../../db/index.ts";
 
 const logger = createLogger("notification-dispatcher");
 
@@ -64,24 +64,24 @@ export async function dispatchNotifications(
     const ruleId = decision.ruleId;
 
     try {
-      await run(
-        `INSERT INTO notification_traces
-         (id, tenant_id, trace_id, event_type, rule_id, status, reason, content_snapshot, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          newId(),
-          event.tenantId ?? null,
-          traceId,
-          event.type,
-          ruleId,
-          decision.status,
-          decision.status === "skipped" || decision.status === "failed"
-            ? decision.reason
-            : null,
-          decision.status === "sent" ? decision.content : null,
-          now,
-        ],
-      );
+      await db
+        .insertInto("notification_traces")
+        .values({
+          id: newId(),
+          tenant_id: event.tenantId ?? null,
+          trace_id: traceId,
+          event_type: event.type,
+          rule_id: ruleId,
+          status: decision.status,
+          reason:
+            decision.status === "skipped" || decision.status === "failed"
+              ? decision.reason
+              : null,
+          content_snapshot:
+            decision.status === "sent" ? decision.content : null,
+          created_at: now,
+        })
+        .execute();
     } catch (error) {
       logger.error({ error, traceId }, "Failed to log notification trace");
     }
@@ -170,12 +170,12 @@ async function markFailed(
   reason: string,
 ): Promise<void> {
   try {
-    await run(
-      `UPDATE notification_traces
-       SET status = 'failed', reason = ?
-       WHERE trace_id = ? AND rule_id = ?`,
-      [reason, traceId, ruleId],
-    );
+    await withoutTenantScope("a trace is keyed by trace_id and rule_id")
+      .updateTable("notification_traces")
+      .set({ status: "failed", reason })
+      .where("trace_id", "=", traceId)
+      .where("rule_id", "=", ruleId)
+      .execute();
   } catch {
     // Trace bookkeeping is best-effort. The delivery failure is already logged.
   }

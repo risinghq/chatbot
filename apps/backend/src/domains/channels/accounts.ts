@@ -7,7 +7,8 @@ import { newId } from "@vendeya/utils";
 
 import { env } from "cloudflare:workers";
 import type { ChannelAccount, ChannelType } from "@vendeya/types";
-import { batch, getAll, getOne, run, stmt } from "../../db/index.ts";
+import { type Compilable, sql } from "kysely";
+import { batch, db, withoutTenantScope } from "../../db/index.ts";
 import { createLogger } from "../../lib/logger.ts";
 import { decryptSecret, encryptSecret } from "../../platform/crypto/secrets.ts";
 
@@ -25,33 +26,23 @@ function generateVerifyToken(): string {
     .replaceAll("=", "");
 }
 
-type SecretRow = {
-  id: string;
-  tenant_id: string;
-  purpose: SecretPurpose;
-  ciphertext: string;
-  iv: string;
-  key_id: string;
-};
+const NOW_MS = sql<number>`unixepoch('now', 'subsec') * 1000`;
 
-async function insertSecret(
+function insertSecret(
   id: string,
   tenantId: string,
   purpose: SecretPurpose,
   plaintext: string,
-): Promise<D1PreparedStatement> {
-  const encrypted = await encryptSecret(plaintext);
-  return stmt(
-    `INSERT INTO channel_secrets (id, tenant_id, purpose, ciphertext, iv, key_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [
+): Promise<Compilable> {
+  return encryptSecret(plaintext).then((encrypted) =>
+    db.insertInto("channel_secrets").values({
       id,
-      tenantId,
+      tenant_id: tenantId,
       purpose,
-      encrypted.ciphertext,
-      encrypted.iv,
-      encrypted.keyId,
-    ],
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      key_id: encrypted.keyId,
+    }),
   );
 }
 
@@ -59,10 +50,11 @@ async function insertSecret(
 async function readSecret(secretId: string | null): Promise<string | null> {
   if (!secretId) return null;
 
-  const row = await getOne<SecretRow>(
-    "SELECT * FROM channel_secrets WHERE id = ?",
-    [secretId],
-  );
+  const row = await withoutTenantScope("channel secret keyed by its own id")
+    .selectFrom("channel_secrets")
+    .selectAll()
+    .where("id", "=", secretId)
+    .executeTakeFirst();
   if (!row) return null;
 
   try {
@@ -88,64 +80,59 @@ async function secretStatements(
   account: ChannelAccount,
   purpose: SecretPurpose,
   token: string,
-): Promise<D1PreparedStatement[]> {
+): Promise<Compilable[]> {
   const existing = account[SECRET_COLUMN[purpose]];
   const encrypted = await encryptSecret(token);
   if (existing) {
     return [
-      stmt(
-        `UPDATE channel_secrets
-         SET ciphertext = ?, iv = ?, key_id = ?, updated_at = unixepoch('now', 'subsec') * 1000
-         WHERE id = ? AND tenant_id = ?`,
-        [
-          encrypted.ciphertext,
-          encrypted.iv,
-          encrypted.keyId,
-          existing,
-          account.tenant_id,
-        ],
-      ),
+      db
+        .updateTable("channel_secrets")
+        .set({
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv,
+          key_id: encrypted.keyId,
+          updated_at: NOW_MS,
+        })
+        .where("id", "=", existing)
+        .where("tenant_id", "=", account.tenant_id),
     ];
   }
 
   const secretId = newId();
   return [
-    stmt(
-      `INSERT INTO channel_secrets (id, tenant_id, purpose, ciphertext, iv, key_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        secretId,
-        account.tenant_id,
-        purpose,
-        encrypted.ciphertext,
-        encrypted.iv,
-        encrypted.keyId,
-      ],
-    ),
-    stmt(
-      `UPDATE channel_accounts
-       SET ${SECRET_COLUMN[purpose]} = ?, updated_at = unixepoch('now', 'subsec') * 1000
-       WHERE id = ?`,
-      [secretId, account.id],
-    ),
+    db.insertInto("channel_secrets").values({
+      id: secretId,
+      tenant_id: account.tenant_id,
+      purpose,
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      key_id: encrypted.keyId,
+    }),
+    db
+      .updateTable("channel_accounts")
+      .set({ [SECRET_COLUMN[purpose]]: secretId, updated_at: NOW_MS })
+      .where("id", "=", account.id)
+      .where("tenant_id", "=", account.tenant_id),
   ];
 }
 
 export const ChannelAccountService = {
   getById: async (id: string): Promise<ChannelAccount | null> =>
-    (await getOne<ChannelAccount>(
-      "SELECT * FROM channel_accounts WHERE id = ?",
-      [id],
-    )) ?? null,
+    (await withoutTenantScope("channel account keyed by its own id")
+      .selectFrom("channel_accounts")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst()) ?? null,
 
   /** The tenant's WhatsApp numbers. The simulator channel is not one. */
   listForTenant: (tenantId: string): Promise<ChannelAccount[]> =>
-    getAll<ChannelAccount>(
-      `SELECT * FROM channel_accounts
-       WHERE tenant_id = ? AND channel_type = 'whatsapp'
-       ORDER BY created_at`,
-      [tenantId],
-    ),
+    db
+      .selectFrom("channel_accounts")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .where("channel_type", "=", "whatsapp")
+      .orderBy("created_at")
+      .execute(),
 
   /**
    * The tenant's simulator channel, created on first use. It holds no
@@ -153,12 +140,18 @@ export const ChannelAccountService = {
    * assistant before it connects a number.
    */
   simulatorFor: async (tenantId: string): Promise<ChannelAccount> => {
-    await run(
-      `INSERT OR IGNORE INTO channel_accounts
-         (id, tenant_id, channel_type, phone_number_id, label, status)
-       VALUES (?, ?, 'simulator', ?, 'Simulador', 'active')`,
-      [newId(), tenantId, tenantId],
-    );
+    await db
+      .insertInto("channel_accounts")
+      .values({
+        id: newId(),
+        tenant_id: tenantId,
+        channel_type: "simulator",
+        phone_number_id: tenantId,
+        label: "Simulador",
+        status: "active",
+      })
+      .onConflict((oc) => oc.doNothing())
+      .execute();
     return (await ChannelAccountService.getByPhoneNumberId(
       tenantId,
       "simulator",
@@ -173,10 +166,12 @@ export const ChannelAccountService = {
     phoneNumberId: string,
     channelType: ChannelType = "whatsapp",
   ): Promise<ChannelAccount | null> =>
-    (await getOne<ChannelAccount>(
-      "SELECT * FROM channel_accounts WHERE channel_type = ? AND phone_number_id = ?",
-      [channelType, phoneNumberId],
-    )) ?? null,
+    (await withoutTenantScope("a phone number id is unique across tenants")
+      .selectFrom("channel_accounts")
+      .selectAll()
+      .where("channel_type", "=", channelType)
+      .where("phone_number_id", "=", phoneNumberId)
+      .executeTakeFirst()) ?? null,
 
   /**
    * The account a tenant sends from when the caller names none. Active accounts
@@ -185,13 +180,24 @@ export const ChannelAccountService = {
   getDefaultForTenant: async (
     tenantId: string,
   ): Promise<ChannelAccount | null> =>
-    (await getOne<ChannelAccount>(
-      `SELECT * FROM channel_accounts
-       WHERE tenant_id = ? AND channel_type = 'whatsapp'
-       ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, created_at
-       LIMIT 1`,
-      [tenantId],
-    )) ?? null,
+    (await db
+      .selectFrom("channel_accounts")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .where("channel_type", "=", "whatsapp")
+      .orderBy((eb) =>
+        eb
+          .case()
+          .when("status", "=", "active")
+          .then(0)
+          .when("status", "=", "pending")
+          .then(1)
+          .else(2)
+          .end(),
+      )
+      .orderBy("created_at")
+      .limit(1)
+      .executeTakeFirst()) ?? null,
 
   /**
    * The account VendeYa's own operations alerts go out on. These alerts belong
@@ -201,9 +207,11 @@ export const ChannelAccountService = {
   getPlatformOps: async (): Promise<ChannelAccount | null> => {
     const designated =
       (
-        await getOne<{ value: string }>(
-          "SELECT value FROM system_settings WHERE key = 'platform_ops_channel_account_id'",
-        )
+        await db
+          .selectFrom("system_settings")
+          .select("value")
+          .where("key", "=", "platform_ops_channel_account_id")
+          .executeTakeFirst()
       )?.value ?? null;
 
     if (designated) {
@@ -237,7 +245,7 @@ export const ChannelAccountService = {
     id?: string;
   }): Promise<ChannelAccount> => {
     const id = data.id ?? newId();
-    const statements: D1PreparedStatement[] = [];
+    const statements: Compilable[] = [];
 
     let accessTokenSecretId: string | null = null;
     if (data.accessToken) {
@@ -278,25 +286,19 @@ export const ChannelAccountService = {
     }
 
     statements.push(
-      stmt(
-        `INSERT INTO channel_accounts (
-           id, tenant_id, channel_type, waba_id, phone_number_id, display_phone_number,
-           label, access_token_secret_id, verify_token_secret_id, app_secret_secret_id, status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          data.tenantId,
-          data.channelType ?? "whatsapp",
-          data.wabaId ?? null,
-          data.phoneNumberId,
-          data.displayPhoneNumber ?? null,
-          data.label ?? null,
-          accessTokenSecretId,
-          verifyTokenSecretId,
-          appSecretSecretId,
-          data.status ?? (data.accessToken ? "active" : "pending"),
-        ],
-      ),
+      db.insertInto("channel_accounts").values({
+        id,
+        tenant_id: data.tenantId,
+        channel_type: data.channelType ?? "whatsapp",
+        waba_id: data.wabaId ?? null,
+        phone_number_id: data.phoneNumberId,
+        display_phone_number: data.displayPhoneNumber ?? null,
+        label: data.label ?? null,
+        access_token_secret_id: accessTokenSecretId,
+        verify_token_secret_id: verifyTokenSecretId,
+        app_secret_secret_id: appSecretSecretId,
+        status: data.status ?? (data.accessToken ? "active" : "pending"),
+      }),
     );
 
     await batch(statements);
@@ -318,7 +320,7 @@ export const ChannelAccountService = {
       status?: ChannelAccount["status"];
     },
   ): Promise<void> => {
-    const statements: D1PreparedStatement[] = [];
+    const statements: Compilable[] = [];
     if (change.accessToken) {
       statements.push(
         ...(await secretStatements(
@@ -348,12 +350,11 @@ export const ChannelAccountService = {
       (change.accessToken && account.status === "pending" ? "active" : null);
     if (status) {
       statements.push(
-        stmt(
-          `UPDATE channel_accounts
-           SET status = ?, updated_at = unixepoch('now', 'subsec') * 1000
-           WHERE id = ?`,
-          [status, account.id],
-        ),
+        db
+          .updateTable("channel_accounts")
+          .set({ status, updated_at: NOW_MS })
+          .where("id", "=", account.id)
+          .where("tenant_id", "=", account.tenant_id),
       );
     }
 
@@ -376,7 +377,9 @@ export const ChannelAccountService = {
    * matches the token against every account listed here.
    */
   listWithVerifyToken: (): Promise<ChannelAccount[]> =>
-    getAll<ChannelAccount>(
-      "SELECT * FROM channel_accounts WHERE verify_token_secret_id IS NOT NULL",
-    ),
+    withoutTenantScope("Meta's verify handshake carries no tenant")
+      .selectFrom("channel_accounts")
+      .selectAll()
+      .where("verify_token_secret_id", "is not", null)
+      .execute(),
 };

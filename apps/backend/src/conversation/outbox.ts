@@ -1,11 +1,17 @@
-import { activeChannelAccountsOnly, openTenantsOnly } from "../db/query.ts";
 import { createLogger } from "../lib/logger.ts";
 import type { ConversationRef } from "@vendeya/types";
 import type {
   OutboundMessage,
   SendOutcome,
 } from "../adapters/whatsapp/types.ts";
-import { batch, getAll, getOne, run, stmt } from "../db/index.ts";
+import type { Compilable } from "kysely";
+import {
+  batch,
+  db,
+  inActiveChannelAccounts,
+  inOpenTenants,
+  withoutTenantScope,
+} from "../db/index.ts";
 
 /*
  * The states of an outbox row, and who moves each one.
@@ -186,13 +192,15 @@ function messageStatus(status: OutboxStatus): string {
 
 /** Whether this conversation already owes a reply, so a new one must queue behind it. */
 export async function hasQueuedReply(ref: ConversationRef): Promise<boolean> {
-  const row = await getOne<{ id: number }>(
-    `SELECT id FROM outbox
-     WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-       AND status IN ('pending', 'sending')
-     LIMIT 1`,
-    [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-  );
+  const row = await db
+    .selectFrom("outbox")
+    .select("id")
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .where("status", "in", ["pending", "sending"])
+    .limit(1)
+    .executeTakeFirst();
   return row !== undefined;
 }
 
@@ -206,32 +214,28 @@ export async function enqueue(args: {
 }): Promise<number> {
   const { ref, messageId, message, state, now } = args;
 
-  const result = await run(
-    `INSERT INTO outbox
-         (tenant_id, channel_account_id, phone_number, message_id, type, content,
-          caption, status, attempts, ambiguous_attempts, last_kind, last_reason,
-          next_attempt_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      ref.tenantId,
-      ref.channelAccountId,
-      ref.phoneNumber,
-      messageId,
-      message.type,
-      message.content,
-      message.type === "image" ? (message.caption ?? null) : null,
-      state.status,
-      state.attempts,
-      state.ambiguousAttempts,
-      state.lastKind,
-      state.lastReason,
-      state.nextAttemptAt,
-      now,
-      now,
-    ],
-  );
+  const result = await db
+    .insertInto("outbox")
+    .values({
+      tenant_id: ref.tenantId,
+      channel_account_id: ref.channelAccountId,
+      phone_number: ref.phoneNumber,
+      message_id: messageId,
+      type: message.type,
+      content: message.content,
+      caption: message.type === "image" ? (message.caption ?? null) : null,
+      status: state.status,
+      attempts: state.attempts,
+      ambiguous_attempts: state.ambiguousAttempts,
+      last_kind: state.lastKind,
+      last_reason: state.lastReason,
+      next_attempt_at: state.nextAttemptAt,
+      created_at: now,
+      updated_at: now,
+    })
+    .executeTakeFirstOrThrow();
 
-  return Number(result.lastInsertRowid);
+  return Number(result.insertId);
 }
 
 /**
@@ -256,15 +260,17 @@ export function outboundOf(row: OutboxRow): OutboundMessage {
 export async function headRow(
   ref: ConversationRef,
 ): Promise<OutboxRow | undefined> {
-  return await getOne<OutboxRow>(
-    `SELECT * FROM outbox
-     WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-       AND status IN ('pending', 'sending')
-       AND ${openTenantsOnly()}
-     ORDER BY id
-     LIMIT 1`,
-    [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-  );
+  return await db
+    .selectFrom("outbox")
+    .selectAll()
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .where("status", "in", ["pending", "sending"])
+    .where(inOpenTenants)
+    .orderBy("id")
+    .limit(1)
+    .executeTakeFirst();
 }
 
 /**
@@ -276,13 +282,15 @@ export async function claimRow(
   now: number,
 ): Promise<OutboxRow | undefined> {
   const changed = (
-    await run(
-      "UPDATE outbox SET status = 'sending', updated_at = ? WHERE id = ? AND status = 'pending'",
-      [now, row.id],
-    )
-  ).changes;
+    await withoutTenantScope("outbox row keyed by id")
+      .updateTable("outbox")
+      .set({ status: "sending", updated_at: now })
+      .where("id", "=", row.id)
+      .where("status", "=", "pending")
+      .executeTakeFirst()
+  ).numUpdatedRows;
 
-  if (changed !== 1) return undefined;
+  if (changed !== 1n) return undefined;
 
   return { ...row, status: "sending", updated_at: now };
 }
@@ -307,30 +315,25 @@ export async function recordOutcome(
   );
 
   await batch([
-    stmt(
-      `UPDATE outbox
-       SET status = ?, attempts = ?, ambiguous_attempts = ?, last_kind = ?,
-           last_reason = ?, next_attempt_at = ?, updated_at = ?
-       WHERE id = ?`,
-      [
-        step.status,
-        step.attempts,
-        step.ambiguousAttempts,
-        step.lastKind,
-        step.lastReason,
-        step.nextAttemptAt,
-        now,
-        row.id,
-      ],
-    ),
-    stmt(
-      "UPDATE messages SET status = ?, whatsapp_message_id = ? WHERE id = ?",
-      [
-        messageStatus(step.status),
-        outcome.ok ? outcome.messageId : null,
-        row.message_id,
-      ],
-    ),
+    withoutTenantScope("outbox row keyed by id")
+      .updateTable("outbox")
+      .set({
+        status: step.status,
+        attempts: step.attempts,
+        ambiguous_attempts: step.ambiguousAttempts,
+        last_kind: step.lastKind,
+        last_reason: step.lastReason,
+        next_attempt_at: step.nextAttemptAt,
+        updated_at: now,
+      })
+      .where("id", "=", row.id),
+    withoutTenantScope("message keyed by id")
+      .updateTable("messages")
+      .set({
+        status: messageStatus(step.status),
+        whatsapp_message_id: outcome.ok ? outcome.messageId : null,
+      })
+      .where("id", "=", row.message_id),
   ]);
 
   return step;
@@ -341,11 +344,16 @@ export async function recordOutcome(
  * conversation runs on was switched off, which no attempt could have fixed.
  */
 export async function deferUnavailable(id: number, now: number): Promise<void> {
-  await run(
-    `UPDATE outbox SET status = 'pending', next_attempt_at = ?, updated_at = ?
-     WHERE id = ? AND status = 'sending'`,
-    [now + CHANNEL_UNAVAILABLE_DELAY_MS, now, id],
-  );
+  await withoutTenantScope("outbox row keyed by id")
+    .updateTable("outbox")
+    .set({
+      status: "pending",
+      next_attempt_at: now + CHANNEL_UNAVAILABLE_DELAY_MS,
+      updated_at: now,
+    })
+    .where("id", "=", id)
+    .where("status", "=", "sending")
+    .execute();
 }
 
 /**
@@ -358,30 +366,35 @@ export async function expirePending(
   now: number,
 ): Promise<number> {
   const cutoff = now - MAX_AGE_MS;
-  const identity = [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
 
   const [, expired] = await batch([
-    stmt(
-      `UPDATE messages SET status = 'failed'
-       WHERE id IN (
-         SELECT message_id FROM outbox
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-           AND status = 'pending' AND created_at <= ?
-           AND ${openTenantsOnly()}
-       )`,
-      [...identity, cutoff],
-    ),
-    stmt(
-      `UPDATE outbox
-       SET status = 'failed', last_reason = 'expired', updated_at = ?
-       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-         AND status = 'pending' AND created_at <= ?
-         AND ${openTenantsOnly()}`,
-      [now, ...identity, cutoff],
-    ),
+    db
+      .updateTable("messages")
+      .set({ status: "failed" })
+      .where("tenant_id", "=", ref.tenantId)
+      .where("id", "in", (eb) =>
+        eb
+          .selectFrom("outbox")
+          .select("message_id")
+          .where("tenant_id", "=", ref.tenantId)
+          .where("channel_account_id", "=", ref.channelAccountId)
+          .where("phone_number", "=", ref.phoneNumber)
+          .where("status", "=", "pending")
+          .where("created_at", "<=", cutoff)
+          .where(inOpenTenants),
+      ),
+    db
+      .updateTable("outbox")
+      .set({ status: "failed", last_reason: "expired", updated_at: now })
+      .where("tenant_id", "=", ref.tenantId)
+      .where("channel_account_id", "=", ref.channelAccountId)
+      .where("phone_number", "=", ref.phoneNumber)
+      .where("status", "=", "pending")
+      .where("created_at", "<=", cutoff)
+      .where(inOpenTenants),
   ]);
 
-  return expired!.meta.changes;
+  return Number(expired!.meta.changes);
 }
 
 /**
@@ -390,26 +403,28 @@ export async function expirePending(
  * conversation lock, so no attempt can be in flight. The outbox update comes
  * last, so its `meta.changes` is how many were dropped.
  */
-export function cancelPendingStatements(
-  ref: ConversationRef,
-): D1PreparedStatement[] {
-  const identity = [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
+export function cancelPendingStatements(ref: ConversationRef): Compilable[] {
   return [
-    stmt(
-      `UPDATE messages SET status = 'cancelled'
-       WHERE id IN (
-         SELECT message_id FROM outbox
-         WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-           AND status = 'pending'
-       )`,
-      identity,
-    ),
-    stmt(
-      `UPDATE outbox SET status = 'cancelled', updated_at = ?
-       WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-         AND status = 'pending'`,
-      [Date.now(), ...identity],
-    ),
+    db
+      .updateTable("messages")
+      .set({ status: "cancelled" })
+      .where("tenant_id", "=", ref.tenantId)
+      .where("id", "in", (eb) =>
+        eb
+          .selectFrom("outbox")
+          .select("message_id")
+          .where("tenant_id", "=", ref.tenantId)
+          .where("channel_account_id", "=", ref.channelAccountId)
+          .where("phone_number", "=", ref.phoneNumber)
+          .where("status", "=", "pending"),
+      ),
+    db
+      .updateTable("outbox")
+      .set({ status: "cancelled", updated_at: Date.now() })
+      .where("tenant_id", "=", ref.tenantId)
+      .where("channel_account_id", "=", ref.channelAccountId)
+      .where("phone_number", "=", ref.phoneNumber)
+      .where("status", "=", "pending"),
   ];
 }
 
@@ -427,23 +442,42 @@ export async function cancelPending(ref: ConversationRef): Promise<number> {
 export async function outboxWakeAt(
   ref: ConversationRef,
 ): Promise<number | undefined> {
-  const identity = [ref.tenantId, ref.channelAccountId, ref.phoneNumber];
-  const row = await getOne<{ due: number | null; stale: number | null }>(
-    `SELECT
-       (SELECT next_attempt_at FROM outbox
-        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-          AND status IN ('pending', 'sending')
-          AND ${activeChannelAccountsOnly()}
-        ORDER BY id LIMIT 1) AS due,
-       (SELECT MIN(created_at) + ? FROM outbox
-        WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-          AND status = 'pending') AS stale
-     WHERE ${openTenantsOnly("?")}`,
-    [...identity, MAX_AGE_MS, ...identity, ref.tenantId],
-  );
-  const times = [row?.due, row?.stale].filter(
-    (time): time is number => typeof time === "number",
-  );
+  const row = await db
+    .selectNoFrom((eb) => [
+      eb
+        .selectFrom("outbox")
+        .select("next_attempt_at")
+        .where("tenant_id", "=", ref.tenantId)
+        .where("channel_account_id", "=", ref.channelAccountId)
+        .where("phone_number", "=", ref.phoneNumber)
+        .where("status", "in", ["pending", "sending"])
+        .where((eb) =>
+          inActiveChannelAccounts(eb, "channel_account_id", "outbox.tenant_id"),
+        )
+        .orderBy("id")
+        .limit(1)
+        .as("due"),
+      eb
+        .selectFrom("outbox")
+        .select((eb) => eb.fn.min("created_at").as("stale"))
+        .where("tenant_id", "=", ref.tenantId)
+        .where("channel_account_id", "=", ref.channelAccountId)
+        .where("phone_number", "=", ref.phoneNumber)
+        .where("status", "=", "pending")
+        .as("stale"),
+    ])
+    .where((eb) =>
+      eb(
+        eb.val(ref.tenantId),
+        "in",
+        eb.selectFrom("tenants").select("id").where("status", "=", "active"),
+      ),
+    )
+    .executeTakeFirst();
+  const times = [
+    row?.due,
+    row?.stale != null ? row.stale + MAX_AGE_MS : null,
+  ].filter((time): time is number => typeof time === "number");
   return times.length === 0 ? undefined : Math.min(...times);
 }
 
@@ -454,35 +488,34 @@ export async function outboxWakeAt(
 export async function conversationsNeedingOutbox(
   now: number,
 ): Promise<ConversationRef[]> {
-  const stale = await getAll<{
-    tenant_id: string;
-    channel_account_id: string;
-    phone_number: string;
-  }>(
-    `SELECT DISTINCT tenant_id, channel_account_id, phone_number FROM outbox
-     WHERE status = 'pending' AND created_at <= ? AND ${openTenantsOnly()}`,
-    [now - MAX_AGE_MS],
-  );
+  const stale = await db
+    .selectFrom("outbox")
+    .select(["tenant_id", "channel_account_id", "phone_number"])
+    .distinct()
+    .where("status", "=", "pending")
+    .where("created_at", "<=", now - MAX_AGE_MS)
+    .where(inOpenTenants)
+    .execute();
 
-  const due = await getAll<{
-    tenant_id: string;
-    channel_account_id: string;
-    phone_number: string;
-  }>(
-    `SELECT o.tenant_id, o.channel_account_id, o.phone_number FROM outbox o
-     WHERE o.status = 'pending'
-       AND o.next_attempt_at <= ?
-       AND o.id = (
-         SELECT MIN(head.id) FROM outbox head
-         WHERE head.tenant_id = o.tenant_id
-           AND head.channel_account_id = o.channel_account_id
-           AND head.phone_number = o.phone_number
-           AND head.status IN ('pending', 'sending')
-       )
-       AND ${openTenantsOnly("o.tenant_id")}
-       AND ${activeChannelAccountsOnly("o.channel_account_id")}`,
-    [now],
-  );
+  const due = await db
+    .selectFrom("outbox as o")
+    .select(["o.tenant_id", "o.channel_account_id", "o.phone_number"])
+    .where("o.status", "=", "pending")
+    .where("o.next_attempt_at", "<=", now)
+    .where("o.id", "=", (eb) =>
+      eb
+        .selectFrom("outbox as head")
+        .select((eb) => eb.fn.min("head.id").as("id"))
+        .whereRef("head.tenant_id", "=", "o.tenant_id")
+        .whereRef("head.channel_account_id", "=", "o.channel_account_id")
+        .whereRef("head.phone_number", "=", "o.phone_number")
+        .where("head.status", "in", ["pending", "sending"]),
+    )
+    .where((eb) => inOpenTenants(eb, "o.tenant_id"))
+    .where((eb) =>
+      inActiveChannelAccounts(eb, "o.channel_account_id", "o.tenant_id"),
+    )
+    .execute();
 
   const refs = new Map<string, ConversationRef>();
   for (const row of [...stale, ...due]) {
@@ -501,13 +534,16 @@ export async function conversationsNeedingOutbox(
 export async function undeliveredRows(
   ref: ConversationRef,
 ): Promise<OutboxRow[]> {
-  return await getAll<OutboxRow>(
-    `SELECT * FROM outbox
-     WHERE tenant_id = ? AND channel_account_id = ? AND phone_number = ?
-       AND status = 'failed' AND handed_off_at IS NULL
-     ORDER BY id`,
-    [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-  );
+  return await db
+    .selectFrom("outbox")
+    .selectAll()
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .where("status", "=", "failed")
+    .where("handed_off_at", "is", null)
+    .orderBy("id")
+    .execute();
 }
 
 /**
@@ -518,14 +554,14 @@ export async function conversationsAwaitingHandoff(): Promise<
   ConversationRef[]
 > {
   return (
-    await getAll<{
-      tenant_id: string;
-      channel_account_id: string;
-      phone_number: string;
-    }>(
-      `SELECT DISTINCT tenant_id, channel_account_id, phone_number FROM outbox
-     WHERE status = 'failed' AND handed_off_at IS NULL AND ${openTenantsOnly()}`,
-    )
+    await db
+      .selectFrom("outbox")
+      .select(["tenant_id", "channel_account_id", "phone_number"])
+      .distinct()
+      .where("status", "=", "failed")
+      .where("handed_off_at", "is", null)
+      .where(inOpenTenants)
+      .execute()
   ).map((row) => ({
     tenantId: row.tenant_id,
     channelAccountId: row.channel_account_id,
@@ -541,12 +577,13 @@ export async function conversationsAwaitingHandoff(): Promise<
 export async function markHandedOff(ids: number[], now: number): Promise<void> {
   if (ids.length === 0) return;
 
-  await run(
-    `UPDATE outbox SET handed_off_at = ?
-     WHERE id IN (${ids.map(() => "?").join(", ")})
-       AND status = 'failed' AND handed_off_at IS NULL`,
-    [now, ...ids],
-  );
+  await withoutTenantScope("outbox rows keyed by id")
+    .updateTable("outbox")
+    .set({ handed_off_at: now })
+    .where("id", "in", ids)
+    .where("status", "=", "failed")
+    .where("handed_off_at", "is", null)
+    .execute();
 }
 
 /**
@@ -556,12 +593,14 @@ export async function markHandedOff(ids: number[], now: number): Promise<void> {
 export async function interruptedRows(
   ref: ConversationRef,
 ): Promise<OutboxRow[]> {
-  return getAll<OutboxRow>(
-    `SELECT * FROM outbox
-     WHERE status = 'sending'
-       AND tenant_id = ? AND channel_account_id = ? AND phone_number = ?`,
-    [ref.tenantId, ref.channelAccountId, ref.phoneNumber],
-  );
+  return db
+    .selectFrom("outbox")
+    .selectAll()
+    .where("status", "=", "sending")
+    .where("tenant_id", "=", ref.tenantId)
+    .where("channel_account_id", "=", ref.channelAccountId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .execute();
 }
 
 /** Conversations of open tenants with a row left `sending`, for the sweep to wake. */
@@ -569,14 +608,13 @@ export async function conversationsWithInterruptedSends(): Promise<
   ConversationRef[]
 > {
   return (
-    await getAll<{
-      tenant_id: string;
-      channel_account_id: string;
-      phone_number: string;
-    }>(
-      `SELECT DISTINCT tenant_id, channel_account_id, phone_number FROM outbox
-       WHERE status = 'sending' AND ${openTenantsOnly()}`,
-    )
+    await db
+      .selectFrom("outbox")
+      .select(["tenant_id", "channel_account_id", "phone_number"])
+      .distinct()
+      .where("status", "=", "sending")
+      .where(inOpenTenants)
+      .execute()
   ).map((row) => ({
     tenantId: row.tenant_id,
     channelAccountId: row.channel_account_id,
@@ -588,13 +626,15 @@ export async function conversationsWithInterruptedSends(): Promise<
 export async function purgeFinishedOutbox(
   now: number = Date.now(),
 ): Promise<number> {
-  const purged = (
-    await run(
-      `DELETE FROM outbox
-       WHERE status IN ('sent', 'failed', 'cancelled') AND updated_at < ?`,
-      [now - OUTBOX_RETENTION_MS],
-    )
-  ).changes;
+  const purged = Number(
+    (
+      await withoutTenantScope("retention delete spans every tenant")
+        .deleteFrom("outbox")
+        .where("status", "in", ["sent", "failed", "cancelled"])
+        .where("updated_at", "<", now - OUTBOX_RETENTION_MS)
+        .executeTakeFirst()
+    ).numDeletedRows,
+  );
 
   if (purged > 0) logger.info({ purged }, "Purged outbox rows past retention");
 

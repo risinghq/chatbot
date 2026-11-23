@@ -1,8 +1,4 @@
-import { getAll, getOne, run } from "../../db/index.ts";
-
-type SettingRow = {
-  value: string;
-};
+import { db } from "../../db/index.ts";
 
 /**
  * Keys that describe the deployment rather than any one business. A platform
@@ -54,52 +50,67 @@ export {
 
 export const SystemSettings = {
   async get(key: string): Promise<string | null> {
-    const row = await getOne<SettingRow>(
-      "SELECT value FROM system_settings WHERE key = ?",
-      [key],
-    );
+    const row = await db
+      .selectFrom("system_settings")
+      .select("value")
+      .where("key", "=", key)
+      .executeTakeFirst();
     return row?.value ?? null;
   },
 
   async getAll(): Promise<Record<string, string>> {
-    const rows = await getAll<{ key: string; value: string }>(
-      "SELECT key, value FROM system_settings",
-    );
+    const rows = await db
+      .selectFrom("system_settings")
+      .select(["key", "value"])
+      .execute();
     return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   },
 
   async set(key: string, value: string): Promise<void> {
-    await run(
-      "INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)",
-      [key, value, Date.now()],
-    );
+    await db
+      .insertInto("system_settings")
+      .values({ key, value, updated_at: Date.now() })
+      .onConflict((oc) =>
+        oc.column("key").doUpdateSet((eb) => ({
+          value: eb.ref("excluded.value"),
+          updated_at: eb.ref("excluded.updated_at"),
+        })),
+      )
+      .execute();
   },
 };
 
 export const TenantSettings = {
   async get(tenantId: string, key: string): Promise<string | null> {
-    const row = await getOne<SettingRow>(
-      "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = ?",
-      [tenantId, key],
-    );
+    const row = await db
+      .selectFrom("tenant_settings")
+      .select("value")
+      .where("tenant_id", "=", tenantId)
+      .where("key", "=", key)
+      .executeTakeFirst();
     return row?.value ?? null;
   },
 
   async getAll(tenantId: string): Promise<Record<string, string>> {
-    const rows = await getAll<{ key: string; value: string }>(
-      "SELECT key, value FROM tenant_settings WHERE tenant_id = ?",
-      [tenantId],
-    );
+    const rows = await db
+      .selectFrom("tenant_settings")
+      .select(["key", "value"])
+      .where("tenant_id", "=", tenantId)
+      .execute();
     return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   },
 
   async set(tenantId: string, key: string, value: string): Promise<void> {
-    await run(
-      `INSERT INTO tenant_settings (tenant_id, key, value, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      [tenantId, key, value, Date.now()],
-    );
+    await db
+      .insertInto("tenant_settings")
+      .values({ tenant_id: tenantId, key, value, updated_at: Date.now() })
+      .onConflict((oc) =>
+        oc.columns(["tenant_id", "key"]).doUpdateSet((eb) => ({
+          value: eb.ref("excluded.value"),
+          updated_at: eb.ref("excluded.updated_at"),
+        })),
+      )
+      .execute();
   },
 };
 
