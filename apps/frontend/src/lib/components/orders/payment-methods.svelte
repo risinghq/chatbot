@@ -53,13 +53,13 @@ async function save() {
     );
     await invalidateAll();
     toast.success(
-      editing ? "Medio de pago actualizado" : "Medio de pago agregado",
+      editing ? "Método de pago actualizado" : "Método de pago agregado",
     );
     open = false;
   } catch (error) {
     if (error instanceof ApiError && error.status === 409)
-      nameError = "Ya tienes un medio de pago con este nombre";
-    else toast.error("No se pudo guardar el medio de pago");
+      nameError = "Ya tienes un método de pago con este nombre";
+    else toast.error("No se pudo guardar el método de pago");
   } finally {
     isSaving = false;
   }
@@ -77,39 +77,39 @@ async function remove() {
   try {
     await fetchApi(`/api/payment-methods/${editing.id}`, { method: "DELETE" });
     await invalidateAll();
-    toast.success("Medio de pago eliminado");
+    toast.success("Método de pago eliminado");
     open = false;
   } catch {
-    toast.error("No se pudo eliminar el medio de pago");
+    toast.error("No se pudo eliminar el método de pago");
   } finally {
     isSaving = false;
   }
 }
 
 const columns = [
-  { header: "Medio de pago", cell: nameCell },
+  { header: "Método de pago", cell: nameCell },
   { header: "Indicaciones al cliente", cell: instructionsCell },
 ];
 </script>
 
 <SectionShell
-  title="Medios de pago"
+  title="Métodos de pago"
   description="Cómo te pagan tus clientes. Las indicaciones son lo que el cliente lee para pagar."
 >
   {#snippet action()}
-    <Button size="sm" variant="secondary" onclick={() => openFor(null)}>Agregar medio</Button>
+    <Button size="sm" variant="secondary" onclick={() => openFor(null)}>Agregar método</Button>
   {/snippet}
 
   {#if methods.length > 0}
     <DataTable data={methods} {columns} keyField="id" onRowClick={openFor} />
   {:else}
     <p class="px-4 py-3 text-sm text-fg-muted">
-      Agrega un medio de pago, por ejemplo Yape o contra entrega, para registrar pagos.
+      Agrega un método de pago, por ejemplo Yape o contra entrega, para registrar pagos.
     </p>
   {/if}
 </SectionShell>
 
-<Modal bind:open title={editing ? "Editar medio de pago" : "Nuevo medio de pago"} onClose={() => (open = false)}>
+<Modal bind:open title={editing ? "Editar método de pago" : "Nuevo método de pago"} onClose={() => (open = false)}>
   <FormField label="Nombre*" for="method-name" error={nameError}>
     <Input id="method-name" bind:value={form.name} placeholder="Ej. Yape" />
   </FormField>
