@@ -1992,6 +1992,81 @@ describe("HTTP authorization", () => {
     });
   });
 
+  describe("a request that names its business", () => {
+    function getIn(path: string, auth: { cookie: string }, tenantId: string) {
+      return app.request(path, {
+        headers: { Cookie: auth.cookie, "X-Tenant-Id": tenantId },
+      });
+    }
+
+    it("acts in the named business and makes it the last opened", async () => {
+      const userId = await createUser({ tenantId: alpha.tenantId });
+      await run(
+        `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
+         VALUES (?, ?, ?, 'admin')`,
+        [crypto.randomUUID(), beta.tenantId, userId],
+      );
+      const session = await login(userId, alpha.tenantId);
+
+      const response = await getIn(
+        `/api/conversations/${SHARED_PHONE}`,
+        session,
+        beta.tenantId,
+      );
+      expect(response.status).toBe(200);
+      const detail = (await response.json()) as {
+        conversation: { customer_name: string };
+      };
+      expect(detail.conversation.customer_name).toBe("Beta Client");
+
+      const { user } = await validateSessionToken(session.token);
+      expect(user?.activeTenantId).toBe(beta.tenantId);
+    });
+
+    it("refuses a business the caller does not belong to", async () => {
+      const response = await getIn(
+        "/api/conversations",
+        alphaAdmin,
+        beta.tenantId,
+      );
+      expect(response.status).toBe(404);
+
+      const { user } = await validateSessionToken(alphaAdmin.token);
+      expect(user?.activeTenantId).toBe(alpha.tenantId);
+    });
+
+    it("lets a platform operator name any open business", async () => {
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
+      const response = await getIn(
+        "/api/conversations",
+        operator,
+        beta.tenantId,
+      );
+      const rows = (await response.json()) as Array<{ tenant_id: string }>;
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((r) => r.tenant_id === beta.tenantId)).toBe(true);
+    });
+
+    it("refuses a suspended business, even to an operator", async () => {
+      const operator = await login(
+        await createUser({ isPlatformOperator: true }),
+        null,
+      );
+      await run(`UPDATE tenants SET status = 'suspended' WHERE id = ?`, [
+        beta.tenantId,
+      ]);
+      const response = await getIn(
+        "/api/conversations",
+        operator,
+        beta.tenantId,
+      );
+      expect(response.status).toBe(404);
+    });
+  });
+
   /**
    * Logging in for somebody whose only business is suspended. Belonging to a
    * suspended tenant is still belonging, so login succeeds and hands out the

@@ -18,6 +18,13 @@ export const NO_ACTIVE_TENANT = {
     "Select a tenant with POST /api/tenants/active before using this endpoint",
 } as const;
 
+/**
+ * The business a request acts in. A browser tab names it on every request,
+ * so two tabs can work in two businesses. Without it the session's pin, the
+ * business last opened, applies.
+ */
+export const TENANT_HEADER = "X-Tenant-Id";
+
 /** The token in an `Authorization: Bearer` header, or null without one. */
 function bearerToken(c: Context): string | null {
   const header = c.req.header("Authorization");
@@ -38,10 +45,14 @@ export async function requireAuth(c: Context, next: Next) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  const { session, user, scope, fresh } = await validateSessionToken(
+  const { session, user, scope, fresh, forbidden } = await validateSessionToken(
     token,
     bearer ? "token" : "browser",
+    c.req.header(TENANT_HEADER) || null,
   );
+
+  // Do not distinguish "no such business" from "not yours".
+  if (forbidden) return c.json({ error: "Tenant not found" }, 404);
 
   if (!session || !user || !scope) {
     if (!bearer) deleteSessionTokenCookie(c);
