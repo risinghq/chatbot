@@ -1,6 +1,8 @@
 import { publicOrigin } from "../../config.ts";
 
 export type NotificationContext = {
+  /** The business the alert is about. Its dashboard pages live under its id. */
+  tenantId?: string;
   phoneNumber: string;
   /**
    * The number the conversation is on. A conversation is (tenant, channel
@@ -14,10 +16,10 @@ export type NotificationContext = {
   urlSuffix?: string;
 };
 
-function formatLink(suffix?: string): string {
-  const baseUrl = publicOrigin();
-  if (!suffix) return "";
-  return `${baseUrl}/dashboard${suffix}`;
+/** A page of the alert's business. An alert with no business links nowhere. */
+function formatLink(ctx: NotificationContext, suffix?: string): string {
+  if (!suffix || !ctx.tenantId) return "";
+  return `${publicOrigin()}/dashboard/${ctx.tenantId}${suffix}`;
 }
 
 /**
@@ -30,7 +32,7 @@ function conversationLink(ctx: NotificationContext): string {
     ? `?channel=${encodeURIComponent(ctx.channelAccountId)}`
     : "";
 
-  return formatLink(`/conversations/${ctx.phoneNumber}${query}`);
+  return formatLink(ctx, `/conversations/${ctx.phoneNumber}${query}`);
 }
 
 function b(text: string): string {
@@ -44,7 +46,7 @@ export const templates = {
 
     return [
       `${ident}${dniContext} espera atención.`,
-      ctx.urlSuffix ? formatLink(ctx.urlSuffix) : conversationLink(ctx),
+      ctx.urlSuffix ? formatLink(ctx, ctx.urlSuffix) : conversationLink(ctx),
     ].join("\n");
   },
 
@@ -61,7 +63,7 @@ export const templates = {
 
     return [
       `${ident}${dniContext} generó orden ${b(orderNumber)} por ${money}.${product}`,
-      formatLink(ctx.urlSuffix),
+      formatLink(ctx, ctx.urlSuffix),
     ].join("\n");
   },
 
@@ -72,7 +74,7 @@ export const templates = {
     return [
       `${ident}${dniContext} requiere atención.`,
       `Motivo: ${reason}`,
-      ctx.urlSuffix ? formatLink(ctx.urlSuffix) : conversationLink(ctx),
+      ctx.urlSuffix ? formatLink(ctx, ctx.urlSuffix) : conversationLink(ctx),
     ].join("\n");
   },
 
@@ -81,7 +83,7 @@ export const templates = {
 
     return [
       `${ident} escribió en la conversación que atiendes.`,
-      ctx.urlSuffix ? formatLink(ctx.urlSuffix) : conversationLink(ctx),
+      ctx.urlSuffix ? formatLink(ctx, ctx.urlSuffix) : conversationLink(ctx),
     ].join("\n");
   },
 
@@ -90,7 +92,7 @@ export const templates = {
     return [
       `Se ha producido un error con el ${ident}. Error: ${error}`,
       `Conversación: ${conversationLink(ctx)}`,
-      `Actividad: ${formatLink("/activity")}`,
+      `Actividad: ${formatLink(ctx, "/activity")}`,
     ].join("\n");
   },
 

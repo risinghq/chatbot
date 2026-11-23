@@ -26,6 +26,7 @@ export const notificationRules: NotificationRule[] = [
     template: (event) => {
       if (event.type !== "agent_assigned") return "";
       return templates.assignment({
+        tenantId: event.tenantId,
         phoneNumber: event.payload.phoneNumber,
         channelAccountId: event.channelAccountId,
         clientName: event.payload.clientName,
@@ -42,6 +43,7 @@ export const notificationRules: NotificationRule[] = [
       if (event.type !== "order_created") return "";
       return templates.newOrder(
         {
+          tenantId: event.tenantId,
           phoneNumber: event.payload.phoneNumber,
           clientName: event.payload.clientName || "Cliente",
           dni: event.payload.dni,
@@ -79,6 +81,7 @@ export const notificationRules: NotificationRule[] = [
 
       return templates.escalation(
         {
+          tenantId: event.tenantId,
           phoneNumber: event.payload.phoneNumber,
           channelAccountId: event.channelAccountId,
         },
@@ -95,6 +98,7 @@ export const notificationRules: NotificationRule[] = [
     template: (event) => {
       if (event.type !== "customer_message_received") return "";
       return templates.customerMessage({
+        tenantId: event.tenantId,
         phoneNumber: event.payload.phoneNumber,
         channelAccountId: event.channelAccountId,
         clientName: event.payload.clientName,
@@ -111,6 +115,7 @@ export const notificationRules: NotificationRule[] = [
       if (event.type !== "system_error_occurred") return "";
       return templates.systemError(
         {
+          tenantId: event.tenantId,
           phoneNumber: event.payload.phoneNumber,
           channelAccountId: event.channelAccountId,
         },
