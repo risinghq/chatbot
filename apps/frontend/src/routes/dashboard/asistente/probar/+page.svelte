@@ -27,6 +27,8 @@ let conversation = $state<any>(null);
 let loading = $state(false);
 let messagesContainer = $state<HTMLDivElement>();
 let polling: ReturnType<typeof setInterval> | null = null;
+// Null until the status loads; the composer stays usable meanwhile.
+let hasOpenAiKey = $state<boolean | null>(null);
 
 let replayMode = $state(false);
 let replayMetadata = $state<ReplayMetadata | null>(null);
@@ -133,12 +135,15 @@ async function sendMessage(messageText?: string) {
       setTimeout(() => loadConversation(phone), 1000);
     }
   } catch (error) {
-    console.error("Send error:", error);
-    toast.error(
-      error instanceof ApiError && error.status === 409
-        ? "Agrega la clave de OpenAI en Configuración para probar el asistente."
-        : "El asistente no pudo responder. Intenta de nuevo.",
-    );
+    if (error instanceof ApiError && error.status === 409) {
+      // Nothing was stored: give the text back and show the notice.
+      hasOpenAiKey = false;
+      messages = messages.slice(0, -1);
+      if (!messageText) currentInput = textToSend;
+    } else {
+      console.error("Send error:", error);
+      toast.error("El asistente no pudo responder. Intenta de nuevo.");
+    }
   } finally {
     loading = false;
   }
@@ -286,6 +291,10 @@ $effect(() => {
 });
 
 onMount(() => {
+  fetchApi<{ hasOpenAiKey: boolean }>("/api/simulator/status")
+    .then((status) => (hasOpenAiKey = status.hasOpenAiKey))
+    .catch(() => {});
+
   if (data.loadPhone) {
     loadReplayConversation(data.loadPhone, data.loadChannel);
   } else {
@@ -382,6 +391,21 @@ onMount(() => {
 				{/if}
 			</header>
 
+			{#if hasOpenAiKey === false}
+				<div class="shrink-0 border-b border-border-subtle p-3">
+					<Banner tone="warning" title="Falta la clave de OpenAI">
+						El asistente la usa para responder. {data.user.role === "admin"
+							? "Agrégala en Ajustes y vuelve a probar."
+							: "Pide a un administrador que la agregue en Ajustes."}
+						{#snippet action()}
+							{#if data.user.role === "admin"}
+								<Button size="sm" variant="secondary" href="/dashboard/admin/settings">Agregar clave</Button>
+							{/if}
+						{/snippet}
+					</Banner>
+				</div>
+			{/if}
+
 			{#if replayMode && replayMetadata}
 				<div class="shrink-0 border-b border-border-subtle p-3">
 					<Banner tone="warning" title="Modo depuración">
@@ -434,7 +458,7 @@ onMount(() => {
 				{/each}
 			</div>
 
-			<MessageInput bind:value={currentInput} disabled={loading} onSend={() => sendMessage()} />
+			<MessageInput bind:value={currentInput} disabled={loading || hasOpenAiKey === false} onSend={() => sendMessage()} />
 		{:else}
 			<div class="flex flex-1 items-center justify-center">
 				<p class="text-base text-fg-muted">Elige una simulación de la lista.</p>

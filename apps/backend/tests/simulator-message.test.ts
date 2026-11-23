@@ -75,6 +75,17 @@ describe("a simulated message", () => {
     expect(model.requests).toHaveLength(0);
   });
 
+  it("reports whether the business has an OpenAI key", async () => {
+    const status = () =>
+      app
+        .request("/api/simulator/status", { headers: { Cookie: cookie } })
+        .then((response) => response.json());
+
+    expect(await status()).toEqual({ hasOpenAiKey: false });
+    await withOpenAiKey(tenantId);
+    expect(await status()).toEqual({ hasOpenAiKey: true });
+  });
+
   it("records the assistant's reply in the conversation", async () => {
     await withOpenAiKey(tenantId);
     model.says("Claro, aquí estaré.");
