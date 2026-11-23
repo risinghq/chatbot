@@ -225,6 +225,21 @@ describe("the stock ledger", () => {
     ).toBe(409);
   });
 
+  it("lists the stock of one product", async () => {
+    await json(await move(call, variant.id, "receive", 4), 201);
+    const other = await createVariant(call, "OTRO-1");
+
+    const rows = await json<StockRow[]>(
+      await call("GET", `/api/stock?product_id=${variant.product_id}`),
+      200,
+    );
+
+    expect(rows.map((r) => [r.variant_id, r.available])).toEqual([
+      [variant.id, 4],
+    ]);
+    expect(rows.some((r) => r.variant_id === other.id)).toBe(false);
+  });
+
   it("refuses a SKU the business already uses", async () => {
     const product = await json<Product>(
       await call("POST", "/api/catalog/products", {

@@ -194,7 +194,7 @@ async function handleSave() {
         {#if product}
             {#key product.id}
                 <ProductImages productId={product.id} images={data.images} {canEdit} />
-                <VariantList productId={product.id} variants={data.variants} {canEdit} />
+                <VariantList productId={product.id} variants={data.variants} stock={data.stock} {canEdit} />
             {/key}
         {/if}
     </div>
