@@ -224,7 +224,7 @@ describe("writing to a conversation a person holds", () => {
 
       expect(agentMessageAlerts()).toHaveLength(1);
       expect(agentMessageAlerts()[0]!.body).toContain(
-        `/dashboard/conversations/${CUSTOMER}?channel=${tenant.channelAccountId}`,
+        `/dashboard/${tenant.tenantId}/conversations/${CUSTOMER}?channel=${tenant.channelAccountId}`,
       );
       expect(staffMessages.filter((m) => m.to === SALES_GROUP)).toEqual([]);
     });

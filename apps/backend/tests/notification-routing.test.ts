@@ -41,7 +41,7 @@ describe("the link an alert carries", () => {
     channelAccountId: CHANNEL,
   };
 
-  const expectedLink = `/dashboard/conversations/${CUSTOMER}?channel=${CHANNEL}`;
+  const expectedLink = `/dashboard/${base.tenantId}/conversations/${CUSTOMER}?channel=${CHANNEL}`;
 
   it("names the thread on an assignment", async () => {
     expect(
@@ -83,7 +83,18 @@ describe("the link an alert carries", () => {
       },
     } as DomainEvent);
 
-    expect(content).toContain("/dashboard/orders/ord-1");
+    expect(content).toContain(`/dashboard/${base.tenantId}/orders/ord-1`);
+  });
+
+  it("links nowhere when the alert has no business", async () => {
+    const { tenantId: _, ...platform } = base;
+    const content = contentFor({
+      ...platform,
+      type: "escalation_triggered",
+      payload: { phoneNumber: CUSTOMER, reason: "asked_for_a_person" },
+    });
+
+    expect(content).not.toContain("/dashboard");
   });
 });
 
