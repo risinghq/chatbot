@@ -176,7 +176,7 @@ function statements(from = calls): Array<{ sql: string; params: unknown[] }> {
 
 function findInsert(table: string) {
   const found = statements().find(({ sql }) =>
-    new RegExp(`insert into ${table}\\b`, "i").test(sql),
+    new RegExp(`insert into ${table}\\b`, "i").test(sql.replaceAll('"', "")),
   );
   expect(found, `an INSERT INTO ${table}`).toBeDefined();
   return found!;

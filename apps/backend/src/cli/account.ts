@@ -73,7 +73,7 @@ function parse(argv: string[]) {
   }
 }
 
-async function run(argv: string[]): Promise<number> {
+async function main(argv: string[]): Promise<number> {
   const args = parse(argv);
   if (!args) return usage("Unrecognised or incomplete option.");
 
@@ -208,6 +208,7 @@ async function createChannel(options: Options, operator: CliOperator) {
     "../platform/crypto/secrets.ts"
   );
   const { cliAuditStatement } = await import("../platform/audit/logger.ts");
+  const { batch } = await import("../db/index.ts");
 
   // The verify token is generated and stored encrypted on create, so a
   // channel account can never be created without the key.
@@ -238,14 +239,16 @@ async function createChannel(options: Options, operator: CliOperator) {
     accessToken: accessToken || null,
     appSecret: appSecret || null,
   });
-  await cliAuditStatement(
-    operator,
-    tenant.id,
-    "create_channel_account",
-    "channel_account",
-    account.id,
-    { phoneNumberId, wabaId: account.waba_id },
-  ).run();
+  await batch([
+    cliAuditStatement(
+      operator,
+      tenant.id,
+      "create_channel_account",
+      "channel_account",
+      account.id,
+      { phoneNumberId, wabaId: account.waba_id },
+    ),
+  ]);
 
   console.log(
     `Created ${account.status} channel account ${account.id} for tenant ${tenant.name}.`,
@@ -263,7 +266,7 @@ async function createToken(
   );
   const { normalizeEmail } = await import("../domains/accounts/index.ts");
   const { cliAuditStatement } = await import("../platform/audit/logger.ts");
-  const { getOne } = await import("../db/index.ts");
+  const { batch, withoutTenantScope } = await import("../db/index.ts");
 
   const checked = checkTokenRequest({
     name: options.name,
@@ -271,23 +274,33 @@ async function createToken(
   });
   if ("problem" in checked) return refuse(checked.problem);
 
-  const user = await getOne<{ id: string; is_active: number }>(
-    "SELECT id, is_active FROM users WHERE email = ?",
-    [normalizeEmail(email)],
-  );
+  const address = normalizeEmail(email);
+  const user = address
+    ? await withoutTenantScope("a user account is keyed by its email")
+        .selectFrom("users")
+        .select(["id", "is_active"])
+        .where("email", "=", address)
+        .executeTakeFirst()
+    : undefined;
   if (!user || user.is_active === 0) {
     return refuse(`No active account has the email ${email}.`);
   }
 
   const created = await createApiToken(user.id, checked, null);
-  await cliAuditStatement(
-    operator,
-    null,
-    "create_api_token",
-    "api_token",
-    created.id,
-    { userId: user.id, name: created.name, expiresAt: created.expires_at },
-  ).run();
+  await batch([
+    cliAuditStatement(
+      operator,
+      null,
+      "create_api_token",
+      "api_token",
+      created.id,
+      {
+        userId: user.id,
+        name: created.name,
+        expiresAt: created.expires_at,
+      },
+    ),
+  ]);
 
   // The token alone goes to stdout so a caller can pipe it into a file.
   console.error(
@@ -298,7 +311,7 @@ async function createToken(
 }
 
 try {
-  process.exitCode = await run(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2));
 } catch (error) {
   console.error(`error: ${error instanceof Error ? error.message : error}`);
   process.exitCode = 1;

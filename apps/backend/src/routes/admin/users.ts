@@ -8,19 +8,17 @@ import {
 } from "../../domains/tenants/index.ts";
 import { meetsPasswordMinimum } from "../../domains/accounts/index.ts";
 import { activeTenantId, requireActiveTenant } from "../../middleware/auth.ts";
-import { MIN_PASSWORD_LENGTH, type TenantRole } from "@vendeya/types";
-import { batch, getAll, getOne, stmt } from "../../db/index.ts";
+import { MIN_PASSWORD_LENGTH } from "@vendeya/types";
+import { batch, db, withoutTenantScope } from "../../db/index.ts";
 
 const users = new Hono();
 
-type UserRow = {
-  id: string;
-  email: string;
-  name: string;
-  is_active: number;
-  is_platform_operator: number;
-  created_at: number;
-};
+/** An account is global: a user row is keyed by its id. */
+const accounts = () => withoutTenantScope("a user account is keyed by its id");
+
+/** A session is global: a user's sessions are keyed by the user id. */
+const sessionsOf = () =>
+  withoutTenantScope("a user's sessions are keyed by user id");
 
 /**
  * User management is per tenant. An admin sees and edits the members of the
@@ -36,15 +34,21 @@ users.use("/*", requireActiveTenant);
 users.get("/", async (c) => {
   const tenantId = activeTenantId(c);
 
-  const rows = await getAll<UserRow & { role: TenantRole }>(
-    `SELECT u.id, u.email, u.name, u.is_active, u.is_platform_operator,
-            u.created_at, m.role as role
-     FROM tenant_memberships m
-     JOIN users u ON u.id = m.user_id
-     WHERE m.tenant_id = ?
-     ORDER BY u.created_at`,
-    [tenantId],
-  );
+  const rows = await db
+    .selectFrom("tenant_memberships as m")
+    .innerJoin("users as u", "u.id", "m.user_id")
+    .select([
+      "u.id",
+      "u.email",
+      "u.name",
+      "u.is_active",
+      "u.is_platform_operator",
+      "u.created_at",
+      "m.role",
+    ])
+    .where("m.tenant_id", "=", tenantId)
+    .orderBy("u.created_at")
+    .execute();
 
   return c.json({ users: rows });
 });
@@ -63,10 +67,11 @@ async function memberOfActiveTenant(
 async function isPlatformOperator(userId: string): Promise<boolean> {
   return (
     (
-      await getOne<{ is_platform_operator: number }>(
-        "SELECT is_platform_operator FROM users WHERE id = ?",
-        [userId],
-      )
+      await accounts()
+        .selectFrom("users")
+        .select("is_platform_operator")
+        .where("id", "=", userId)
+        .executeTakeFirst()
     )?.is_platform_operator === 1
   );
 }
@@ -119,10 +124,11 @@ users.patch("/:id/status", async (c) => {
     return c.json(refusal, 403);
   }
 
-  const user = await getOne<{ is_active: number }>(
-    "SELECT is_active FROM users WHERE id = ?",
-    [userId],
-  );
+  const user = await accounts()
+    .selectFrom("users")
+    .select("is_active")
+    .where("id", "=", userId)
+    .executeTakeFirst();
 
   if (!user) {
     return c.json({ error: "User not found" }, 404);
@@ -133,10 +139,13 @@ users.patch("/:id/status", async (c) => {
   // A deactivated account loses its sessions and the conversations it held.
   // Turning it back on does not return them.
   await batch([
-    stmt("UPDATE users SET is_active = ? WHERE id = ?", [newStatus, userId]),
+    accounts()
+      .updateTable("users")
+      .set({ is_active: newStatus })
+      .where("id", "=", userId),
     ...(newStatus === 0
       ? [
-          stmt("DELETE FROM session WHERE user_id = ?", [userId]),
+          sessionsOf().deleteFrom("session").where("user_id", "=", userId),
           MembershipService.clearAllAssignments(userId),
         ]
       : []),
@@ -183,8 +192,11 @@ users.post("/:id/password", async (c) => {
 
   // A new password ends every session the old one opened.
   await batch([
-    stmt("UPDATE users SET password_hash = ? WHERE id = ?", [hash, userId]),
-    stmt("DELETE FROM session WHERE user_id = ?", [userId]),
+    accounts()
+      .updateTable("users")
+      .set({ password_hash: hash })
+      .where("id", "=", userId),
+    sessionsOf().deleteFrom("session").where("user_id", "=", userId),
     auditStatement(
       { userId: admin.id, tenantId },
       "reset_password",
@@ -277,10 +289,11 @@ users.delete("/:id/membership", async (c) => {
 
   await batch([
     ...MembershipService.removeStatements(tenantId, userId),
-    stmt(
-      "UPDATE session SET active_tenant_id = NULL WHERE user_id = ? AND active_tenant_id = ?",
-      [userId, tenantId],
-    ),
+    sessionsOf()
+      .updateTable("session")
+      .set({ active_tenant_id: null })
+      .where("user_id", "=", userId)
+      .where("active_tenant_id", "=", tenantId),
     auditStatement(
       { userId: admin.id, tenantId },
       "remove_membership",

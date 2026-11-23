@@ -27,7 +27,11 @@ import {
   setSessionTokenCookie,
 } from "../platform/auth/session.ts";
 import { sessionRole } from "../platform/auth/scope.ts";
-import { getOne } from "../db/index.ts";
+import { withoutTenantScope } from "../db/index.ts";
+
+/** An account is global: a user row is keyed by its id or email, never a tenant. */
+const users = () =>
+  withoutTenantScope("a user account is keyed by its id or email");
 
 /**
  * Signing up, logging in and out, and the caller's own account. Mounted at
@@ -49,15 +53,11 @@ function accountProblem(c: Context, error: AccountError) {
  * the caller has already checked the user belongs to.
  */
 async function startSession(c: Context, userId: string, tenantId?: string) {
-  const user = (await getOne(
-    "SELECT id, email, name, is_platform_operator FROM users WHERE id = ?",
-    [userId],
-  )) as {
-    id: string;
-    email: string;
-    name: string;
-    is_platform_operator: number;
-  };
+  const user = await users()
+    .selectFrom("users")
+    .select(["id", "email", "name", "is_platform_operator"])
+    .where("id", "=", userId)
+    .executeTakeFirstOrThrow();
   const isPlatformOperator = user.is_platform_operator === 1;
 
   // A user with one open membership starts pinned to it. A platform operator,
@@ -99,17 +99,11 @@ auth.post("/login", loginRateLimiter, async (c) => {
   const address = normalizeEmail(email);
 
   const user = address
-    ? ((await getOne(
-        "SELECT id, password_hash, is_active, is_platform_operator FROM users WHERE email = ?",
-        [address],
-      )) as
-        | {
-            id: string;
-            password_hash: string;
-            is_active: number;
-            is_platform_operator: number;
-          }
-        | undefined)
+    ? await users()
+        .selectFrom("users")
+        .select(["id", "password_hash", "is_active", "is_platform_operator"])
+        .where("email", "=", address)
+        .executeTakeFirst()
     : undefined;
 
   if (
@@ -190,10 +184,11 @@ auth.post("/logout", requireAuth, async (c) => {
 
 auth.get("/me", requireAuth, async (c) => {
   const user = c.get("user");
-  const profile = await getOne<{ phone_number: string | null }>(
-    "SELECT phone_number FROM users WHERE id = ?",
-    [user.id],
-  );
+  const profile = await users()
+    .selectFrom("users")
+    .select("phone_number")
+    .where("id", "=", user.id)
+    .executeTakeFirst();
   return c.json({
     user: { ...user, phoneNumber: profile?.phone_number ?? null },
   });

@@ -5,7 +5,8 @@ import {
 import { sha256 } from "@oslojs/crypto/sha2";
 import type { TenantRole } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
-import { batch, getAll, getOne, run, stmt } from "../../db/index.ts";
+import type { Compilable } from "kysely";
+import { batch, db, withoutTenantScope } from "../../db/index.ts";
 import { hashPassword, verifyPassword } from "../../platform/auth/password.ts";
 import { auditStatement } from "../../platform/audit/logger.ts";
 import { Err, Ok, type Result } from "../../shared/result/index.ts";
@@ -77,18 +78,31 @@ type OpenInvitation = {
   role: TenantRole;
 };
 
+/** An account is global: the invited email names it without a tenant. */
+const accounts = () =>
+  withoutTenantScope("a user account is keyed by its email");
+
 /** An invitation that can still be accepted: not used, not expired, tenant open. */
 async function findOpen(token: unknown): Promise<OpenInvitation | null> {
   if (typeof token !== "string" || !token) return null;
   return (
-    (await getOne<OpenInvitation>(
-      `SELECT i.id, i.tenant_id, t.name as tenant_name, i.email, i.role
-       FROM invitations i
-       JOIN tenants t ON t.id = i.tenant_id
-       WHERE i.token_hash = ? AND i.accepted_at IS NULL AND i.expires_at > ?
-         AND t.status = 'active'`,
-      [hashToken(token), Date.now()],
-    )) ?? null
+    (await withoutTenantScope(
+      "the invitation token hash is unique and names the tenant",
+    )
+      .selectFrom("invitations as i")
+      .innerJoin("tenants as t", "t.id", "i.tenant_id")
+      .select([
+        "i.id",
+        "i.tenant_id",
+        "t.name as tenant_name",
+        "i.email",
+        "i.role",
+      ])
+      .where("i.token_hash", "=", hashToken(token))
+      .where("i.accepted_at", "is", null)
+      .where("i.expires_at", ">", Date.now())
+      .where("t.status", "=", "active")
+      .executeTakeFirst()) ?? null
   );
 }
 
@@ -120,11 +134,13 @@ export const InvitationService = {
       return Err(new InvitationError("invalid_role", "Choose a valid role."));
     }
 
-    const member = await getOne(
-      `SELECT 1 FROM tenant_memberships m JOIN users u ON u.id = m.user_id
-       WHERE m.tenant_id = ? AND u.email = ?`,
-      [tenantId, email],
-    );
+    const member = await db
+      .selectFrom("tenant_memberships as m")
+      .innerJoin("users as u", "u.id", "m.user_id")
+      .select("m.id")
+      .where("m.tenant_id", "=", tenantId)
+      .where("u.email", "=", email)
+      .executeTakeFirst();
     if (member) {
       return Err(
         new InvitationError(
@@ -140,23 +156,22 @@ export const InvitationService = {
     // A new invitation for the same email replaces any pending one, so only
     // the latest link works.
     await batch([
-      stmt(
-        "DELETE FROM invitations WHERE tenant_id = ? AND email = ? AND accepted_at IS NULL",
-        [tenantId, email],
-      ),
-      stmt(
-        `INSERT INTO invitations (id, tenant_id, email, role, token_hash, expires_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          tenantId,
-          email,
-          input.role,
-          hashToken(token),
-          Date.now() + INVITATION_LIFETIME_MS,
-          createdBy,
-        ],
-      ),
+      db
+        .deleteFrom("invitations")
+        .where("tenant_id", "=", tenantId)
+        .where("email", "=", email)
+        .where("accepted_at", "is", null),
+      db.insertInto("invitations").values({
+        id,
+        tenant_id: tenantId,
+        email,
+        role: input.role,
+        token_hash: hashToken(token),
+        expires_at: Date.now() + INVITATION_LIFETIME_MS,
+        accepted_at: null,
+        accepted_by: null,
+        created_by: createdBy,
+      }),
       auditStatement(
         { userId: createdBy, tenantId },
         "create_invitation",
@@ -173,12 +188,14 @@ export const InvitationService = {
   },
 
   listPending: (tenantId: string): Promise<PendingInvitation[]> =>
-    getAll<PendingInvitation>(
-      `SELECT id, email, role, expires_at, created_at FROM invitations
-       WHERE tenant_id = ? AND accepted_at IS NULL AND expires_at > ?
-       ORDER BY created_at DESC`,
-      [tenantId, Date.now()],
-    ),
+    db
+      .selectFrom("invitations")
+      .select(["id", "email", "role", "expires_at", "created_at"])
+      .where("tenant_id", "=", tenantId)
+      .where("accepted_at", "is", null)
+      .where("expires_at", ">", Date.now())
+      .orderBy("created_at", "desc")
+      .execute(),
 
   /** False when the tenant has no such pending invitation. */
   async revoke(
@@ -186,14 +203,20 @@ export const InvitationService = {
     id: string,
     revokedBy: string,
   ): Promise<boolean> {
-    const pending = await getOne(
-      "SELECT 1 FROM invitations WHERE id = ? AND tenant_id = ? AND accepted_at IS NULL",
-      [id, tenantId],
-    );
+    const pending = await db
+      .selectFrom("invitations")
+      .select("id")
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .where("accepted_at", "is", null)
+      .executeTakeFirst();
     if (!pending) return false;
 
     await batch([
-      stmt("DELETE FROM invitations WHERE id = ?", [id]),
+      db
+        .deleteFrom("invitations")
+        .where("id", "=", id)
+        .where("tenant_id", "=", tenantId),
       auditStatement(
         { userId: revokedBy, tenantId },
         "revoke_invitation",
@@ -208,9 +231,11 @@ export const InvitationService = {
     const invitation = await findOpen(token);
     if (!invitation) return null;
 
-    const account = await getOne("SELECT 1 FROM users WHERE email = ?", [
-      invitation.email,
-    ]);
+    const account = await accounts()
+      .selectFrom("users")
+      .select("id")
+      .where("email", "=", invitation.email)
+      .executeTakeFirst();
     return {
       tenantName: invitation.tenant_name,
       email: invitation.email,
@@ -231,16 +256,14 @@ export const InvitationService = {
     const invitation = await findOpen(token);
     if (!invitation) return Err(notFound());
 
-    const account = await getOne<{
-      id: string;
-      password_hash: string;
-      is_active: number;
-    }>("SELECT id, password_hash, is_active FROM users WHERE email = ?", [
-      invitation.email,
-    ]);
+    const account = await accounts()
+      .selectFrom("users")
+      .select(["id", "password_hash", "is_active"])
+      .where("email", "=", invitation.email)
+      .executeTakeFirst();
 
     let userId: string;
-    const writes: D1PreparedStatement[] = [];
+    const writes: Compilable[] = [];
 
     if (account) {
       if (account.is_active !== 1) {
@@ -274,11 +297,16 @@ export const InvitationService = {
       }
       userId = newId();
       writes.push(
-        stmt(
-          `INSERT INTO users (id, email, password_hash, name, created_by)
-           VALUES (?, ?, ?, ?, NULL)`,
-          [userId, invitation.email, await hashPassword(input.password), name],
-        ),
+        accounts()
+          .insertInto("users")
+          .values({
+            id: userId,
+            email: invitation.email,
+            password_hash: await hashPassword(input.password),
+            name,
+            phone_number: null,
+            created_by: null,
+          }),
       );
     }
 
@@ -290,10 +318,11 @@ export const InvitationService = {
         role: invitation.role,
         createdBy: userId,
       }),
-      stmt(
-        "UPDATE invitations SET accepted_at = ?, accepted_by = ? WHERE id = ?",
-        [Date.now(), userId, invitation.id],
-      ),
+      db
+        .updateTable("invitations")
+        .set({ accepted_at: Date.now(), accepted_by: userId })
+        .where("id", "=", invitation.id)
+        .where("tenant_id", "=", invitation.tenant_id),
       auditStatement(
         { userId, tenantId: invitation.tenant_id },
         "accept_invitation",
@@ -308,9 +337,10 @@ export const InvitationService = {
 
   /** Expired invitations nobody accepted. The hourly sweep calls it. */
   purgeExpired: async (now: number): Promise<void> => {
-    await run(
-      "DELETE FROM invitations WHERE accepted_at IS NULL AND expires_at <= ?",
-      [now],
-    );
+    await withoutTenantScope("expired invitations in every tenant")
+      .deleteFrom("invitations")
+      .where("accepted_at", "is", null)
+      .where("expires_at", "<=", now)
+      .execute();
   },
 };

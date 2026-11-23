@@ -1,6 +1,7 @@
 import { MIN_PASSWORD_LENGTH } from "@vendeya/types";
 import { newId } from "@vendeya/utils";
-import { batch, getOne, stmt } from "../../db/index.ts";
+import { sql, type SqlBool } from "kysely";
+import { batch, db, withoutTenantScope } from "../../db/index.ts";
 import { hashPassword, verifyPassword } from "../../platform/auth/password.ts";
 import {
   type CliOperator,
@@ -58,13 +59,9 @@ const passwordTooShort = () =>
     `The password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
   );
 
-type UserRow = {
-  id: string;
-  email: string;
-  name: string;
-  is_platform_operator: number;
-  is_active: number;
-};
+/** An account is global: a user row is keyed by its id or email, never a tenant. */
+const users = () =>
+  withoutTenantScope("a user account is keyed by its id or email");
 
 async function listTenants(): Promise<string> {
   return (await TenantService.getAll())
@@ -122,7 +119,13 @@ async function resolveTenant(
 }
 
 async function emailIsTaken(email: string): Promise<boolean> {
-  return Boolean(await getOne("SELECT 1 FROM users WHERE email = ?", [email]));
+  return Boolean(
+    await users()
+      .selectFrom("users")
+      .select("id")
+      .where("email", "=", email)
+      .executeTakeFirst(),
+  );
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -152,11 +155,13 @@ export const AccountService = {
   /** A disabled operator does not count: nobody can use their powers. */
   async hasPlatformOperator(): Promise<boolean> {
     return Boolean(
-      await getOne(
-        `SELECT 1 FROM users
-         WHERE is_platform_operator = 1 AND is_active = 1
-         LIMIT 1`,
-      ),
+      await users()
+        .selectFrom("users")
+        .select("id")
+        .where("is_platform_operator", "=", 1)
+        .where("is_active", "=", 1)
+        .limit(1)
+        .executeTakeFirst(),
     );
   },
 
@@ -180,17 +185,17 @@ export const AccountService = {
 
     try {
       await batch([
-        stmt(
-          `INSERT INTO users (id, email, password_hash, name, is_platform_operator, created_by)
-           VALUES (?, ?, ?, ?, ?, NULL)`,
-          [
+        users()
+          .insertInto("users")
+          .values({
             id,
             email,
-            await hashPassword(input.password),
+            password_hash: await hashPassword(input.password),
             name,
-            isOperator ? 1 : 0,
-          ],
-        ),
+            is_platform_operator: isOperator ? 1 : 0,
+            phone_number: null,
+            created_by: null,
+          }),
         ...(tenantId.value === null
           ? []
           : MembershipService.upsertStatements({
@@ -255,11 +260,16 @@ export const AccountService = {
 
     try {
       await batch([
-        stmt(
-          `INSERT INTO users (id, email, password_hash, name)
-           VALUES (?, ?, ?, ?)`,
-          [userId, email, await hashPassword(input.password), name],
-        ),
+        users()
+          .insertInto("users")
+          .values({
+            id: userId,
+            email,
+            password_hash: await hashPassword(input.password),
+            name,
+            phone_number: null,
+            created_by: null,
+          }),
         TenantService.createStatement({ id: tenantId, name: business.name }),
         ...MembershipService.upsertStatements({
           tenantId,
@@ -297,11 +307,10 @@ export const AccountService = {
         : null;
 
     await batch([
-      stmt("UPDATE users SET name = ?, phone_number = ? WHERE id = ?", [
-        name,
-        phoneNumber,
-        userId,
-      ]),
+      users()
+        .updateTable("users")
+        .set({ name, phone_number: phoneNumber })
+        .where("id", "=", userId),
       auditStatement(
         { userId, tenantId: null },
         "update_profile",
@@ -322,10 +331,11 @@ export const AccountService = {
     sessionId: string,
     input: { current: unknown; next: unknown },
   ): Promise<Result<void, AccountError>> {
-    const row = await getOne<{ password_hash: string }>(
-      "SELECT password_hash FROM users WHERE id = ?",
-      [userId],
-    );
+    const row = await users()
+      .selectFrom("users")
+      .select("password_hash")
+      .where("id", "=", userId)
+      .executeTakeFirst();
     if (!row) return Err(new AccountError("not_found", "No such account."));
 
     if (
@@ -339,14 +349,14 @@ export const AccountService = {
     if (!meetsPasswordMinimum(input.next)) return Err(passwordTooShort());
 
     await batch([
-      stmt("UPDATE users SET password_hash = ? WHERE id = ?", [
-        await hashPassword(input.next),
-        userId,
-      ]),
-      stmt("DELETE FROM session WHERE user_id = ? AND id != ?", [
-        userId,
-        sessionId,
-      ]),
+      users()
+        .updateTable("users")
+        .set({ password_hash: await hashPassword(input.next) })
+        .where("id", "=", userId),
+      withoutTenantScope("a user's sessions, keyed by user id")
+        .deleteFrom("session")
+        .where("user_id", "=", userId)
+        .where("id", "!=", sessionId),
       auditStatement(
         { userId, tenantId: null },
         "change_password",
@@ -366,10 +376,11 @@ export const AccountService = {
     const email = normalizeEmail(rawEmail);
     if (!email) return Err(invalidEmail());
 
-    const account = await getOne<UserRow>(
-      "SELECT id, email, name, is_platform_operator, is_active FROM users WHERE email = ?",
-      [email],
-    );
+    const account = await users()
+      .selectFrom("users")
+      .select(["id", "email", "name", "is_platform_operator", "is_active"])
+      .where("email", "=", email)
+      .executeTakeFirst();
 
     if (!account) {
       return Err(new AccountError("not_found", "No account has that email."));
@@ -385,25 +396,45 @@ export const AccountService = {
     }
 
     const [promoted] = await batch([
-      stmt(
-        "UPDATE users SET is_platform_operator = 1 WHERE id = ? AND is_platform_operator = 0",
-        [account.id],
-      ),
-      stmt(
-        `INSERT INTO audit_log (id, tenant_id, user_id, actor, action, resource_type, resource_id, metadata)
-         SELECT ?, NULL, NULL, ?, 'promote_platform_operator', 'user', ?, ?
-         WHERE changes() > 0`,
-        [
-          newId(),
-          `cli:${operator.name}`,
-          account.id,
-          JSON.stringify({
-            email: account.email,
-            platformOperator: true,
-            uid: operator.uid,
-          }),
-        ],
-      ),
+      users()
+        .updateTable("users")
+        .set({ is_platform_operator: 1 })
+        .where("id", "=", account.id)
+        .where("is_platform_operator", "=", 0),
+      db
+        .insertInto("audit_log")
+        .columns([
+          "id",
+          "tenant_id",
+          "user_id",
+          "actor",
+          "action",
+          "resource_type",
+          "resource_id",
+          "metadata",
+        ])
+        .expression(
+          db
+            .selectNoFrom((eb) => [
+              eb.val(newId()).as("id"),
+              eb.val(null).as("tenant_id"),
+              eb.val(null).as("user_id"),
+              eb.val(`cli:${operator.name}`).as("actor"),
+              eb.val("promote_platform_operator").as("action"),
+              eb.val("user").as("resource_type"),
+              eb.val(account.id).as("resource_id"),
+              eb
+                .val(
+                  JSON.stringify({
+                    email: account.email,
+                    platformOperator: true,
+                    uid: operator.uid,
+                  }),
+                )
+                .as("metadata"),
+            ])
+            .where(sql<SqlBool>`changes() > 0`),
+        ),
     ]);
     const changed = (promoted?.meta.changes ?? 0) > 0;
 

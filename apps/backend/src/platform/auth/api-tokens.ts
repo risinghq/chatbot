@@ -1,5 +1,10 @@
-import { getAll, run } from "../../db/index.ts";
+import { sql } from "kysely";
+import { withoutTenantScope } from "../../db/index.ts";
 import { generateSessionToken, sessionIdOf } from "./session.ts";
+
+/** A token is a session row keyed by its hash, listed and revoked by its owner. */
+const tokens = () =>
+  withoutTenantScope("a token's hash or its owner's user id");
 
 /**
  * API tokens let a program, such as the `vendeya` CLI or an AI agent, act as
@@ -68,11 +73,19 @@ export async function createApiToken(
   const expiresAt = now + request.days * DAY_MS;
   const id = sessionIdOf(token);
 
-  await run(
-    `INSERT INTO session (id, kind, name, user_id, active_tenant_id, expires_at, created_at)
-     VALUES (?, 'token', ?, ?, ?, ?, ?)`,
-    [id, request.name, userId, tenantId, Math.floor(expiresAt / 1000), now],
-  );
+  await tokens()
+    .insertInto("session")
+    .values({
+      id,
+      kind: "token",
+      name: request.name,
+      user_id: userId,
+      active_tenant_id: tenantId,
+      expires_at: Math.floor(expiresAt / 1000),
+      created_at: now,
+      last_used_at: null,
+    })
+    .execute();
 
   return {
     id,
@@ -86,18 +99,20 @@ export async function createApiToken(
 
 /** The user's live tokens, newest first. Expired ones are not listed. */
 export async function listApiTokens(userId: string): Promise<ApiToken[]> {
-  const rows = await getAll<{
-    id: string;
-    name: string;
-    created_at: number;
-    last_used_at: number | null;
-    expires_at: number;
-  }>(
-    `SELECT id, name, created_at, last_used_at, expires_at FROM session
-     WHERE user_id = ? AND kind = 'token' AND expires_at > unixepoch()
-     ORDER BY created_at DESC`,
-    [userId],
-  );
+  const rows = await tokens()
+    .selectFrom("session")
+    .select((eb) => [
+      "id",
+      eb.ref("name").$castTo<string>().as("name"),
+      eb.ref("created_at").$castTo<number>().as("created_at"),
+      "last_used_at",
+      "expires_at",
+    ])
+    .where("user_id", "=", userId)
+    .where("kind", "=", "token")
+    .where("expires_at", ">", sql<number>`unixepoch()`)
+    .orderBy("created_at", "desc")
+    .execute();
   return rows.map((row) => ({ ...row, expires_at: row.expires_at * 1000 }));
 }
 
@@ -106,9 +121,11 @@ export async function revokeApiToken(
   userId: string,
   tokenId: string,
 ): Promise<boolean> {
-  const result = await run(
-    "DELETE FROM session WHERE id = ? AND user_id = ? AND kind = 'token'",
-    [tokenId, userId],
-  );
-  return result.changes > 0;
+  const result = await tokens()
+    .deleteFrom("session")
+    .where("id", "=", tokenId)
+    .where("user_id", "=", userId)
+    .where("kind", "=", "token")
+    .executeTakeFirst();
+  return result.numDeletedRows > 0n;
 }

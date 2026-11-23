@@ -11,9 +11,13 @@ import { auditStatement, logAction } from "../platform/audit/logger.ts";
 import { requirePlatformOperator } from "../middleware/auth.ts";
 import { hasOpenAiApiKey } from "../domains/settings/openai.ts";
 import { normalizeEmail } from "../domains/accounts/index.ts";
-import { batch, getOne } from "../db/index.ts";
+import { batch, withoutTenantScope } from "../db/index.ts";
 
 const tenants = new Hono();
+
+/** An account is global: a user row is keyed by its id or email. */
+const accounts = () =>
+  withoutTenantScope("a user account is keyed by its id or email");
 
 /** Tenants the caller can see, with the caller's role in each. */
 tenants.get("/", async (c) => {
@@ -138,12 +142,18 @@ tenants.post("/:id/members", requirePlatformOperator, async (c) => {
   // The dashboard names a person by the email they log in with; account
   // tooling names the id. Either resolves to the same global user.
   const user = userId
-    ? await getOne<{ id: string }>("SELECT id FROM users WHERE id = ?", [
-        userId,
-      ])
-    : await getOne<{ id: string }>("SELECT id FROM users WHERE email = ?", [
-        address,
-      ]);
+    ? await accounts()
+        .selectFrom("users")
+        .select("id")
+        .where("id", "=", userId)
+        .executeTakeFirst()
+    : address
+      ? await accounts()
+          .selectFrom("users")
+          .select("id")
+          .where("email", "=", address)
+          .executeTakeFirst()
+      : undefined;
 
   if (!user) {
     return c.json({ error: "User not found" }, 404);

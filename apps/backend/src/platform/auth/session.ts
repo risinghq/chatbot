@@ -10,7 +10,7 @@ import type { TenantMembership, TenantRole } from "@vendeya/types";
 import { MembershipService } from "../../domains/tenants/index.ts";
 import type { AuthScope } from "./scope.ts";
 import { sessionRole } from "./scope.ts";
-import { getOne, run } from "../../db/index.ts";
+import { withoutTenantScope } from "../../db/index.ts";
 
 /** A browser drops a Secure cookie that an http origin sets. */
 function cookieSecure(): boolean {
@@ -68,6 +68,10 @@ export type SessionValidationResult =
   | { session: Session; user: User; scope: AuthScope; fresh: boolean }
   | { session: null; user: null; scope: null; fresh: false };
 
+/** A session is global: one is keyed by its token's hash or by its user's id. */
+const sessions = () =>
+  withoutTenantScope("a session is keyed by its token hash or a user id");
+
 export function generateSessionToken(): string {
   const bytes = new Uint8Array(20);
   crypto.getRandomValues(bytes);
@@ -108,16 +112,19 @@ export async function createSession(
     activeTenantId,
     expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30), // 30 days
   };
-  await run(
-    "INSERT INTO session (id, kind, user_id, active_tenant_id, expires_at, created_at) VALUES (?, 'browser', ?, ?, ?, ?)",
-    [
-      session.id,
-      session.userId,
-      session.activeTenantId,
-      Math.floor(session.expiresAt.getTime() / 1000),
-      Date.now(),
-    ],
-  );
+  await sessions()
+    .insertInto("session")
+    .values({
+      id: session.id,
+      kind: "browser",
+      name: null,
+      user_id: session.userId,
+      active_tenant_id: session.activeTenantId,
+      expires_at: Math.floor(session.expiresAt.getTime() / 1000),
+      created_at: Date.now(),
+      last_used_at: null,
+    })
+    .execute();
   return session;
 }
 
@@ -129,10 +136,11 @@ export async function setSessionTenant(
   sessionId: string,
   tenantId: string | null,
 ): Promise<void> {
-  await run("UPDATE session SET active_tenant_id = ? WHERE id = ?", [
-    tenantId,
-    sessionId,
-  ]);
+  await sessions()
+    .updateTable("session")
+    .set({ active_tenant_id: tenantId })
+    .where("id", "=", sessionId)
+    .execute();
 }
 
 /** How stale a token's last use may get before a request records it again. */
@@ -143,35 +151,26 @@ export async function validateSessionToken(
   kind: SessionKind = "browser",
 ): Promise<SessionValidationResult> {
   const sessionId = sessionIdOf(token);
-  const row = (await getOne(
-    `
-        SELECT s.id, s.kind, s.user_id, s.active_tenant_id, s.expires_at,
-               s.last_used_at,
-               u.id as uid, u.email, u.name as uname,
-               u.is_platform_operator, u.is_active,
-               t.status as tenant_status
-        FROM session s
-        INNER JOIN users u ON u.id = s.user_id
-        LEFT JOIN tenants t ON t.id = s.active_tenant_id
-        WHERE s.id = ?
-    `,
-    [sessionId],
-  )) as
-    | {
-        id: string;
-        kind: SessionKind;
-        user_id: string;
-        active_tenant_id: string | null;
-        expires_at: number;
-        last_used_at: number | null;
-        uid: string;
-        email: string;
-        uname: string;
-        is_platform_operator: number;
-        is_active: number;
-        tenant_status: string | null;
-      }
-    | undefined;
+  const row = await sessions()
+    .selectFrom("session as s")
+    .innerJoin("users as u", "u.id", "s.user_id")
+    .leftJoin("tenants as t", "t.id", "s.active_tenant_id")
+    .select([
+      "s.id",
+      "s.kind",
+      "s.user_id",
+      "s.active_tenant_id",
+      "s.expires_at",
+      "s.last_used_at",
+      "u.id as uid",
+      "u.email",
+      "u.name as uname",
+      "u.is_platform_operator",
+      "u.is_active",
+      "t.status as tenant_status",
+    ])
+    .where("s.id", "=", sessionId)
+    .executeTakeFirst();
 
   if (!row || row.is_active === 0 || row.kind !== kind) {
     return { session: null, user: null, scope: null, fresh: false };
@@ -186,7 +185,10 @@ export async function validateSessionToken(
   };
 
   if (Date.now() >= session.expiresAt.getTime()) {
-    await run("DELETE FROM session WHERE id = ?", [session.id]);
+    await sessions()
+      .deleteFrom("session")
+      .where("id", "=", session.id)
+      .execute();
     return { session: null, user: null, scope: null, fresh: false };
   }
 
@@ -194,10 +196,11 @@ export async function validateSessionToken(
   let fresh = false;
   if (kind === "token") {
     if (Date.now() - (row.last_used_at ?? 0) >= LAST_USED_RESOLUTION_MS) {
-      await run("UPDATE session SET last_used_at = ? WHERE id = ?", [
-        Date.now(),
-        session.id,
-      ]);
+      await sessions()
+        .updateTable("session")
+        .set({ last_used_at: Date.now() })
+        .where("id", "=", session.id)
+        .execute();
     }
   } else if (
     Date.now() >=
@@ -205,10 +208,11 @@ export async function validateSessionToken(
   ) {
     fresh = true;
     session.expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
-    await run("UPDATE session SET expires_at = ? WHERE id = ?", [
-      Math.floor(session.expiresAt.getTime() / 1000),
-      session.id,
-    ]);
+    await sessions()
+      .updateTable("session")
+      .set({ expires_at: Math.floor(session.expiresAt.getTime() / 1000) })
+      .where("id", "=", session.id)
+      .execute();
   }
 
   const isPlatformOperator = row.is_platform_operator === 1;
@@ -260,7 +264,7 @@ export async function validateSessionToken(
 }
 
 export async function invalidateSession(sessionId: string): Promise<void> {
-  await run("DELETE FROM session WHERE id = ?", [sessionId]);
+  await sessions().deleteFrom("session").where("id", "=", sessionId).execute();
 }
 
 export function setSessionTokenCookie(
