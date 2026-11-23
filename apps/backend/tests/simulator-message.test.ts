@@ -76,10 +76,12 @@ describe("a simulated message", () => {
   });
 
   it("reports whether the business has an OpenAI key", async () => {
-    const status = () =>
-      app
-        .request("/api/simulator/status", { headers: { Cookie: cookie } })
-        .then((response) => response.json());
+    const status = async () => {
+      const response = await app.request("/api/simulator/status", {
+        headers: { Cookie: cookie },
+      });
+      return response.json();
+    };
 
     expect(await status()).toEqual({ hasOpenAiKey: false });
     await withOpenAiKey(tenantId);
