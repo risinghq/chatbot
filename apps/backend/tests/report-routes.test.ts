@@ -17,6 +17,7 @@ import process from "node:process";
 import { Hono } from "hono";
 import * as XLSX from "xlsx";
 import { run } from "../src/db/index.ts";
+import { TenantSecrets } from "../src/domains/settings/tenant-secrets.ts";
 
 import {
   createMember,
@@ -248,18 +249,20 @@ describe("report routes", () => {
       model: string,
       tokens: [number, number],
       ref = tenant,
+      status = "success",
     ) {
       await run(
         `INSERT INTO llm_calls
            (id, tenant_id, channel_account_id, phone_number, operation, model,
             prompt, user_message, status, tokens_prompt, tokens_completion, created_at)
-         VALUES (?, ?, ?, ?, 'assistant_turn', ?, '', '', 'success', ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, 'assistant_turn', ?, '', '', ?, ?, ?, ?)`,
         [
           crypto.randomUUID(),
           ref.tenantId,
           ref.channelAccountId,
           CUSTOMER,
           model,
+          status,
           tokens[0],
           tokens[1],
           createdAt,
@@ -368,6 +371,14 @@ describe("report routes", () => {
         other,
       );
       await modelCall(at("2026-07-01T10:00:01-05:00"), "gpt-5", [0, 100_000]);
+      await modelCall(
+        at("2026-07-01T10:00:02-05:00"),
+        "gpt-5",
+        [0, 0],
+        other,
+        "error",
+      );
+      await TenantSecrets.set(tenant.tenantId, "openai_api_key", "sk-test");
 
       const operator = await insertUser({ isPlatformOperator: true });
       const token = generateSessionToken();
@@ -387,13 +398,17 @@ describe("report routes", () => {
         contacts: 1,
         orders: 0,
         aiCalls: 1,
+        aiErrors: 0,
         aiCostUsd: 1,
+        hasOpenAiKey: true,
       });
       expect(line(other.tenantId)).toMatchObject({
         contacts: 1,
         orders: 1,
         revenueCents: 2000,
-        aiCalls: 0,
+        aiCalls: 1,
+        aiErrors: 1,
+        hasOpenAiKey: false,
       });
       expect(summary.contacts).toBeGreaterThanOrEqual(2);
     });
