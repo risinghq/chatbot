@@ -1,0 +1,138 @@
+<script lang="ts">
+import { businessPath } from "#lib/state/business.svelte.js";
+import type { Conversation, OrderMetrics } from "@vendeya/types";
+import { onMount } from "svelte";
+import { page } from "$app/state";
+import PageHeader from "#lib/components/shared/page-header.svelte";
+import Page from "#lib/components/shared/page.svelte";
+import PageTitle from "#lib/components/shared/page-title.svelte";
+import SetupChecklist from "#lib/components/shared/setup-checklist.svelte";
+import Banner from "#lib/components/ui/banner.svelte";
+import Button from "#lib/components/ui/button.svelte";
+import EmptyState from "#lib/components/ui/empty-state.svelte";
+import { auth } from "#lib/state/auth.svelte.js";
+import { fetchApi } from "#lib/utils/api.js";
+import { formatDateTime, formatPhone } from "#lib/utils/formatters.js";
+import type { PageData } from "./$types";
+
+let { data }: { data: PageData } = $props();
+
+// The business OpenAI key is what lets the bot think. The tenant list says
+// whether it is stored, so the page can warn before a customer finds out.
+let activeTenant = $derived(
+  auth.tenants.find((t) => t.id === page.params.tenantId),
+);
+let aiConfigured = $derived(activeTenant?.ai_configured === true);
+
+let conversations = $state<Conversation[] | null>(null);
+let metrics = $state<OrderMetrics | null>(null);
+
+let waiting = $derived(
+  (conversations ?? [])
+    .filter((c) => c.status === "human_takeover")
+    .sort((a, b) => b.last_activity_at - a.last_activity_at),
+);
+let activeCount = $derived(
+  (conversations ?? []).filter((c) => c.status === "active").length,
+);
+
+onMount(() => {
+  fetchApi<Conversation[]>("/api/conversations")
+    .then((list) => (conversations = list))
+    .catch(() => (conversations = []));
+  // The tile hides instead of failing when the metrics cannot load.
+  fetchApi<OrderMetrics>("/api/orders/metrics")
+    .then((m) => (metrics = m))
+    .catch(() => (metrics = null));
+});
+</script>
+
+<PageTitle title="Inicio" />
+
+<Page>
+	<PageHeader
+		title="Hola, {data.user?.name || data.user?.email}"
+		subtitle={activeTenant ? activeTenant.name : undefined}
+	/>
+
+	<div class="flex flex-col gap-4">
+		{#if auth.isAdmin}
+			<SetupChecklist />
+		{:else if !aiConfigured}
+			<!-- An admin sees the missing key as the checklist's first step. -->
+			<Banner tone="warning" title="Falta la clave de OpenAI">
+				Sin ella el asistente no puede interpretar los mensajes de los clientes.
+				{#snippet action()}
+					{#if auth.isPlatformOperator}
+						<Button href="{businessPath()}/admin/settings" variant="secondary" size="sm">Configurar</Button>
+					{/if}
+				{/snippet}
+			</Banner>
+		{/if}
+
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+			<a
+				href="{businessPath()}/conversations"
+				class="rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-border-strong"
+			>
+				<p class="text-sm text-fg-muted">Esperan a una persona</p>
+				<p class="mt-1 text-xl text-fg tabular-nums">{conversations ? waiting.length : "–"}</p>
+			</a>
+			<a
+				href="{businessPath()}/conversations"
+				class="rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-border-strong"
+			>
+				<p class="text-sm text-fg-muted">Atendidas por el bot</p>
+				<p class="mt-1 text-xl text-fg tabular-nums">{conversations ? activeCount : "–"}</p>
+			</a>
+			{#if metrics}
+				<a
+					href="{businessPath()}/orders?status=pending"
+					class="rounded-md border border-border bg-surface px-4 py-3 transition-colors hover:border-border-strong"
+				>
+					<p class="text-sm text-fg-muted">Pedidos por confirmar</p>
+					<p class="mt-1 text-xl text-fg tabular-nums">{metrics.byStatus.pending}</p>
+				</a>
+			{/if}
+		</div>
+
+		<section class="rounded-md border border-border bg-surface">
+			<header class="flex items-center justify-between border-b border-border-subtle px-4 py-3">
+				<h2 class="text-md text-fg">Requieren atención</h2>
+				<a href="{businessPath()}/conversations" class="text-sm text-fg-muted hover:text-fg">Ver todas</a>
+			</header>
+			{#if conversations === null}
+				<p class="px-4 py-6 text-base text-fg-muted">Cargando…</p>
+			{:else if waiting.length === 0}
+				<EmptyState
+					title="Nada pendiente"
+					description="Cuando el bot pase una conversación a una persona, aparecerá aquí."
+				/>
+			{:else}
+				<ul class="divide-y divide-border-subtle">
+					{#each waiting.slice(0, 6) as conv (conv.channel_account_id + conv.phone_number)}
+						<li>
+							<a
+								href="{businessPath()}/conversations/{conv.phone_number}?channel={conv.channel_account_id}"
+								class="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover"
+							>
+								<div class="min-w-0 flex-1">
+									<p class="truncate text-base text-fg">
+										{conv.customer_name || formatPhone(conv.phone_number)}
+									</p>
+									{#if conv.handover_reason}
+										<p class="truncate text-sm text-fg-muted">{conv.handover_reason}</p>
+									{/if}
+								</div>
+								<span class="shrink-0 text-sm text-fg-muted tabular-nums">
+									{formatDateTime(conv.last_activity_at)}
+								</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+
+	</div>
+</Page>

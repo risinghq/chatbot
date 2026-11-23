@@ -1,4 +1,5 @@
 <script lang="ts">
+import { businessPath } from "#lib/state/business.svelte.js";
 import type { ProductVariant, StockRow } from "@vendeya/types";
 import { toast } from "#lib/state/toast.svelte.js";
 import { ApiError, fetchApi } from "#lib/utils/api.js";
@@ -201,7 +202,7 @@ const columns = [
 <!-- The row click edits the variant, so the link keeps its click to itself. -->
 {#snippet stockCell(v: ProductVariant)}
   <a
-    href="/dashboard/inventario?variant={encodeURIComponent(v.id)}"
+    href="{businessPath()}/inventario?variant={encodeURIComponent(v.id)}"
     class="text-accent-text tabular-nums hover:underline"
     onclick={(e) => e.stopPropagation()}
   >

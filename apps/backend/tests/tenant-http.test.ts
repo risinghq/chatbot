@@ -8,6 +8,7 @@ import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import { hashPassword } from "../src/platform/auth/password.ts";
 import { frontendPath, importFrontend } from "./helpers/frontend.ts";
+import { page as kitPage } from "./helpers/sveltekit-app.ts";
 import { getOne, run } from "./helpers/db.ts";
 import type { Product } from "@vendeya/types";
 
@@ -63,7 +64,7 @@ import { PaymentMethodService } from "../src/domains/orders/settings.ts";
 const SHARED_PHONE = "51987654321";
 
 const ORDER_PAGE = frontendPath(
-  "routes/dashboard/orders/[orderId]/+page.svelte",
+  "routes/dashboard/[tenantId=uuid]/orders/[orderId]/+page.svelte",
 );
 const { renderComponent } = await importFrontend<{
   renderComponent: (
@@ -1026,17 +1027,21 @@ describe("HTTP authorization", () => {
         name: "Alpha Client, second number",
       });
 
+      kitPage.params.tenantId = alpha.tenantId;
       const page = await renderComponent(ORDER_PAGE, {
         data: {
           order: await getJson(`/api/orders/${order.id}`, alphaAdmin),
           methods: [],
         },
       });
-      const link = /href="(\/dashboard\/conversations\/[^"]+)"/.exec(page)?.[1];
+      const business = `/dashboard/${alpha.tenantId}`;
+      const link = new RegExp(`href="(${business}/conversations/[^"]+)"`).exec(
+        page,
+      )?.[1];
       expect(link).toBeDefined();
 
       const response = await get(
-        link!.replace("/dashboard/conversations/", "/api/conversations/"),
+        link!.replace(`${business}/conversations/`, "/api/conversations/"),
         alphaAdmin,
       );
 

@@ -360,7 +360,7 @@ describe("report routes", () => {
       expect(summary.orders.count).toBe(0);
     });
 
-    it("gives the unpinned operator a line per business", async () => {
+    it("gives the operator a line per business on /summary/all", async () => {
       const other = await createTenantFixture("report-routes-second");
       await insertConversation(other.ref(CUSTOMER));
       await inbound(CUSTOMER, at("2026-07-01T10:00:00-05:00"));
@@ -386,7 +386,7 @@ describe("report routes", () => {
 
       const summary = (await (
         await get(
-          "/api/reports/summary?startDate=2026-07-01&endDate=2026-07-01",
+          "/api/reports/summary/all?startDate=2026-07-01&endDate=2026-07-01",
           { Cookie: `session=${token}` },
         )
       ).json()) as ReportSummary;
@@ -441,6 +441,25 @@ describe("report routes", () => {
       expect((await get("/api/reports/activity", agent)).status).toBe(403);
       expect((await get("/api/reports/today-count", agent)).status).toBe(403);
       expect((await get("/api/reports/summary", agent)).status).toBe(403);
+    });
+
+    it("keeps the platform summary to operators", async () => {
+      expect((await get("/api/reports/summary/all")).status).toBe(403);
+    });
+
+    it("answers the business summary only inside a business", async () => {
+      const operator = await insertUser({ isPlatformOperator: true });
+      const token = generateSessionToken();
+      await createSession(token, operator, null);
+      const cookie = { Cookie: `session=${token}` };
+
+      expect((await get("/api/reports/summary", cookie)).status).toBe(403);
+      const named = await get("/api/reports/summary", {
+        ...cookie,
+        "X-Tenant-Id": tenant.tenantId,
+      });
+      expect(named.status).toBe(200);
+      expect(((await named.json()) as ReportSummary).businesses).toBeNull();
     });
 
     it("still needs a session", async () => {

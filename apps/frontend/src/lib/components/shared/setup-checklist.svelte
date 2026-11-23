@@ -1,4 +1,5 @@
 <script lang="ts">
+import { businessPath } from "#lib/state/business.svelte.js";
 import { onMount } from "svelte";
 import Button from "#lib/components/ui/button.svelte";
 import Icon from "#lib/components/ui/icon.svelte";
@@ -29,42 +30,42 @@ const steps = $derived(
           label: "Clave de OpenAI",
           hint: "El asistente la usa para entender y responder.",
           action: "Agregar clave",
-          href: "/dashboard/admin/settings",
+          href: businessPath("/admin/settings"),
         },
         {
           done: status.has_catalog,
           label: "Catálogo publicado",
           hint: "Al menos un producto activo con precio. Es lo que el asistente cotiza.",
           action: "Abrir catálogo",
-          href: "/dashboard/catalog",
+          href: businessPath("/catalog"),
         },
         {
           done: status.has_payment_methods,
           label: "Métodos de pago",
           hint: "Cómo te pagan: Yape, transferencia, efectivo. El asistente los ofrece y cada pedido registra el suyo.",
           action: "Agregar método",
-          href: "/dashboard/admin/orders",
+          href: businessPath("/admin/orders"),
         },
         {
           done: status.tried_simulator,
           label: "Prueba el asistente",
           hint: "Conversa con él como un cliente. No envía nada a nadie.",
           action: "Probar",
-          href: "/dashboard/asistente/probar",
+          href: businessPath("/asistente/probar"),
         },
         {
           done: status.whatsapp_configured,
           label: "Número de WhatsApp",
           hint: "Token de acceso y app secret de Meta, y la URL del webhook.",
           action: "Conectar número",
-          href: "/dashboard/admin/channels",
+          href: businessPath("/admin/channels"),
         },
         {
           done: status.has_members,
           label: "Equipo",
           hint: "Quien atiende las conversaciones que el asistente deriva.",
           action: "Invitar",
-          href: "/dashboard/admin/users",
+          href: businessPath("/admin/users"),
         },
       ]
     : [],
@@ -125,7 +126,7 @@ onMount(load);
 		{#if !status.calidda_configured}
 			<footer class="border-t border-border-subtle px-4 py-2.5 text-sm text-fg-muted">
 				Opcional: si vendes con crédito Cálidda, agrega tu usuario en
-				<a href="/dashboard/admin/settings" class="text-fg underline underline-offset-2">Configuración</a>.
+				<a href="{businessPath()}/admin/settings" class="text-fg underline underline-offset-2">Configuración</a>.
 			</footer>
 		{/if}
 	</section>

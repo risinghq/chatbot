@@ -10,7 +10,7 @@ const attributePayload = `x" onmouseover="alert(1)`;
 describe("a dashboard table", () => {
   it("shows a stored value as text, in a cell and in an attribute", async () => {
     const { default: Page } = await import(
-      "../../../routes/dashboard/activity/+page.svelte"
+      "../../../routes/dashboard/[tenantId=uuid]/activity/+page.svelte"
     );
     // The page's load data also carries the user; the table reads `logs` only.
     const props = {

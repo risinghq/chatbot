@@ -30,7 +30,7 @@ const { load } = await importFrontend<{
     cookies: { get: (name: string) => string | undefined };
     fetch: typeof fetch;
   }) => Promise<{ orders: Array<{ id: string }>; metrics: unknown }>;
-}>("routes/dashboard/orders/+page.server.ts");
+}>("routes/dashboard/[tenantId=uuid]/orders/+page.server.ts");
 
 const CUSTOMER = "51900777888";
 
