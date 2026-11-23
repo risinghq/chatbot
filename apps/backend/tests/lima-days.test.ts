@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { getOne } from "../src/db/index.ts";
 import {
   InvalidDateError,
+  limaDates,
   limaDateString,
   limaDayBounds,
   limaRangeEdge,
@@ -87,6 +88,15 @@ describe("the Lima day", () => {
       expect(limaDateString(Date.parse("2026-09-20T05:00:00.000Z"))).toBe(
         "2026-09-20",
       );
+    });
+
+    it("lists every Lima date a range touches", async () => {
+      expect(
+        limaDates(
+          Date.parse("2026-02-27T23:00:00-05:00"),
+          Date.parse("2026-03-01T00:00:00-05:00"),
+        ),
+      ).toEqual(["2026-02-27", "2026-02-28", "2026-03-01"]);
     });
   });
 

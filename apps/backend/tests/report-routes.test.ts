@@ -21,9 +21,12 @@ import { run } from "../src/db/index.ts";
 import {
   createMember,
   createTenantFixture,
+  fileOrder,
   insertConversation,
+  insertUser,
   type TenantFixture,
 } from "./helpers/tenancy.ts";
+import type { ReportSummary } from "@vendeya/types";
 
 import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
@@ -202,12 +205,227 @@ describe("report routes", () => {
     });
   });
 
+  describe("the summary", () => {
+    const at = (iso: string) => Date.parse(iso);
+
+    async function inbound(phone: string, createdAt: number, ref = tenant) {
+      await run(
+        `INSERT INTO messages
+           (id, tenant_id, channel_account_id, phone_number, direction, type, content, created_at)
+         VALUES (?, ?, ?, ?, 'inbound', 'text', 'hola', ?)`,
+        [
+          crypto.randomUUID(),
+          ref.tenantId,
+          ref.channelAccountId,
+          phone,
+          createdAt,
+        ],
+      );
+    }
+
+    async function order(
+      createdAt: number,
+      options: {
+        amountCents?: number;
+        cancelled?: boolean;
+        staff?: boolean;
+      } = {},
+      ref = tenant,
+    ) {
+      const filed = await fileOrder(ref.ref(CUSTOMER), {
+        amountCents: options.amountCents,
+        createdBy: options.staff ? (await createMember(ref)).userId : undefined,
+      });
+      await run(`UPDATE orders SET created_at = ?, status = ? WHERE id = ?`, [
+        createdAt,
+        options.cancelled ? "cancelled" : "confirmed",
+        filed.id,
+      ]);
+    }
+
+    async function modelCall(
+      createdAt: number,
+      model: string,
+      tokens: [number, number],
+      ref = tenant,
+    ) {
+      await run(
+        `INSERT INTO llm_calls
+           (id, tenant_id, channel_account_id, phone_number, operation, model,
+            prompt, user_message, status, tokens_prompt, tokens_completion, created_at)
+         VALUES (?, ?, ?, ?, 'assistant_turn', ?, '', '', 'success', ?, ?, ?)`,
+        [
+          crypto.randomUUID(),
+          ref.tenantId,
+          ref.channelAccountId,
+          CUSTOMER,
+          model,
+          tokens[0],
+          tokens[1],
+          createdAt,
+        ],
+      );
+    }
+
+    it("sums contacts, orders and AI spend over the Lima days asked for", async () => {
+      const other = "51900555666";
+      await insertConversation(tenant.ref(other));
+      const simulated = "51900777888";
+      await insertConversation(tenant.ref(simulated), { isSimulation: true });
+
+      // Two messages from one customer on one day are one contact.
+      await inbound(CUSTOMER, at("2026-05-01T09:00:00-05:00"));
+      await inbound(CUSTOMER, at("2026-05-01T23:59:59-05:00"));
+      await inbound(CUSTOMER, at("2026-05-02T10:00:00-05:00"));
+      await inbound(other, at("2026-05-02T00:00:00-05:00"));
+      await inbound(simulated, at("2026-05-02T10:00:00-05:00"));
+      // Outside the range.
+      await inbound(other, at("2026-04-30T23:59:59-05:00"));
+
+      await order(at("2026-05-01T12:00:00-05:00"), { amountCents: 10000 });
+      await order(at("2026-05-02T12:00:00-05:00"), {
+        amountCents: 5000,
+        staff: true,
+      });
+      await order(at("2026-05-02T13:00:00-05:00"), {
+        amountCents: 99900,
+        cancelled: true,
+      });
+      await order(at("2026-05-03T00:00:00-05:00"), { amountCents: 77700 });
+
+      await modelCall(
+        at("2026-05-01T09:00:01-05:00"),
+        "gpt-5-mini",
+        [1_000_000, 100_000],
+      );
+      await modelCall(
+        at("2026-05-02T09:00:01-05:00"),
+        "gpt-4o-legacy",
+        [500, 50],
+      );
+
+      const res = await get(
+        "/api/reports/summary?startDate=2026-05-01&endDate=2026-05-02",
+      );
+
+      expect(res.status).toBe(200);
+      const summary = (await res.json()) as ReportSummary;
+      expect(summary.startDate).toBe("2026-05-01");
+      expect(summary.endDate).toBe("2026-05-02");
+      expect(summary.contacts).toBe(2);
+      expect(summary.orders).toEqual({
+        count: 2,
+        cancelled: 1,
+        revenueCents: 15000,
+        averageCents: 7500,
+        fromAssistant: 1,
+        assistantRevenueCents: 10000,
+        buyers: 1,
+      });
+      expect(summary.ai).toEqual({
+        calls: 2,
+        errors: 0,
+        tokensPrompt: 1_000_500,
+        tokensCompletion: 100_050,
+        // 1M prompt tokens at 0.25 and 100k completion tokens at 2 per million.
+        costUsd: 0.45,
+        unpricedCalls: 1,
+      });
+      expect(summary.days).toEqual([
+        { date: "2026-05-01", contacts: 1, orders: 1, revenueCents: 10000 },
+        { date: "2026-05-02", contacts: 2, orders: 1, revenueCents: 5000 },
+      ]);
+      expect(summary.topProducts).toEqual([
+        { name: "Producto de prueba", quantity: 2, revenueCents: 15000 },
+      ]);
+      expect(summary.businesses).toBeNull();
+    });
+
+    it("leaves out another business", async () => {
+      const other = await createTenantFixture("report-routes-other");
+      await insertConversation(other.ref(CUSTOMER));
+      await inbound(CUSTOMER, at("2026-06-01T10:00:00-05:00"), other);
+      await order(at("2026-06-01T11:00:00-05:00"), {}, other);
+
+      const summary = (await (
+        await get(
+          "/api/reports/summary?startDate=2026-06-01&endDate=2026-06-01",
+        )
+      ).json()) as ReportSummary;
+
+      expect(summary.contacts).toBe(0);
+      expect(summary.orders.count).toBe(0);
+    });
+
+    it("gives the unpinned operator a line per business", async () => {
+      const other = await createTenantFixture("report-routes-second");
+      await insertConversation(other.ref(CUSTOMER));
+      await inbound(CUSTOMER, at("2026-07-01T10:00:00-05:00"));
+      await inbound(CUSTOMER, at("2026-07-01T10:00:00-05:00"), other);
+      await order(
+        at("2026-07-01T11:00:00-05:00"),
+        { amountCents: 2000 },
+        other,
+      );
+      await modelCall(at("2026-07-01T10:00:01-05:00"), "gpt-5", [0, 100_000]);
+
+      const operator = await insertUser({ isPlatformOperator: true });
+      const token = generateSessionToken();
+      await createSession(token, operator, null);
+
+      const summary = (await (
+        await get(
+          "/api/reports/summary?startDate=2026-07-01&endDate=2026-07-01",
+          { Cookie: `session=${token}` },
+        )
+      ).json()) as ReportSummary;
+
+      const line = (id: string) =>
+        summary.businesses?.find((business) => business.tenantId === id);
+      expect(line(tenant.tenantId)).toMatchObject({
+        name: "report-routes",
+        contacts: 1,
+        orders: 0,
+        aiCalls: 1,
+        aiCostUsd: 1,
+      });
+      expect(line(other.tenantId)).toMatchObject({
+        contacts: 1,
+        orders: 1,
+        revenueCents: 2000,
+        aiCalls: 0,
+      });
+      expect(summary.contacts).toBeGreaterThanOrEqual(2);
+    });
+
+    it.each([
+      [
+        "/api/reports/summary?startDate=2026-05-02&endDate=2026-05-01",
+        "endDate must not be before startDate",
+      ],
+      [
+        "/api/reports/summary?startDate=2025-01-01&endDate=2026-01-02",
+        "the range must be at most 366 days",
+      ],
+      [
+        "/api/reports/summary?startDate=garbage",
+        "startDate must be YYYY-MM-DD or an ISO timestamp with a zone",
+      ],
+    ])("answers 400 for %s", async (path, message) => {
+      const res = await get(path);
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: message });
+    });
+  });
+
   describe("access", () => {
     it("still turns away a role that may not read reports", async () => {
       const agent = await login(tenant, "sales_agent");
 
       expect((await get("/api/reports/activity", agent)).status).toBe(403);
       expect((await get("/api/reports/today-count", agent)).status).toBe(403);
+      expect((await get("/api/reports/summary", agent)).status).toBe(403);
     });
 
     it("still needs a session", async () => {
