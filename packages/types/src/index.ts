@@ -10,10 +10,13 @@ export type TenantStatus = "active" | "suspended";
 /** What a business sells. It shapes the catalog forms. */
 export const BUSINESS_KINDS = [
   "clothing",
+  "accessories",
+  "beauty",
   "electronics",
+  "pets",
   "food",
   "hardware",
-  "beauty",
+  "services",
   "other",
 ] as const;
 export type BusinessKind = (typeof BUSINESS_KINDS)[number];

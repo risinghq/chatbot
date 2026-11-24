@@ -7,6 +7,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 
+import { buildSystemPrompt } from "../src/domains/assistant/prompt.ts";
+import { defaultAssistantSettings } from "../src/domains/assistant/settings.ts";
+import { toolsFor } from "../src/domains/assistant/tools/index.ts";
 import { requireAuth, requireRole } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
 import {
@@ -105,5 +108,40 @@ describe("a business's kind", () => {
 
     expect(response.status).toBe(403);
     expect(await listedKind(admin)).toBeNull();
+  });
+
+  it("can be a services business", async () => {
+    const response = await admin("PATCH", "/api/admin/business", {
+      business_kind: "services",
+    });
+
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await listedKind(admin)).toBe("services");
+  });
+});
+
+describe("a business where staff closes the sale", () => {
+  const prompt = (staffCloses: boolean) =>
+    buildSystemPrompt({
+      businessName: "Estudio Prueba",
+      settings: defaultAssistantSettings(),
+      customer: null,
+      caliddaCredit: false,
+      staffCloses,
+      now: new Date(0),
+    });
+
+  it("gives the assistant no create_order", () => {
+    const names = (staffCloses: boolean) =>
+      toolsFor({ caliddaCredit: false, staffCloses }).map((t) => t.name);
+
+    expect(names(false)).toContain("create_order");
+    expect(names(true)).not.toContain("create_order");
+    expect(names(true)).toContain("hand_off");
+  });
+
+  it("tells the assistant to hand the sale to staff", () => {
+    expect(prompt(true)).toContain("Staff closes the sale");
+    expect(prompt(false)).not.toContain("Staff closes the sale");
   });
 });

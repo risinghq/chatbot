@@ -412,7 +412,7 @@ export interface TenantsTable {
   status: Generated<"active" | "suspended">;
   created_at: Generated<number>;
   updated_at: Generated<number>;
-  business_kind: "clothing" | "electronics" | "food" | "hardware" | "beauty" | "other" | null;
+  business_kind: "clothing" | "accessories" | "beauty" | "electronics" | "pets" | "food" | "hardware" | "services" | "other" | null;
 }
 
 export interface UnreadAlertsTable {
