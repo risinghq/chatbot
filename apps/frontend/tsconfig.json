@@ -3,7 +3,7 @@
   "compilerOptions": {
     "rewriteRelativeImportExtensions": true
   },
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules", "src/service-worker.ts"]
   // Path aliases are handled by package imports in package.json.
   //
   // To make changes to top-level options such as include and exclude, we recommend extending

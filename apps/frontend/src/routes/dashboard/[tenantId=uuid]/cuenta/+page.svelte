@@ -5,6 +5,7 @@ import Button from "#lib/components/ui/button.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
+import PushOptIn from "#lib/components/shared/push-opt-in.svelte";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
@@ -187,6 +188,8 @@ async function changePassword(e: Event) {
 				</footer>
 			</SectionShell>
 		</form>
+
+		<PushOptIn />
 
 		<SectionShell
 			title="Tokens de acceso"
