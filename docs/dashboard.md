@@ -249,14 +249,13 @@ The dialog's template is a CSV with the columns for the business's kind.
 | `POST /api/catalog/import`         | Multipart `file` and `location_id?`; writes the file (201)     |
 
 A row whose SKU exists updates that variant's price, and its cost when the row
-gives one. A row without a SKU updates the variant of the same product and
-name, so importing a file twice changes nothing. Any other row is a new
-variant. Stock is only set on new variants, as a `receive` movement; an
-existing variant's stock moves through Inventario. The whole file is one
-`batch()`: a row with an error answers 400 with every error and writes nothing.
-With stock and several locations, the import must name `location_id`; the
-preview lists the locations when it must. Importing needs admin, developer or
-supervisor.
+gives one. A row without a SKU updates the variant of the same product and name,
+so importing a file twice changes nothing. Any other row is a new variant. Stock
+is only set on new variants, as a `receive` movement; an existing variant's
+stock moves through Inventario. The whole file is one `batch()`: a row with an
+error answers 400 with every error and writes nothing. With stock and several
+locations, the import must name `location_id`; the preview lists the locations
+when it must. Importing needs admin, developer or supervisor.
 
 ## Orders
 
