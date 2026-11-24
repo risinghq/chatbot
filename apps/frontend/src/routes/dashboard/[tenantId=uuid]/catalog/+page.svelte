@@ -7,11 +7,13 @@ import { auth } from "#lib/state/auth.svelte.js";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import InventoryGrid from "#lib/components/catalog/inventory-grid.svelte";
+import CatalogImport from "#lib/components/catalog/catalog-import.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import type { PageData } from "./$types";
 
 let { data }: { data: PageData } = $props();
+let importing = $state(false);
 
 function handleProductClick(product: Product) {
   goto(`${businessPath()}/catalog/inventory/${product.id}`);
@@ -30,6 +32,7 @@ onMount(() => {
   <PageHeader title="Catálogo">
     {#snippet actions()}
       {#if auth.canEditCatalog}
+        <Button size="sm" variant="secondary" onclick={() => (importing = true)}>Importar desde Excel</Button>
         <Button size="sm" href="{businessPath()}/catalog/inventory/new">Nuevo producto</Button>
       {/if}
     {/snippet}
@@ -37,3 +40,7 @@ onMount(() => {
 
   <InventoryGrid products={data.products} onProductClick={handleProductClick} />
 </Page>
+
+{#if auth.canEditCatalog}
+  <CatalogImport bind:open={importing} />
+{/if}

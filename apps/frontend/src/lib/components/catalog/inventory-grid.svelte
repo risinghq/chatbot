@@ -33,7 +33,7 @@ const columns = [
 		data={products}
 		{columns}
 		keyField="id"
-		emptyMessage="Todavía no hay productos. Crea el primero con «Nuevo producto»."
+		emptyMessage="Todavía no hay productos. Crea el primero con «Nuevo producto» o sube tu lista con «Importar desde Excel»."
 		onRowClick={onProductClick}
 	/>
 </div>

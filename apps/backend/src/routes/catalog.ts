@@ -13,6 +13,7 @@ import {
 import { bodyLimit } from "hono/body-limit";
 import { imageStorage, isUnreadableImage } from "../adapters/storage/images.ts";
 import { logAction } from "../platform/audit/logger.ts";
+import catalogImport from "./catalog-import.ts";
 import {
   activeTenantId,
   requireRole,
@@ -29,6 +30,7 @@ const PRODUCT_STATUSES: unknown[] = ["draft", "active", "archived"];
 const INVALID_STATUS = "status must be draft, active or archived";
 
 catalog.use("/*", requireTenantScope);
+catalog.route("/import", catalogImport);
 
 // ============ PRODUCTS (base templates) ============
 
