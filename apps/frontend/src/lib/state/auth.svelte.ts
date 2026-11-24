@@ -1,6 +1,7 @@
 import { browser } from "$app/env";
 import { page } from "$app/state";
 import { fetchApi } from "#lib/utils/api.js";
+import type { BusinessKind } from "@vendeya/types";
 
 type User = {
   email: string;
@@ -25,6 +26,8 @@ type Tenant = {
   role: string | null;
   /** Whether the tenant's own OpenAI key is stored. */
   ai_configured?: boolean;
+  /** What the business sells, null until its admin answers the welcome step. */
+  business_kind?: BusinessKind | null;
 };
 
 type AuthState = {
@@ -108,6 +111,10 @@ function createAuthState() {
     },
     get tenants() {
       return state.tenants;
+    },
+    /** The business the URL names, once the tenant list has loaded. */
+    get openTenant() {
+      return state.tenants.find((t) => t.id === page.params.tenantId);
     },
     get isAvailable() {
       return sessionUser()?.isAvailable === true;

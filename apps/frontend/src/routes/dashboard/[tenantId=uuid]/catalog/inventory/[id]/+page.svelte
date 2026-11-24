@@ -20,9 +20,11 @@ import Select from "#lib/components/ui/select.svelte";
 import Textarea from "#lib/components/ui/textarea.svelte";
 import ProductImages from "#lib/components/catalog/product-images.svelte";
 import VariantList from "#lib/components/catalog/variant-list.svelte";
+import { businessKindProfile } from "#lib/catalog/business-kinds.js";
 import type { PageData } from "./$types";
 
 let { data }: { data: PageData } = $props();
+let kind = $derived(businessKindProfile(auth.openTenant?.business_kind));
 let product: Product | null = $derived(data.product);
 let canEdit = $derived(auth.canEditCatalog);
 
@@ -133,7 +135,7 @@ async function handleSave() {
         <div class="rounded-md border border-border bg-surface">
             <fieldset class="p-4" disabled={!canEdit}>
                 <FormField label="Nombre*" for="name" error={errors.name}>
-                    <Input id="name" bind:value={formData.name} placeholder="Ej. Polo básico de algodón" />
+                    <Input id="name" bind:value={formData.name} placeholder="Ej. {kind.productExample}" />
                 </FormField>
 
                 <FormField label="Descripción" for="description">
@@ -146,7 +148,7 @@ async function handleSave() {
 
                 <div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
                     <FormField label="Categoría*" for="category" error={errors.category}>
-                        <Input id="category" bind:value={formData.category} placeholder="Ej. Ropa" />
+                        <Input id="category" bind:value={formData.category} placeholder="Ej. {kind.categoryExample}" />
                     </FormField>
 
                     <FormField label="Estado" for="status">
@@ -157,9 +159,12 @@ async function handleSave() {
                         <Input id="brand" bind:value={formData.brand} />
                     </FormField>
 
-                    <FormField label="Modelo" for="model">
-                        <Input id="model" bind:value={formData.model} />
-                    </FormField>
+                    <!-- A shirt has no model number; one already typed stays visible. -->
+                    {#if kind.hasModel || formData.model}
+                        <FormField label="Modelo" for="model">
+                            <Input id="model" bind:value={formData.model} />
+                        </FormField>
+                    {/if}
                 </div>
             </fieldset>
 
@@ -176,7 +181,7 @@ async function handleSave() {
         {#if product}
             {#key product.id}
                 <ProductImages productId={product.id} images={data.images} {canEdit} />
-                <VariantList productId={product.id} variants={data.variants} stock={data.stock} {canEdit} />
+                <VariantList productId={product.id} variants={data.variants} stock={data.stock} {canEdit} {kind} />
             {/key}
         {/if}
     </div>

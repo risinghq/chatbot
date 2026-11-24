@@ -7,10 +7,27 @@ export type UserRole = "admin" | "developer" | "supervisor" | "sales_agent";
 export type TenantRole = UserRole;
 export type TenantStatus = "active" | "suspended";
 
+/** What a business sells. It shapes the catalog forms. */
+export const BUSINESS_KINDS = [
+  "clothing",
+  "electronics",
+  "food",
+  "hardware",
+  "beauty",
+  "other",
+] as const;
+export type BusinessKind = (typeof BUSINESS_KINDS)[number];
+
+export function isBusinessKind(value: unknown): value is BusinessKind {
+  return (BUSINESS_KINDS as readonly unknown[]).includes(value);
+}
+
 export type Tenant = {
   id: string;
   name: string;
   status: TenantStatus;
+  /** Null until the owner answers the welcome step. */
+  business_kind: BusinessKind | null;
   created_at: number;
   updated_at: number;
 };

@@ -11,6 +11,11 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import Modal from "#lib/components/ui/modal.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
+import {
+  type BusinessKindProfile,
+  splitValues,
+  variantNames,
+} from "#lib/catalog/business-kinds.js";
 
 type Props = {
   productId: string;
@@ -18,9 +23,11 @@ type Props = {
   /** The product's stock rows, summed over every location. */
   stock: StockRow[];
   canEdit: boolean;
+  /** What the business sells, which names the options it usually offers. */
+  kind: BusinessKindProfile;
 };
 
-let { productId, variants: initial, stock, canEdit }: Props = $props();
+let { productId, variants: initial, stock, canEdit, kind }: Props = $props();
 
 let available = $derived(
   new Map(stock.map((row) => [row.variant_id, row.available])),
@@ -111,6 +118,90 @@ async function save() {
   }
 }
 
+/** The most variants one grid creates, so a typo cannot flood the catalog. */
+const GRID_LIMIT = 50;
+
+let gridOpen = $state(false);
+let grid = $state({
+  axes: [] as { name: string; text: string }[],
+  price: "",
+  cost: "",
+});
+let gridErrors = $state<Record<string, string>>({});
+let gridProgress = $state<number | null>(null);
+
+let taken = $derived(
+  new Set(variants.map((v) => (v.name ?? "").trim().toLowerCase())),
+);
+let gridNames = $derived(
+  variantNames(
+    grid.axes.map((axis) => ({
+      name: axis.name,
+      values: splitValues(axis.text),
+    })),
+  ),
+);
+let gridNew = $derived(gridNames.filter((n) => !taken.has(n.toLowerCase())));
+
+function openGrid() {
+  const axes = kind.axes.map((axis) => ({
+    name: axis.name,
+    text: axis.values.join(", "),
+  }));
+  // A second axis is always offered, since a size often comes in colours too.
+  if (axes.length < 2) axes.push({ name: "", text: "" });
+  grid = { axes, price: "", cost: "" };
+  gridErrors = {};
+  gridOpen = true;
+}
+
+async function createGrid() {
+  const price = parseCents(grid.price);
+  const cost = grid.cost.trim() === "" ? null : parseCents(grid.cost);
+  const problems: Record<string, string> = {};
+  if (price === null) problems.price = "Escribe un monto, por ejemplo 49.90";
+  if (grid.cost.trim() !== "" && cost === null)
+    problems.cost = "Escribe un monto, por ejemplo 21.00";
+  if (gridNew.length === 0)
+    problems.values = "Escribe al menos una opción nueva";
+  if (gridNew.length > GRID_LIMIT)
+    problems.values = `Son ${gridNew.length} variantes; el máximo es ${GRID_LIMIT} a la vez`;
+  gridErrors = problems;
+  if (Object.keys(problems).length > 0) return;
+
+  // One at a time, so a failure leaves a clear count of what was made.
+  const made: ProductVariant[] = [];
+  gridProgress = 0;
+  try {
+    for (const name of gridNew) {
+      made.push(
+        await fetchApi<ProductVariant>(
+          `/api/catalog/products/${productId}/variants`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name,
+              price_cents: price,
+              cost_cents: cost,
+            }),
+          },
+        ),
+      );
+      gridProgress = made.length;
+    }
+    toast.success(`${made.length} variantes agregadas`);
+    gridOpen = false;
+  } catch (error) {
+    toast.error(
+      `Se agregaron ${made.length} de ${gridNew.length}. ${error instanceof Error ? error.message : ""}`.trim(),
+    );
+  } finally {
+    saved = [...variants, ...made];
+    gridProgress = null;
+  }
+}
+
 const columns = [
   { header: "Variante", cell: nameCell },
   {
@@ -130,11 +221,18 @@ const columns = [
 >
   {#snippet action()}
     {#if canEdit}
-      <Button size="sm" variant="secondary" onclick={() => openFor(null)}>
-        Agregar variante
-      </Button>
+      <div class="flex gap-2">
+        <Button size="sm" variant="secondary" onclick={openGrid}>Agregar varias</Button>
+        <Button size="sm" variant="secondary" onclick={() => openFor(null)}>
+          Agregar variante
+        </Button>
+      </div>
     {/if}
   {/snippet}
+
+  {#if kind.variantHint}
+    <p class="border-b border-border-subtle px-4 py-3 text-sm text-fg-muted">{kind.variantHint}</p>
+  {/if}
 
   {#if variants.length > 0}
     <DataTable
@@ -156,7 +254,7 @@ const columns = [
   onClose={() => (open = false)}
 >
   <FormField label="Nombre" for="variant-name">
-    <Input id="variant-name" bind:value={form.name} placeholder="Ej. Rojo / M" />
+    <Input id="variant-name" bind:value={form.name} placeholder="Ej. {kind.variantExample}" />
     <p class="mt-1.5 text-sm text-fg-muted">
       La opción que elige el cliente. Déjalo vacío si el producto tiene una sola forma.
     </p>
@@ -185,6 +283,52 @@ const columns = [
   {#snippet footer()}
     <Button variant="secondary" onclick={() => (open = false)} disabled={isSaving}>Cancelar</Button>
     <Button onclick={save} disabled={isSaving}>{isSaving ? "Guardando…" : "Guardar"}</Button>
+  {/snippet}
+</Modal>
+
+<Modal bind:open={gridOpen} title="Agregar varias variantes" onClose={() => (gridOpen = false)}>
+  <p class="text-sm text-fg-muted">
+    Escribe las opciones separadas por comas. Se crea una variante por cada
+    combinación, todas con el mismo precio; luego puedes cambiar cada una.
+  </p>
+  {#each grid.axes as axis, i (i)}
+    <div class="grid grid-cols-[1fr_2fr] gap-x-4">
+      <FormField label="Opción {i + 1}" for="grid-axis-{i}">
+        <Input id="grid-axis-{i}" bind:value={axis.name} placeholder={i === 0 ? "Ej. Talla" : "Ej. Color"} />
+      </FormField>
+      <FormField label="Valores" for="grid-values-{i}" error={i === 0 ? gridErrors.values : undefined}>
+        <Input id="grid-values-{i}" bind:value={axis.text} placeholder={i === 0 ? "S, M, L" : "Rojo, Negro"} />
+      </FormField>
+    </div>
+  {/each}
+  <div class="grid grid-cols-2 gap-x-4">
+    <FormField label="Precio*" for="grid-price" error={gridErrors.price}>
+      <Input id="grid-price" bind:value={grid.price} inputmode="decimal" placeholder="49.90" />
+    </FormField>
+    <FormField label="Costo" for="grid-cost" error={gridErrors.cost}>
+      <Input id="grid-cost" bind:value={grid.cost} inputmode="decimal" placeholder="21.00" />
+    </FormField>
+  </div>
+  {#if gridNames.length > 0}
+    <div class="flex flex-col gap-1.5">
+      <p class="text-sm text-fg-muted">
+        {gridNew.length === 1 ? "Se creará 1 variante" : `Se crearán ${gridNew.length} variantes`}{gridNames.length > gridNew.length
+          ? `; ${gridNames.length - gridNew.length} ya existen`
+          : ""}.
+      </p>
+      <div class="flex max-h-32 flex-wrap gap-1 overflow-y-auto">
+        {#each gridNames as name (name)}
+          <Badge class={taken.has(name.toLowerCase()) ? "line-through opacity-60" : ""}>{name}</Badge>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (gridOpen = false)} disabled={gridProgress !== null}>Cancelar</Button>
+    <Button onclick={createGrid} disabled={gridProgress !== null}>
+      {gridProgress === null ? "Crear variantes" : `Creando ${gridProgress} de ${gridNew.length}…`}
+    </Button>
   {/snippet}
 </Modal>
 
