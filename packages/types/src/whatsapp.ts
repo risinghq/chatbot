@@ -7,6 +7,7 @@ export type InboundMessageType =
   | "document"
   | "audio"
   | "video"
+  | "location"
   | "unknown";
 
 export type QuotedMessageContext = {

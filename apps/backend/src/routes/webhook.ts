@@ -295,16 +295,13 @@ async function handleInbound(
     );
   }
 
-  if (message.type !== "text") {
+  // A reaction, sticker or contact card asks nothing, so it gets no turn.
+  if (message.type === "unknown") {
     logger.info(
-      {
-        tenantId: account.tenant_id,
-        messageId: message.id,
-        type: message.type,
-      },
-      "Ignoring a non-text message",
+      { tenantId: account.tenant_id, messageId: message.id },
+      "Ignoring a message type with no text to answer",
     );
-    return { status: "non_text_ignored" };
+    return { status: "unsupported_ignored" };
   }
 
   if (message.quotedContext) {
