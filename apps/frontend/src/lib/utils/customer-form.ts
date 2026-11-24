@@ -38,7 +38,7 @@ export function customerFormProblems(
   const phone = form.phone.replace(/[\s\-()+.]/g, "");
   if (phone && !/^\d{6,15}$/.test(phone))
     problems.phone =
-      "Escribe el número con su código de país, ej. 51 999 888 777";
+      "Escribe un número de 6 a 15 dígitos, ej. 999 888 777";
   if (form.documentType && !form.documentNumber.trim())
     problems.documentNumber = "Escribe el número del documento";
   if (!form.documentType && form.documentNumber.trim())
