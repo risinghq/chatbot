@@ -196,14 +196,26 @@ async function remove(image: ProductImage) {
             {#if index === 0}
               <Badge class="absolute top-2 left-2">Portada</Badge>
             {/if}
-            {#if tagLabel(image)}
-              <Badge variant="info" class="absolute bottom-2 left-2 max-w-[calc(100%-1rem)] truncate">
-                {tagLabel(image)}
-              </Badge>
-            {/if}
           </div>
+          {#if variants.length > 1}
+            {@const label = tagLabel(image) ?? "Todas las variantes"}
+            {#if canEdit}
+              <button
+                type="button"
+                class="flex w-full items-center justify-between gap-2 border-b border-border-subtle px-2 py-1.5 text-left text-sm text-fg hover:bg-sunken"
+                title="Qué variantes muestra esta foto"
+                disabled={busy}
+                onclick={() => openTags(image)}
+              >
+                <span class="truncate">{label}</span>
+                <span class="shrink-0 text-fg-muted">Cambiar</span>
+              </button>
+            {:else}
+              <p class="truncate border-b border-border-subtle px-2 py-1.5 text-sm text-fg">{label}</p>
+            {/if}
+          {/if}
           {#if canEdit}
-            <div class="flex flex-wrap justify-between gap-x-2 px-2 py-1.5 text-sm">
+            <div class="flex justify-between gap-2 px-2 py-1.5 text-sm">
               {#if index > 0}
                 <button
                   type="button"
@@ -213,16 +225,8 @@ async function remove(image: ProductImage) {
                 >
                   Hacer portada
                 </button>
-              {/if}
-              {#if variants.length > 1}
-                <button
-                  type="button"
-                  class="text-fg-muted hover:text-fg"
-                  disabled={busy}
-                  onclick={() => openTags(image)}
-                >
-                  Variantes
-                </button>
+              {:else}
+                <span></span>
               {/if}
               <button
                 type="button"
@@ -251,7 +255,7 @@ async function remove(image: ProductImage) {
   onClose={() => (tagOpen = false)}
 >
   {#if parts.length > 0}
-    <div class="flex flex-wrap gap-1.5">
+    <div class="mb-3 flex flex-wrap gap-1.5">
       {#each parts as part (part)}
         {@const state = partState(part)}
         <button

@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { hasPart, sharedParts } from "./variant-parts.ts";
 
 describe("sharedParts", () => {
-  it("gives the values that pick out a group, in first-seen order", () => {
+  it("gives the values that pick out a group, option by option", () => {
     expect(
       sharedParts(["S / Rojo", "S / Negro", "M / Rojo", "M / Negro"]),
-    ).toEqual(["S", "Rojo", "Negro", "M"]);
+    ).toEqual(["S", "M", "Rojo", "Negro"]);
   });
 
   it("leaves out a value every variant or only one variant has", () => {
