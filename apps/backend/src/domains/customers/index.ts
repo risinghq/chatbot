@@ -33,13 +33,19 @@ export class CustomerHasOrdersError extends Error {
   }
 }
 
+/** A Peruvian mobile as people write it: nine digits starting with 9. */
+const PERU_MOBILE = /^9\d{8}$/;
+
 /**
  * A phone as WhatsApp sends it: digits with the country code. Spaces, dashes,
- * parentheses and a leading `+` are dropped. Null when nothing is left.
+ * parentheses and a leading `+` are dropped, and a Peruvian mobile written
+ * without its country code gains 51, so it matches the customer's
+ * conversation. Null when nothing is left.
  */
 export function normalizePhone(value: string): string | null {
   const digits = value.replace(/[\s\-()+.]/g, "");
-  return digits === "" ? null : digits;
+  if (digits === "") return null;
+  return PERU_MOBILE.test(digits) ? `51${digits}` : digits;
 }
 
 function optionalText(

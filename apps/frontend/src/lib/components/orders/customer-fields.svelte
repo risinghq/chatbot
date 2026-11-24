@@ -31,7 +31,7 @@ const documentItems = [
 </FormField>
 <div class="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
 	<FormField label="Teléfono" for="customer-phone" error={errors.phone}>
-		<Input id="customer-phone" bind:value={form.phone} {disabled} inputmode="numeric" placeholder="51 999 888 777" class="font-mono" />
+		<Input id="customer-phone" bind:value={form.phone} {disabled} inputmode="numeric" placeholder="999 888 777" class="font-mono" />
 	</FormField>
 	<FormField label="Correo" for="customer-email" error={errors.email}>
 		<Input id="customer-email" type="email" bind:value={form.email} {disabled} />
