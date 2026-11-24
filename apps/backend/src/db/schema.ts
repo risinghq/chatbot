@@ -330,20 +330,6 @@ export interface ShipmentsTable {
   created_at: Generated<number>;
 }
 
-export interface TaypiChargesTable {
-  id: string;
-  tenant_id: string;
-  order_id: string;
-  amount_cents: number;
-  checkout_token: string;
-  status: Generated<"pending" | "completed" | "expired" | "failed">;
-  payment_id: string | null;
-  payer_name: string | null;
-  expires_at: number;
-  created_at: Generated<number>;
-  updated_at: Generated<number>;
-}
-
 export interface StockLevelsTable {
   tenant_id: string;
   variant_id: string;
@@ -375,6 +361,20 @@ export interface StockMovementsTable {
 export interface SystemSettingsTable {
   key: string;
   value: string;
+  updated_at: Generated<number>;
+}
+
+export interface TaypiChargesTable {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  amount_cents: number;
+  checkout_token: string;
+  status: Generated<"pending" | "completed" | "expired" | "failed">;
+  payment_id: string | null;
+  payer_name: string | null;
+  expires_at: number;
+  created_at: Generated<number>;
   updated_at: Generated<number>;
 }
 
