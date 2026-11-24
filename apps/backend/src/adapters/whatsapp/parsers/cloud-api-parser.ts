@@ -16,8 +16,46 @@ function mapCloudApiType(cloudApiType: string): InboundMessageType {
       return "audio";
     case "video":
       return "video";
+    case "location":
+      return "location";
     default:
       return "unknown";
+  }
+}
+
+/**
+ * The text a staff member and the assistant read for a message. Media is not
+ * downloaded, so an attachment is named in brackets with its caption: the
+ * assistant cannot see it and has to say so.
+ */
+function bodyOf(webhookMessage: any, type: InboundMessageType): string {
+  const captioned = (label: string, caption?: string) =>
+    caption?.trim() ? `[${label}] ${caption.trim()}` : `[${label}]`;
+  switch (type) {
+    case "text":
+      return webhookMessage.text?.body || "";
+    case "image":
+      return captioned("Foto", webhookMessage.image?.caption);
+    case "video":
+      return captioned("Video", webhookMessage.video?.caption);
+    case "audio":
+      return "[Nota de voz]";
+    case "document": {
+      const name = webhookMessage.document?.filename;
+      return captioned(
+        name ? `Documento: ${name}` : "Documento",
+        webhookMessage.document?.caption,
+      );
+    }
+    case "location": {
+      const { latitude, longitude, name, address } =
+        webhookMessage.location ?? {};
+      const place = [name, address].filter(Boolean).join(", ");
+      const map = `https://maps.google.com/?q=${latitude},${longitude}`;
+      return `[Ubicación${place ? `: ${place}` : ""}] ${map}`;
+    }
+    default:
+      return "";
   }
 }
 
@@ -33,11 +71,12 @@ export function parseIncomingMessage(webhookMessage: any): IncomingMessage {
     };
   }
 
+  const type = mapCloudApiType(webhookMessage.type);
   return {
     id: webhookMessage.id,
     from: webhookMessage.from,
-    body: webhookMessage.text?.body || "",
-    type: mapCloudApiType(webhookMessage.type),
+    body: bodyOf(webhookMessage, type),
+    type,
     timestamp:
       (webhookMessage.timestamp || Math.floor(Date.now() / 1000)) * 1000,
     quotedContext,
