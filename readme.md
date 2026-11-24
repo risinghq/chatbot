@@ -1,57 +1,60 @@
 # VendeYa
 
-VendeYa is a managed WhatsApp sales service for businesses in Lima. A customer
-writes to the business's WhatsApp number, the bot checks credit eligibility and
-shows catalog items, and the business's sales team takes over to close the sale.
+VendeYa sells on WhatsApp for an online shop. Its assistant answers each
+customer with the catalog's real prices, stock and photos. It takes the order,
+reserves the stock and sends a pay link. Staff can step into any chat. It is
+built for shops with set prices: clothing, accessories, perfume, electronics,
+pets. A shop that sells services or quotes uses it for the first reply and
+closes the sale itself.
 
-The current flow is shared by every tenant and is built for appliances sold on
-Cálidda credit. VendeYa staff create and operate each tenant. The bot handles
-text messages and catalog images. It does not take payment, arrange delivery, or
-process inbound images, audio, or other non-text messages.
+A shop signs up at <https://sales.rising.sh>. This repository is the whole
+service: the WhatsApp assistant, the dashboard and the `vendeya` CLI.
 
-VendeYa runs on Cloudflare Workers. Local development runs the same Workers
-under `wrangler dev`, with local D1, KV and R2, and needs no Cloudflare account.
+## Run it locally
 
-## Install
-
-The local setup needs [mise](https://mise.jdx.dev), which installs Bun and Node.
-From a fresh clone:
+With [mise](https://mise.jdx.dev) installed:
 
 ```sh
 mise install
 bun install --frozen-lockfile
 cp apps/backend/.dev.vars.example apps/backend/.dev.vars
-bun run db:migrate
-bun run seed
-bun run account create admin
+bun run db:migrate && bun run seed
+bun run account create admin@example.com
 bun run dev
 ```
 
-`account create` asks for the new user's password.
+`account create` asks for a password. Open <http://localhost:5173> and log in as
+`admin@example.com`. Paste an OpenAI key in Administración › Configuración. Then
+open Asistente › Probar and ask for a product from the demo catalog:
 
-Open <http://localhost:5173>, log in as `admin`, and open Asistente, then
-Probar. Start a simulation and ask for a product. The simulator needs no
-WhatsApp number, but the assistant needs the business's OpenAI key. The full
-setup and real number instructions are in [Get started](./docs/get-started.md).
+```text
+Cliente:   ¿tienen el Samsung Galaxy A35?
+Asistente: Sí, el Samsung Galaxy A35 está a S/ 2,199.00 y tenemos 10 en stock.
+           ¿Te lo separo?
+```
+
+The simulator needs no WhatsApp number. [Get started](./docs/get-started.md)
+covers the setup step by step.
 
 ## Features
 
-- An optional Cálidda credit check backed by the FNB and GASO providers.
-- Tenant-specific catalogs, stock, conversations, orders, and staff roles.
-- New tenants and their WhatsApp numbers are added with the `account` CLI,
-  without a deploy.
-- A dashboard for conversations, catalog and order work, reports, and a provider
-  lookup for platform operators.
-- A simulator on the Asistente page that talks to the assistant without
-  WhatsApp.
-- WhatsApp Cloud API sends.
-- An outbox that retries recoverable send failures and hands undeliverable
-  replies to a person.
+- An assistant that answers from the catalog: price, stock per variant and the
+  photos of the variant asked for. The shop shapes it with instructions.
+- Orders that reserve stock when taken and ship it when sent, with delivery
+  zones and fees.
+- TAYPI pay links (Yape, Plin and cards) that record the payment on the order.
+- Takeover: a person answers a chat and hands it back.
+- A catalog shaped by what the shop sells: sizes and colours for clothing, brand
+  and model for electronics, and a grid that creates every variant at once.
+- Catalog import from an Excel or CSV sheet, with a preview before anything is
+  saved.
+- Stock per warehouse, customers, staff roles and sales reports.
+- An optional Cálidda credit check for appliance shops.
+- The `vendeya` CLI, which drives a business from a shell or an AI agent with an
+  API token.
 
-## Read next
+## Documentation
 
-- The [manual](./docs/readme.md) is the ordered guide for setup, deploy,
-  operations, WhatsApp, tenancy, and development.
-- [Architecture](./docs/architecture.md) maps the Workers, request flow, state,
-  and code ownership.
-- [Contributing](./.github/contributing.md) is the contributor entry point.
+- The [manual](./docs/readme.md) covers setup, conversations, the dashboard,
+  WhatsApp, deploy and operations.
+- [Contributing](./.github/contributing.md) covers checks and pull requests.
