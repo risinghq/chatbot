@@ -142,6 +142,7 @@ let gridNames = $derived(
   ),
 );
 let gridNew = $derived(gridNames.filter((n) => !taken.has(n.toLowerCase())));
+let repeated = $derived(gridNames.length - gridNew.length);
 
 function openGrid() {
   const axes = kind.axes.map((axis) => ({
@@ -312,9 +313,11 @@ const columns = [
   {#if gridNames.length > 0}
     <div class="flex flex-col gap-1.5">
       <p class="text-sm text-fg-muted">
-        {gridNew.length === 1 ? "Se creará 1 variante" : `Se crearán ${gridNew.length} variantes`}{gridNames.length > gridNew.length
-          ? `; ${gridNames.length - gridNew.length} ya existen`
-          : ""}.
+        {gridNew.length === 1 ? "Se creará 1 variante" : `Se crearán ${gridNew.length} variantes`}{repeated === 0
+          ? ""
+          : repeated === 1
+            ? "; 1 ya existe"
+            : `; ${repeated} ya existen`}.
       </p>
       <div class="flex max-h-32 flex-wrap gap-1 overflow-y-auto">
         {#each gridNames as name (name)}
