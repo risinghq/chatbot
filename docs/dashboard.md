@@ -112,7 +112,9 @@ moves to the same section in another business with `samePageIn`.
 
 ```text
 routes/
-  +page.server.ts                   sends to /dashboard or /login
+  +page.server.ts                   sends a signed-in user to /dashboard
+  +page.svelte                      the public landing page
+  precios/                          the public pricing page
   login/                            sign-in form, prerendered
   dashboard/
     +page.server.ts                 opens a business, or lists them to pick

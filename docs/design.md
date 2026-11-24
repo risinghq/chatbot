@@ -51,14 +51,15 @@ compares: ids, order numbers, emails, phone numbers, DNIs and JSON. Money,
 counts and dates are sans with `tabular-nums`. Phase names and other labels are
 sans.
 
-| Size   | Use                                         |
-| ------ | ------------------------------------------- |
-| `xl`   | The page heading.                           |
-| `lg`   | A large figure.                             |
-| `md`   | A card title or a total.                    |
-| `base` | Body text and controls. The default.        |
-| `sm`   | Secondary lines, table metadata, help text. |
-| `xs`   | Badges and small labels.                    |
+| Size        | Use                                                        |
+| ----------- | ---------------------------------------------------------- |
+| `2xl`–`4xl` | Display headings on the public pages (`/` and `/precios`). |
+| `xl`        | The page heading.                                          |
+| `lg`        | A large figure.                                            |
+| `md`        | A card title or a total.                                   |
+| `base`      | Body text and controls. The default.                       |
+| `sm`        | Secondary lines, table metadata, help text.                |
+| `xs`        | Badges and small labels.                                   |
 
 There are two weights: `normal` (460) for text and `medium` (580) for headings,
 buttons and emphasis. Text is sentence case. Do not uppercase labels.
