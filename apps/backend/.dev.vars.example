@@ -13,7 +13,7 @@ GRAPH_API_BASE_URL=https://graph.facebook.com
 # from apps/backend. Empty values turn push off.
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
-VAPID_SUBJECT=mailto:ops@example.com
+VAPID_SUBJECT=https://sales.rising.sh
 # The Shopify Admin API host. Empty means each store's own domain; point it at
 # a fake server for local probes, as the tests do.
 SHOPIFY_BASE_URL=

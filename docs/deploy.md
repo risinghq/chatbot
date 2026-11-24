@@ -32,6 +32,7 @@ Change these values in both configuration files before the first deploy:
 | ------------------------------ | ----------------------------------------------------------------------- |
 | `apps/backend/wrangler.jsonc`  | `routes`: your hostname in each `pattern`, and your zone in `zone_name` |
 | `apps/backend/wrangler.jsonc`  | `vars.PUBLIC_URL`: `https://` and your hostname                         |
+| `apps/backend/wrangler.jsonc`  | `vars.VAPID_SUBJECT`: `https://` and your hostname, or a `mailto:`      |
 | `apps/frontend/wrangler.jsonc` | `routes`: your hostname, as the custom domain                           |
 
 ## Create the resources
@@ -101,7 +102,6 @@ once and set the public key and contact as variables, the private key as a
 secret:
 
 ```sh
-cd apps/backend
 bun scripts/generate-vapid-keys.ts   # prints the three values
 bunx wrangler secret put VAPID_PRIVATE_KEY
 # set VAPID_PUBLIC_KEY and VAPID_SUBJECT in wrangler.jsonc vars, then deploy

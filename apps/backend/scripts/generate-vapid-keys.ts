@@ -32,4 +32,4 @@ const privateKey = (await crypto.subtle.exportKey(
 
 console.log(`VAPID_PUBLIC_KEY=${base64Url(publicKey)}`);
 console.log(`VAPID_PRIVATE_KEY=${base64Url(privateKey)}`);
-console.log(`VAPID_SUBJECT=mailto:ops@example.com`);
+console.log(`VAPID_SUBJECT=https://sales.rising.sh`);

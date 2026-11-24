@@ -62,8 +62,8 @@
     // push services see. Empty values turn push off. The private key is a
     // secret, never a var. apps/backend/scripts/generate-vapid-keys.ts makes a
     // pair.
-    "VAPID_PUBLIC_KEY": "",
-    "VAPID_SUBJECT": "",
+    "VAPID_PUBLIC_KEY": "BO7RKceA0FXWvven7BQuve9h8fxqgooDfcwiWvyNhasDxfTEdCYlgq14LjJBqKzmQio4YyLrq0GeRO6UzAsHVlA",
+    "VAPID_SUBJECT": "https://sales.rising.sh",
   },
   // Set each with `wrangler secret put <NAME>`. Local values live in .dev.vars.
   "secrets": {
