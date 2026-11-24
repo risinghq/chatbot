@@ -105,8 +105,9 @@ const searchProducts: Tool = {
 const getProduct: Tool = {
   name: "get_product",
   description:
-    "Read one product: its description, and each variant for sale with its " +
-    "id, name, price and the units available now.",
+    "Read one product: its description, how many photos it has, and each " +
+    "variant for sale with its id, name, price, the units available now and " +
+    "whether it has photos of its own.",
   parameters: {
     type: "object",
     properties: { product_id: { type: "string" } },
@@ -136,6 +137,7 @@ const getProduct: Tool = {
         sku: v.sku,
         price: soles(v.price_cents),
         available: Math.max(0, v.available),
+        own_photos: photos.some((p) => p.variant_ids.includes(v.variant_id)),
       })),
     });
   },
@@ -143,15 +145,23 @@ const getProduct: Tool = {
 
 const sendProductPhotos: Tool = {
   name: "send_product_photos",
-  description: `Send the customer up to ${PHOTO_LIMIT} photos of a product, after your reply.`,
+  description:
+    `Send the customer up to ${PHOTO_LIMIT} photos of a product, after your ` +
+    "reply. Pass variant_id when the customer asks about one variant: its own " +
+    "photos go first, then those of the whole product, and never photos of " +
+    "other variants. Pass null for photos of the product as a whole.",
   parameters: {
     type: "object",
-    properties: { product_id: { type: "string" } },
-    required: ["product_id"],
+    properties: {
+      product_id: { type: "string" },
+      variant_id: { type: ["string", "null"] },
+    },
+    required: ["product_id", "variant_id"],
     additionalProperties: false,
   },
   run: async (ctx, args) => {
     const id = text(args, "product_id");
+    const variantId = optionalText(args, "variant_id") ?? undefined;
     const product = await db
       .selectFrom("products")
       .select("name")
@@ -164,6 +174,7 @@ const sendProductPhotos: Tool = {
       ctx.tenantId,
       id,
       PHOTO_LIMIT,
+      variantId,
     );
     if (storageKeys.length === 0)
       return answer({ error: "the product has no photos" });

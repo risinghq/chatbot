@@ -26,6 +26,8 @@ export type ProductImage = {
   position: number;
   url: string;
   created_at: number;
+  /** The variants the photo shows. Empty means the whole product. */
+  variant_ids: string[];
 };
 
 /** One sellable form of a product. Money is in cents. */

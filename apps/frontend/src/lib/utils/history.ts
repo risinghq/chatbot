@@ -134,6 +134,8 @@ function words(entry: HistoryEntry): Words {
       return { verb: "reordenó las fotos de" };
     case "delete_product_image":
       return { verb: "quitó una foto de" };
+    case "tag_product_image":
+      return { verb: "marcó las variantes de una foto de" };
     case "create_variant":
       return {
         verb: d.sku

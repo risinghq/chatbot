@@ -25,9 +25,18 @@ type Props = {
   canEdit: boolean;
   /** What the business sells, which names the options it usually offers. */
   kind: BusinessKindProfile;
+  /** Called with the full list after each save, for the photos' variant tags. */
+  onChange?: (variants: ProductVariant[]) => void;
 };
 
-let { productId, variants: initial, stock, canEdit, kind }: Props = $props();
+let {
+  productId,
+  variants: initial,
+  stock,
+  canEdit,
+  kind,
+  onChange,
+}: Props = $props();
 
 let available = $derived(
   new Map(stock.map((row) => [row.variant_id, row.available])),
@@ -35,6 +44,11 @@ let available = $derived(
 
 let saved = $state<ProductVariant[] | null>(null);
 let variants = $derived(saved ?? initial);
+
+function keep(list: ProductVariant[]) {
+  saved = list;
+  onChange?.(list);
+}
 
 let open = $state(false);
 let editing = $state<ProductVariant | null>(null);
@@ -99,9 +113,11 @@ async function save() {
         body,
       },
     );
-    saved = editing
-      ? variants.map((v) => (v.id === variant.id ? variant : v))
-      : [...variants, variant];
+    keep(
+      editing
+        ? variants.map((v) => (v.id === variant.id ? variant : v))
+        : [...variants, variant],
+    );
     toast.success(editing ? "Variante actualizada" : "Variante agregada");
     open = false;
   } catch (error) {
@@ -198,7 +214,7 @@ async function createGrid() {
       `Se agregaron ${made.length} de ${gridNew.length}. ${error instanceof Error ? error.message : ""}`.trim(),
     );
   } finally {
-    saved = [...variants, ...made];
+    keep([...variants, ...made]);
     gridProgress = null;
   }
 }

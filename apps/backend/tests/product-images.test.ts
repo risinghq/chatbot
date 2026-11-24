@@ -1,12 +1,14 @@
 /**
- * A product's photos are ordered and the first is its cover. A photo, its
+ * A product's photos are ordered and the first is its cover. A photo may show
+ * some of the product's variants; one that shows none is of the whole
+ * product. A photo, its
  * asset row and its object belong to one business, and no other business can
  * read, reorder or delete them.
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import type { Product, ProductImage } from "@vendeya/types";
+import type { Product, ProductImage, ProductVariant } from "@vendeya/types";
 
 import { imageStorage } from "../src/adapters/storage/images.ts";
 import { getOne } from "./helpers/db.ts";
@@ -14,6 +16,7 @@ import {
   MAX_PRODUCT_IMAGES,
   ProductImageService,
 } from "../src/domains/catalog/images.ts";
+import { VariantService } from "../src/domains/catalog/variants.ts";
 import { requireAuth } from "../src/middleware/auth.ts";
 import { errorHandler } from "../src/middleware/error.ts";
 import {
@@ -242,5 +245,83 @@ describe("another business", () => {
     const product = await createProduct(owner.call);
 
     await expect(addImage(other.tenantId, product.id)).rejects.toThrow();
+  });
+});
+
+describe("photos per variant", () => {
+  let call: Caller;
+  let tenantId: string;
+  let product: Product;
+  let red: ProductVariant;
+  let black: ProductVariant;
+
+  const variant = (productId: string, name: string) =>
+    VariantService.create(tenantId, productId, {
+      name,
+      sku: `SKU-${crypto.randomUUID().slice(0, 8)}`,
+      price_cents: 4990,
+      cost_cents: null,
+      is_active: 1,
+    });
+  const tag = (image: ProductImage, variantIds: string[]) =>
+    call("PUT", `/api/catalog/images/${image.id}/variants`, {
+      variant_ids: variantIds,
+    });
+
+  beforeEach(async () => {
+    ({ call, tenantId } = await callerFor(`tags-${crypto.randomUUID()}`));
+    product = await createProduct(call);
+    red = await variant(product.id, "M / Rojo");
+    black = await variant(product.id, "M / Negro");
+  });
+
+  it("start as whole-product photos and keep the variants they are given", async () => {
+    const image = await addImage(tenantId, product.id);
+    expect(image.variant_ids).toEqual([]);
+
+    const tagged = await json<ProductImage>(await tag(image, [red.id]), 200);
+    expect(tagged.variant_ids).toEqual([red.id]);
+    const [listed] = await ProductImageService.list(tenantId, product.id);
+    expect(listed?.variant_ids).toEqual([red.id]);
+
+    const cleared = await json<ProductImage>(await tag(image, []), 200);
+    expect(cleared.variant_ids).toEqual([]);
+  });
+
+  it("send a variant its own photos first and never another variant's", async () => {
+    const whole = await addImage(tenantId, product.id);
+    const blackPhoto = await addImage(tenantId, product.id);
+    const redPhoto = await addImage(tenantId, product.id);
+    await json(await tag(blackPhoto, [black.id]), 200);
+    await json(await tag(redPhoto, [red.id]), 200);
+
+    expect(
+      await ProductImageService.storageKeys(tenantId, product.id, 3, red.id),
+    ).toEqual([objectKey(redPhoto), objectKey(whole)]);
+    expect(
+      await ProductImageService.storageKeys(tenantId, product.id, 3),
+    ).toEqual([objectKey(whole), objectKey(blackPhoto), objectKey(redPhoto)]);
+  });
+
+  it("refuse a variant of another product and keep the old tags", async () => {
+    const image = await addImage(tenantId, product.id);
+    const otherProduct = await createProduct(call);
+    const foreign = await variant(otherProduct.id, "L");
+
+    expect((await tag(image, [red.id, foreign.id])).status).toBe(400);
+    const [listed] = await ProductImageService.list(tenantId, product.id);
+    expect(listed?.variant_ids).toEqual([]);
+  });
+
+  it("cannot be tagged by another business", async () => {
+    const image = await addImage(tenantId, product.id);
+    const other = await callerFor(`other-${crypto.randomUUID()}`);
+
+    const response = await other.call(
+      "PUT",
+      `/api/catalog/images/${image.id}/variants`,
+      { variant_ids: [] },
+    );
+    expect(response.status).toBe(404);
   });
 });

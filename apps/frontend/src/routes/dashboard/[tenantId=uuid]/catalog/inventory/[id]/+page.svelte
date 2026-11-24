@@ -1,7 +1,7 @@
 <script lang="ts">
 import { businessPath } from "#lib/state/business.svelte.js";
 import { goto } from "$app/navigation";
-import type { Product, ProductStatus } from "@vendeya/types";
+import type { Product, ProductStatus, ProductVariant } from "@vendeya/types";
 import { auth } from "#lib/state/auth.svelte.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import { fetchApi } from "#lib/utils/api.js";
@@ -27,6 +27,16 @@ let { data }: { data: PageData } = $props();
 let kind = $derived(businessKindProfile(auth.openTenant?.business_kind));
 let product: Product | null = $derived(data.product);
 let canEdit = $derived(auth.canEditCatalog);
+/** The variants as VariantList last saved them, so new ones can be tagged. */
+let liveVariants = $state<{
+  productId: string;
+  list: ProductVariant[];
+} | null>(null);
+let variants = $derived(
+  liveVariants && liveVariants.productId === product?.id
+    ? liveVariants.list
+    : data.variants,
+);
 
 const STATUS_ITEMS: { value: ProductStatus; label: string }[] = [
   { value: "active", label: "Activo: el asistente lo ofrece" },
@@ -180,8 +190,15 @@ async function handleSave() {
 
         {#if product}
             {#key product.id}
-                <ProductImages productId={product.id} images={data.images} {canEdit} />
-                <VariantList productId={product.id} variants={data.variants} stock={data.stock} {canEdit} {kind} />
+                <ProductImages productId={product.id} images={data.images} {variants} {canEdit} />
+                <VariantList
+                    productId={product.id}
+                    variants={data.variants}
+                    stock={data.stock}
+                    {canEdit}
+                    {kind}
+                    onChange={(list) => (liveVariants = { productId: product.id, list })}
+                />
             {/key}
         {/if}
     </div>

@@ -227,6 +227,39 @@ catalog.put("/products/:id/images/order", requireCatalogWrite, async (c) => {
   return c.json(images);
 });
 
+catalog.put("/images/:id/variants", requireCatalogWrite, async (c) => {
+  const user = c.get("user");
+  const tenantId = activeTenantId(c);
+  const id = pathParam(c, "id");
+  const body = await jsonObject(c);
+  const variantIds = body?.variant_ids;
+  if (
+    !Array.isArray(variantIds) ||
+    !variantIds.every((variantId) => typeof variantId === "string")
+  ) {
+    return c.json({ error: "variant_ids must be a list of variant ids" }, 400);
+  }
+
+  const current = await ProductImageService.get(tenantId, id);
+  if (!current) return c.json({ error: "Image not found" }, 404);
+  const image = await ProductImageService.setVariants(tenantId, id, variantIds);
+  if (!image) {
+    return c.json(
+      { error: "variant_ids must name variants of the image's product" },
+      400,
+    );
+  }
+
+  await logAction(
+    { userId: user.id, tenantId },
+    "tag_product_image",
+    "product",
+    image.product_id,
+    { imageId: id, variantIds: image.variant_ids },
+  );
+  return c.json(image);
+});
+
 catalog.delete("/images/:id", requireCatalogWrite, async (c) => {
   const user = c.get("user");
   const tenantId = activeTenantId(c);

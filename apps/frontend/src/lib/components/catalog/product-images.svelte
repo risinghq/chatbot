@@ -1,9 +1,11 @@
 <script lang="ts">
-import type { ProductImage } from "@vendeya/types";
+import type { ProductImage, ProductVariant } from "@vendeya/types";
 import { toast } from "#lib/state/toast.svelte.js";
 import { fetchApi } from "#lib/utils/api.js";
+import { hasPart, sharedParts } from "#lib/catalog/variant-parts.js";
 import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
+import Modal from "#lib/components/ui/modal.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
 
 /** Matches MAX_PRODUCT_IMAGES in the backend's catalog images domain. */
@@ -12,10 +14,12 @@ const MAX_IMAGES = 10;
 type Props = {
   productId: string;
   images: ProductImage[];
+  /** The product's variants, which a photo can be tagged with. */
+  variants: ProductVariant[];
   canEdit: boolean;
 };
 
-let { productId, images: initial, canEdit }: Props = $props();
+let { productId, images: initial, variants, canEdit }: Props = $props();
 
 let saved = $state<ProductImage[] | null>(null);
 let images = $derived(saved ?? initial);
@@ -77,6 +81,74 @@ async function makeCover(image: ProductImage) {
   }
 }
 
+let parts = $derived(sharedParts(variants.map((v) => v.name)));
+let variantName = $derived(
+  new Map(variants.map((v) => [v.id, v.name ?? v.sku])),
+);
+
+/** What the photo's badge says: the option it shows, a variant, or a count. */
+function tagLabel(image: ProductImage): string | null {
+  const ids = image.variant_ids;
+  if (ids.length === 0) return null;
+  if (ids.length === 1) return variantName.get(ids[0]!) ?? "1 variante";
+  const part = parts.find((p) => {
+    const group = variants.filter((v) => hasPart(v.name, p));
+    return (
+      group.length === ids.length && group.every((v) => ids.includes(v.id))
+    );
+  });
+  return part ?? `${ids.length} variantes`;
+}
+
+let tagging = $state<ProductImage | null>(null);
+let tagOpen = $state(false);
+let chosen = $state<string[]>([]);
+
+function openTags(image: ProductImage) {
+  tagging = image;
+  chosen = [...image.variant_ids];
+  tagOpen = true;
+}
+
+function partState(part: string): "all" | "some" | "none" {
+  const group = variants.filter((v) => hasPart(v.name, part));
+  const picked = group.filter((v) => chosen.includes(v.id)).length;
+  return picked === group.length ? "all" : picked > 0 ? "some" : "none";
+}
+
+function togglePart(part: string) {
+  const group = variants.filter((v) => hasPart(v.name, part)).map((v) => v.id);
+  chosen =
+    partState(part) === "all"
+      ? chosen.filter((id) => !group.includes(id))
+      : [...new Set([...chosen, ...group])];
+}
+
+function toggleVariant(id: string, on: boolean) {
+  chosen = on ? [...chosen, id] : chosen.filter((v) => v !== id);
+}
+
+async function saveTags() {
+  if (!tagging) return;
+  busy = true;
+  try {
+    const image = await fetchApi<ProductImage>(
+      `/api/catalog/images/${tagging.id}/variants`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variant_ids: chosen }),
+      },
+    );
+    saved = images.map((i) => (i.id === image.id ? image : i));
+    tagOpen = false;
+  } catch (error) {
+    toast.error(failure(error, "No se pudieron guardar las variantes"));
+  } finally {
+    busy = false;
+  }
+}
+
 async function remove(image: ProductImage) {
   busy = true;
   try {
@@ -124,9 +196,14 @@ async function remove(image: ProductImage) {
             {#if index === 0}
               <Badge class="absolute top-2 left-2">Portada</Badge>
             {/if}
+            {#if tagLabel(image)}
+              <Badge variant="info" class="absolute bottom-2 left-2 max-w-[calc(100%-1rem)] truncate">
+                {tagLabel(image)}
+              </Badge>
+            {/if}
           </div>
           {#if canEdit}
-            <div class="flex justify-between gap-2 px-2 py-1.5 text-sm">
+            <div class="flex flex-wrap justify-between gap-x-2 px-2 py-1.5 text-sm">
               {#if index > 0}
                 <button
                   type="button"
@@ -136,8 +213,16 @@ async function remove(image: ProductImage) {
                 >
                   Hacer portada
                 </button>
-              {:else}
-                <span></span>
+              {/if}
+              {#if variants.length > 1}
+                <button
+                  type="button"
+                  class="text-fg-muted hover:text-fg"
+                  disabled={busy}
+                  onclick={() => openTags(image)}
+                >
+                  Variantes
+                </button>
               {/if}
               <button
                 type="button"
@@ -158,3 +243,47 @@ async function remove(image: ProductImage) {
     </p>
   {/if}
 </SectionShell>
+
+<Modal
+  bind:open={tagOpen}
+  title="¿Qué variantes muestra esta foto?"
+  subtitle="El asistente la envía cuando el cliente pregunta por esas variantes. Sin ninguna marcada, la foto es del producto entero y va con todas."
+  onClose={() => (tagOpen = false)}
+>
+  {#if parts.length > 0}
+    <div class="flex flex-wrap gap-1.5">
+      {#each parts as part (part)}
+        {@const state = partState(part)}
+        <button
+          type="button"
+          class="rounded-full border px-2.5 py-0.5 text-sm {state === 'all'
+            ? 'border-border-strong bg-sunken text-fg'
+            : 'border-border text-fg-muted hover:text-fg'}"
+          aria-pressed={state === "all" ? "true" : state === "some" ? "mixed" : "false"}
+          onclick={() => togglePart(part)}
+        >
+          {part}
+        </button>
+      {/each}
+    </div>
+  {/if}
+  <ul class="flex max-h-64 flex-col gap-1 overflow-y-auto">
+    {#each variants as variant (variant.id)}
+      <li>
+        <label class="flex items-center gap-2 text-base text-fg">
+          <input
+            type="checkbox"
+            checked={chosen.includes(variant.id)}
+            onchange={(event) => toggleVariant(variant.id, event.currentTarget.checked)}
+          />
+          {variant.name ?? variant.sku}
+        </label>
+      </li>
+    {/each}
+  </ul>
+
+  {#snippet footer()}
+    <Button variant="secondary" onclick={() => (tagOpen = false)} disabled={busy}>Cancelar</Button>
+    <Button onclick={saveTags} disabled={busy}>{busy ? "Guardando…" : "Guardar"}</Button>
+  {/snippet}
+</Modal>
