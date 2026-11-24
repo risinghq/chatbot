@@ -12,6 +12,7 @@ import admin from "./routes/admin.ts";
 import assets from "./routes/assets.ts";
 import assistant from "./routes/assistant.ts";
 import auth from "./routes/auth.ts";
+import campaigns from "./routes/campaigns.ts";
 import catalog from "./routes/catalog.ts";
 import conversations from "./routes/conversations.ts";
 import customers from "./routes/customers.ts";
@@ -76,6 +77,7 @@ app.route("/api/orders", orders);
 app.route("/api/customers", customers);
 app.route("/api/delivery-zones", deliveryZones);
 app.route("/api/payment-methods", paymentMethods);
+app.route("/api/campaigns", campaigns);
 
 app.route("/api/history", history);
 

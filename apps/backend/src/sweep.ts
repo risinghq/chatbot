@@ -13,6 +13,8 @@ import { purgeProcessedMessages } from "./conversation/processed-retention.ts";
 import { lockKey } from "./conversation/locks.ts";
 import { conversationStub } from "./conversation/stub.ts";
 import { checkAndReassignTimeouts } from "./domains/conversations/assignment.ts";
+import { dispatchDueCampaigns } from "./domains/campaigns/campaigns.ts";
+import { runReminders } from "./domains/campaigns/reminders.ts";
 import { InvitationService } from "./domains/invitations/index.ts";
 import { createLogger } from "./lib/logger.ts";
 
@@ -40,6 +42,15 @@ export async function sweep(
   scheduledTime: number,
   maxWakes: number = MAX_WAKES_PER_SWEEP,
 ): Promise<void> {
+  // Campaigns and reminders enqueue first, so the outbox check below wakes
+  // the conversations that owe a send in the same pass.
+  await Promise.all([
+    guarded("dispatch due campaigns", () =>
+      dispatchDueCampaigns(scheduledTime),
+    ),
+    guarded("run reminders", () => runReminders(scheduledTime)),
+  ]);
+
   await Promise.all([
     guarded("wake conversations", () => wakeDue(scheduledTime, maxWakes)),
     guarded("reassign timed-out conversations", () =>

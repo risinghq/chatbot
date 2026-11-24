@@ -29,7 +29,14 @@ import { claimMessageAlert, raiseUnreadAlert } from "../unread-alerts.ts";
 import { calculateResponseDelay } from "./response-timing.ts";
 import { sleep } from "./sleep.ts";
 
+import { isOptOutMessage, setOptOut } from "../../domains/campaigns/consent.ts";
+
 const logger = createLogger("conversation");
+
+/** The fixed reply a customer gets when they opt out of marketing. */
+const OPT_OUT_CONFIRMATION =
+  "De acuerdo, no te enviaremos más mensajes promocionales. " +
+  "Siempre puedes escribirnos para hacer un pedido.";
 
 export type IncomingMessage = {
   /** Which tenant, which of its numbers, and the contact writing in. */
@@ -103,6 +110,17 @@ export async function answerMessage(message: IncomingMessage): Promise<void> {
           ),
         );
       }
+      return;
+    }
+
+    // "baja"/"stop"/"no más mensajes" opts the customer out of marketing, on
+    // the text alone so no model judgment is involved. The turn still answers
+    // with a fixed confirmation; campaigns never send it a marketing template.
+    if (isOptOutMessage(content)) {
+      await setOptOut(tenantId, phoneNumber, true, "message");
+      await sendText(ref, OPT_OUT_CONFIRMATION, !real);
+      await recordTurn(ref, null, inboxIds);
+      recorded = true;
       return;
     }
 

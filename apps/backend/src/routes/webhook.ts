@@ -16,6 +16,10 @@ import { ensureConversation } from "../conversation/store.ts";
 import { lockKey } from "../conversation/locks.ts";
 import { conversationStub } from "../conversation/stub.ts";
 import { TenantService } from "../domains/tenants/index.ts";
+import { TemplateService } from "../domains/campaigns/templates.ts";
+import { ATTRIBUTION_DAYS } from "../domains/campaigns/campaigns.ts";
+import { db, withoutTenantScope } from "../db/index.ts";
+import { sql } from "kysely";
 import type {
   InboundRouting,
   ParsedChange,
@@ -147,6 +151,92 @@ function phoneNumberIdsOf(body: unknown): Set<string> {
 }
 
 /**
+ * The WABA ids of entries whose changes name no phone_number_id, such as a
+ * `message_template_status_update`. Meta signs them with the same app secret
+ * as the WABA's number, so the account is resolved by `entry.id`.
+ */
+function wabaIdsOf(body: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (typeof body !== "object" || body === null) return ids;
+
+  const entries = (body as { entry?: unknown }).entry;
+  if (!Array.isArray(entries)) return ids;
+
+  for (const entry of entries) {
+    const changes = (entry as { changes?: unknown })?.changes;
+    if (!Array.isArray(changes) || changes.length === 0) continue;
+    const hasNumber = changes.some(
+      (change) =>
+        (change as { value?: { metadata?: { phone_number_id?: unknown } } })
+          ?.value?.metadata?.phone_number_id,
+    );
+    const id = (entry as { id?: unknown }).id;
+    if (!hasNumber && typeof id === "string" && id) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * The `message_template_status_update` changes in a body: Meta reports a
+ * template's review as `event` on the WABA entry. `statuses` carries Meta's
+ * delivery statuses for messages we sent (sent, delivered, read, failed).
+ */
+function nonMessageChangesOf(body: unknown): {
+  templateUpdates: { wabaId: string | null; value: Record<string, unknown> }[];
+  statuses: { phoneNumberId: string | null; value: Record<string, unknown> }[];
+} {
+  const templateUpdates: {
+    wabaId: string | null;
+    value: Record<string, unknown>;
+  }[] = [];
+  const statuses: {
+    phoneNumberId: string | null;
+    value: Record<string, unknown>;
+  }[] = [];
+  if (typeof body !== "object" || body === null)
+    return { templateUpdates, statuses };
+
+  const entries = (body as { entry?: unknown }).entry;
+  if (!Array.isArray(entries)) return { templateUpdates, statuses };
+
+  for (const entry of entries) {
+    const wabaId =
+      typeof (entry as { id?: unknown }).id === "string"
+        ? (entry as { id: string }).id
+        : null;
+    const changes = (entry as { changes?: unknown })?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const change of changes) {
+      const field = (change as { field?: unknown })?.field;
+      const value = (change as { value?: unknown })?.value;
+      if (typeof value !== "object" || value === null) continue;
+      if (field === "message_template_status_update") {
+        templateUpdates.push({
+          wabaId,
+          value: value as Record<string, unknown>,
+        });
+      } else if (field === "messages") {
+        const list = (value as { statuses?: unknown }).statuses;
+        if (!Array.isArray(list)) continue;
+        const phoneNumberId = (
+          value as { metadata?: { phone_number_id?: unknown } }
+        ).metadata?.phone_number_id;
+        for (const status of list) {
+          if (typeof status === "object" && status !== null) {
+            statuses.push({
+              phoneNumberId:
+                typeof phoneNumberId === "string" ? phoneNumberId : null,
+              value: status as Record<string, unknown>,
+            });
+          }
+        }
+      }
+    }
+  }
+  return { templateUpdates, statuses };
+}
+
+/**
  * The app secrets the signature must satisfy: one per channel the body
  * addresses, or why the delivery is refused. Meta retries a 5xx, so an
  * unsigned or unverifiable delivery is a 401 even though the cause is a
@@ -154,8 +244,19 @@ function phoneNumberIdsOf(body: unknown): Set<string> {
  */
 async function appSecretsFor(
   ids: Set<string>,
+  wabaIds: Set<string> = new Set(),
 ): Promise<{ secrets: Map<string, string> } | { refused: string }> {
   const secrets = new Map<string, string>();
+  const addFor = async (
+    key: string,
+    account: ChannelAccount | null,
+  ): Promise<string | null> => {
+    if (!account) return "unknown_channel_account";
+    const secret = await ChannelAccountService.getAppSecret(account);
+    if (!secret) return "no_app_secret";
+    secrets.set(key, secret);
+    return null;
+  };
   for (const id of ids) {
     const account = await ChannelAccountService.getByPhoneNumberId(id);
     if (!account) {
@@ -165,15 +266,29 @@ async function appSecretsFor(
       );
       return { refused: "unknown_channel_account" };
     }
-    const secret = await ChannelAccountService.getAppSecret(account);
-    if (!secret) {
+    const refused = await addFor(id, account);
+    if (refused) {
       logger.warn(
         { phoneNumberId: id, channelAccountId: account.id },
         "Webhook POST refused: channel account has no app secret",
       );
-      return { refused: "no_app_secret" };
+      return { refused };
     }
-    secrets.set(id, secret);
+  }
+  for (const id of wabaIds) {
+    const account = await ChannelAccountService.getByWabaId(id);
+    if (!account) {
+      logger.warn({ wabaId: id }, "Webhook POST refused: unknown WABA");
+      return { refused: "unknown_channel_account" };
+    }
+    const refused = await addFor(id, account);
+    if (refused) {
+      logger.warn(
+        { wabaId: id, channelAccountId: account.id },
+        "Webhook POST refused: channel account has no app secret",
+      );
+      return { refused };
+    }
   }
   return { secrets };
 }
@@ -337,7 +452,70 @@ async function handleInbound(
 
   await storeIncomingMessage(ref, message);
 
+  // A write from a campaign contact counts as its reply, however it comes in.
+  // Only sends inside the attribution window — an old campaign does not earn
+  // a reply it had no part in.
+  await db
+    .updateTable("campaign_recipients")
+    .set("replied_at", Date.now())
+    .where("tenant_id", "=", ref.tenantId)
+    .where("phone_number", "=", phoneNumber)
+    .where("replied_at", "is", null)
+    .where("status", "in", ["queued", "sent", "delivered", "read"])
+    .where(
+      "queued_at",
+      ">=",
+      Date.now() - ATTRIBUTION_DAYS * 24 * 60 * 60 * 1000,
+    )
+    .execute();
+
   return { status: "received", queued: ref };
+}
+
+/**
+ * Ranks Meta's delivery statuses so a later webhook only moves a recipient
+ * forward: queued < sent < delivered < read. `failed` outranks everything but
+ * a terminal state, matching Meta, which reports a failed send at any stage.
+ */
+const STATUS_RANK = `CASE status
+  WHEN 'pending' THEN 0 WHEN 'queued' THEN 1 WHEN 'sent' THEN 2
+  WHEN 'delivered' THEN 3 WHEN 'read' THEN 4
+  WHEN 'skipped' THEN 5 WHEN 'failed' THEN 5 END`;
+const NEW_STATUS_RANK: Record<string, number> = {
+  sent: 2,
+  delivered: 3,
+  read: 4,
+  failed: 5,
+};
+
+/**
+ * A Meta delivery status names the WhatsApp message id the send response
+ * gave, which the `messages` row of the campaign send holds. The campaign's
+ * recipient row moves to the new status when it outranks the current one.
+ */
+async function recordDeliveryStatus(
+  whatsappMessageId: string,
+  status: string,
+): Promise<void> {
+  const rank = NEW_STATUS_RANK[status];
+  if (rank === undefined) return;
+
+  const message = await withoutTenantScope(
+    "Meta's delivery status names a WhatsApp message id",
+  )
+    .selectFrom("messages")
+    .select(["id", "tenant_id"])
+    .where("whatsapp_message_id", "=", whatsappMessageId)
+    .executeTakeFirst();
+  if (!message) return;
+
+  await db
+    .updateTable("campaign_recipients")
+    .set("status", status as never)
+    .where("tenant_id", "=", message.tenant_id)
+    .where("message_id", "=", message.id)
+    .where(sql`${sql.raw(STATUS_RANK)}`, "<", rank)
+    .execute();
 }
 
 /**
@@ -363,12 +541,13 @@ webhook.post("/", limitWebhookBody, async (c) => {
   // on more than one channel must verify against each of them; one naming
   // none has no secret to check against and is refused like a bad signature.
   const phoneNumberIds = phoneNumberIdsOf(parsed);
-  if (phoneNumberIds.size === 0) {
-    logger.warn("Webhook POST refused: body names no phone_number_id");
+  const wabaIds = wabaIdsOf(parsed);
+  if (phoneNumberIds.size === 0 && wabaIds.size === 0) {
+    logger.warn("Webhook POST refused: body names no phone_number_id or WABA");
     return c.json({ error: "invalid_signature" }, 401);
   }
 
-  const resolved = await appSecretsFor(phoneNumberIds);
+  const resolved = await appSecretsFor(phoneNumberIds, wabaIds);
   if ("refused" in resolved) {
     return c.json({ error: "invalid_signature" }, 401);
   }
@@ -434,6 +613,32 @@ webhook.post("/", limitWebhookBody, async (c) => {
         results.push({ phoneNumberId, status: "error" });
       }
     }
+  }
+
+  // A template review and a delivery status carry no inbound message, so the
+  // parser drops them; they are applied from the raw body here.
+  const { templateUpdates, statuses } = nonMessageChangesOf(parsed);
+  for (const { wabaId, value } of templateUpdates) {
+    const account = wabaId
+      ? await ChannelAccountService.getByWabaId(wabaId)
+      : null;
+    if (!account) continue;
+    await TemplateService.applyStatus(
+      account.tenant_id,
+      typeof value.message_template_id === "string"
+        ? value.message_template_id
+        : null,
+      typeof value.message_template_name === "string"
+        ? value.message_template_name
+        : null,
+      typeof value.event === "string" ? value.event : "",
+      typeof value.reason === "string" ? value.reason : null,
+    );
+  }
+  for (const { value } of statuses) {
+    if (typeof value.id !== "string" || typeof value.status !== "string")
+      continue;
+    await recordDeliveryStatus(value.id, value.status);
   }
 
   for (const ref of queued.values()) {

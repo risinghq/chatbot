@@ -174,6 +174,18 @@ export const ChannelAccountService = {
       .executeTakeFirst()) ?? null,
 
   /**
+   * An account by the WABA id Meta puts on `entry[].id`. A
+   * `message_template_status_update` carries no `phone_number_id`, so this is
+   * how the webhook resolves which number it belongs to.
+   */
+  getByWabaId: async (wabaId: string): Promise<ChannelAccount | null> =>
+    (await withoutTenantScope("a waba id names one channel account")
+      .selectFrom("channel_accounts")
+      .selectAll()
+      .where("waba_id", "=", wabaId)
+      .executeTakeFirst()) ?? null,
+
+  /**
    * The account a tenant sends from when the caller names none. Active accounts
    * come first, then pending, then disabled, oldest first in each.
    */
