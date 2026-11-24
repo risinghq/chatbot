@@ -315,11 +315,13 @@ Cuenta page of a business they belong to (`/dashboard/<tenant id>/cuenta`).
 While a business is unfinished, the home page and the Negocios page show a setup
 checklist (`lib/components/shared/setup-checklist.svelte`) fed by
 `GET /api/admin/setup-status`. Its steps run in the order a new business takes
-them: the OpenAI key, an active product with an active variant, one conversation
-in the simulator, a WhatsApp number with its token and app secret, and at least
-one member. The first pending step carries the primary action. The checklist
-hides once every step is done. The Cálidda login is optional: the status reports
-it, but it does not hold the checklist open.
+them: the OpenAI key, an active product with an active variant, units of such a
+variant that are not reserved, an active payment method, one conversation in the
+simulator, and a WhatsApp number with its token and app secret. The first
+pending step carries the primary action. The checklist hides once every step is
+done. A team and the Cálidda login are optional: the footer points to them, but
+they do not hold the checklist open. The owner who signed up is already a
+member.
 
 Pages that work inside one business show a pick-a-business message
 (`lib/components/shared/needs-tenant.svelte`) when the session has no active

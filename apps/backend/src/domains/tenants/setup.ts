@@ -8,21 +8,22 @@ import { TenantSecrets } from "../settings/tenant-secrets.ts";
  * walks a new business through it. Each flag is read from the same rows the
  * feature itself checks, so the checklist and the running system can never
  * disagree: the assistant's OpenAI key, an active product with an active
- * variant it can sell, an active payment method the assistant can offer and
- * an order can be paid with, a conversation in the simulator, a number that can
- * receive (app secret) and answer (access token), and at least one member to
- * work the conversations.
+ * variant it can sell, units of such a variant the assistant can reserve, an
+ * active payment method the assistant can offer and an order can be paid
+ * with, a conversation in the simulator, and a number that can receive (app
+ * secret) and answer (access token).
  *
  * Cálidda credit is an optional integration, so its login is reported but
- * does not count toward `complete`.
+ * does not count toward `complete`. A team is optional too: the owner who
+ * signed up already works the conversations.
  */
 export type TenantSetupStatus = {
   openai_configured: boolean;
   has_catalog: boolean;
+  has_stock: boolean;
   has_payment_methods: boolean;
   tried_simulator: boolean;
   whatsapp_configured: boolean;
-  has_members: boolean;
   calidda_configured: boolean;
   complete: boolean;
 };
@@ -32,35 +33,43 @@ const exists = async (query: {
   limit(n: number): { executeTakeFirst(): Promise<unknown> };
 }): Promise<boolean> => (await query.limit(1).executeTakeFirst()) !== undefined;
 
+/** The business's active variants of active products: what the assistant sells. */
+const sellableVariants = (tenantId: string) =>
+  db
+    .selectFrom("product_variants as v")
+    .innerJoin("products as p", (join) =>
+      join
+        .onRef("p.id", "=", "v.product_id")
+        .onRef("p.tenant_id", "=", "v.tenant_id"),
+    )
+    .where("v.tenant_id", "=", tenantId)
+    .where("v.is_active", "=", 1)
+    .where("p.status", "=", "active");
+
 export async function tenantSetupStatus(
   tenantId: string,
 ): Promise<TenantSetupStatus> {
   const [
     openai,
     products,
+    stock,
     paymentMethods,
     simulated,
     numbers,
-    members,
     caliddaPassword,
     caliddaUsername,
   ] = await Promise.all([
     hasOpenAiApiKey(tenantId),
+    exists(sellableVariants(tenantId).select("v.id")),
     exists(
-      db
-        .selectFrom("products as p")
-        .select("p.id")
-        .where("p.tenant_id", "=", tenantId)
-        .where("p.status", "=", "active")
-        .where(({ exists, selectFrom }) =>
-          exists(
-            selectFrom("product_variants as v")
-              .select("v.id")
-              .whereRef("v.tenant_id", "=", "p.tenant_id")
-              .whereRef("v.product_id", "=", "p.id")
-              .where("v.is_active", "=", 1),
-          ),
-        ),
+      sellableVariants(tenantId)
+        .innerJoin("stock_levels as s", (join) =>
+          join
+            .onRef("s.variant_id", "=", "v.id")
+            .onRef("s.tenant_id", "=", "v.tenant_id"),
+        )
+        .select("v.id")
+        .whereRef("s.on_hand", ">", "s.reserved"),
     ),
     exists(
       db
@@ -90,12 +99,6 @@ export async function tenantSetupStatus(
         .where("access_token_secret_id", "is not", null)
         .where("app_secret_secret_id", "is not", null),
     ),
-    exists(
-      db
-        .selectFrom("tenant_memberships")
-        .select("id")
-        .where("tenant_id", "=", tenantId),
-    ),
     TenantSecrets.has(tenantId, "calidda_password"),
     TenantSettings.get(tenantId, "calidda_username"),
   ]);
@@ -103,10 +106,10 @@ export async function tenantSetupStatus(
   const required = {
     openai_configured: openai,
     has_catalog: products,
+    has_stock: stock,
     has_payment_methods: paymentMethods,
     tried_simulator: simulated,
     whatsapp_configured: numbers,
-    has_members: members,
   };
   return {
     ...required,

@@ -125,6 +125,17 @@ onMount(loadSettings);
 						/>
 						<p class="mt-1.5 text-sm text-fg-muted">Se guarda cifrada y no se vuelve a mostrar.</p>
 					</FormField>
+					{#if settings._has_openai_api_key !== "true"}
+						<ol class="mt-4 list-decimal space-y-1 pl-5 text-sm text-fg-muted">
+							<li>
+								Entra a
+								<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" class="text-fg underline underline-offset-2">platform.openai.com/api-keys</a>
+								con tu cuenta de OpenAI, o crea una.
+							</li>
+							<li>Agrega saldo en Billing. OpenAI cobra por uso; Reportes muestra cuánto gasta el asistente.</li>
+							<li>Pulsa «Create new secret key», cópiala y pégala aquí.</li>
+						</ol>
+					{/if}
 				</div>
 			</SectionShell>
 
