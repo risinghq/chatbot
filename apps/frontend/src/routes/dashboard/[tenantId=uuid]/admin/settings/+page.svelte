@@ -28,6 +28,12 @@ const hasChanges = $derived(
 // The provider switches are platform settings, edited on /dashboard/ajustes.
 // The API reports them here as `_platform_<key>`, which a save never posts
 // back, so a business sees their state read-only.
+// A business that sells without Cálidda credit has no use for their state.
+const usesCalidda = $derived(
+  initialSettings._has_calidda_password === "true" ||
+    Boolean(initialSettings.calidda_username),
+);
+
 function platformSwitchOn(key: string): boolean {
   return settings[`_platform_${key}`] === "true";
 }
@@ -140,8 +146,8 @@ onMount(loadSettings);
 			</SectionShell>
 
 			<SectionShell
-				title="Cálidda (FNB)"
-				description="La cuenta de Cálidda de este negocio. Con ella se verifica si un cliente tiene crédito."
+				title="Cálidda (FNB) · opcional"
+				description="Solo si vendes con crédito Cálidda. Con la cuenta de Cálidda de tu negocio, el asistente verifica si un cliente tiene crédito."
 			>
 				<div class="grid gap-x-4 p-4 md:grid-cols-2">
 					<FormField label="Usuario" for="calidda-username" class="md:mb-0!">
@@ -159,23 +165,25 @@ onMount(loadSettings);
 				</div>
 			</SectionShell>
 
-		<SectionShell
-			title="Proveedores de crédito"
-			description="El equipo de VendeYa los suspende cuando fallan. Aquí ves su estado."
-		>
-			<div class="divide-y divide-border-subtle">
-				{@render providerSwitch(
-					"force_fnb_down",
-					"Suspender FNB (Cálidda)",
-					"La verificación de elegibilidad deja de consultar a Cálidda.",
-				)}
-				{@render providerSwitch(
-					"force_gaso_down",
-					"Suspender GASO (Power BI)",
-					"La verificación deja de consultar el reporte de Power BI.",
-				)}
-			</div>
-		</SectionShell>
+		{#if usesCalidda}
+			<SectionShell
+				title="Proveedores de crédito"
+				description="El equipo de VendeYa los suspende cuando fallan. Aquí ves su estado."
+			>
+				<div class="divide-y divide-border-subtle">
+					{@render providerSwitch(
+						"force_fnb_down",
+						"Suspender FNB (Cálidda)",
+						"La verificación de elegibilidad deja de consultar a Cálidda.",
+					)}
+					{@render providerSwitch(
+						"force_gaso_down",
+						"Suspender GASO (Power BI)",
+						"La verificación deja de consultar el reporte de Power BI.",
+					)}
+				</div>
+			</SectionShell>
+		{/if}
 
 		{#if hasChanges}
 			<div
