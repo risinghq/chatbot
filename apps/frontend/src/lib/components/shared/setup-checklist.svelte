@@ -4,6 +4,7 @@ import { onMount } from "svelte";
 import Button from "#lib/components/ui/button.svelte";
 import Icon from "#lib/components/ui/icon.svelte";
 import { fetchApi } from "#lib/utils/api.js";
+import { SUPPORT } from "#lib/utils/support.js";
 
 type SetupStatus = {
   openai_configured: boolean;
@@ -64,7 +65,7 @@ const steps = $derived(
         {
           done: status.whatsapp_configured,
           label: "Número de WhatsApp",
-          hint: "El equipo de VendeYa conecta tu número de WhatsApp Business a tu negocio.",
+          hint: `El equipo de VendeYa conecta tu número de WhatsApp Business. Escríbenos al ${SUPPORT.phoneDisplay}.`,
           action: "Ver números",
           href: businessPath("/admin/channels"),
         },

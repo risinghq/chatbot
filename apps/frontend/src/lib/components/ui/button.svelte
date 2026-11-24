@@ -8,6 +8,8 @@ type Props = {
   class?: string;
   type?: "button" | "submit" | "reset";
   href?: string;
+  /** Open `href` in a new tab: a page outside the dashboard. */
+  external?: boolean;
   onclick?: (e: MouseEvent) => void;
   "aria-label"?: string;
   children: Snippet;
@@ -20,6 +22,7 @@ let {
   class: className = "",
   type = "button",
   href,
+  external = false,
   onclick,
   "aria-label": ariaLabel,
   children,
@@ -47,6 +50,8 @@ const variants = {
 {#if href}
 	<a
 		{href}
+		target={external ? "_blank" : undefined}
+		rel={external ? "noopener noreferrer" : undefined}
 		class="{baseStyles} {sizeStyles[size]} {variants[variant]} {className}"
 		tabindex={disabled ? -1 : 0}
 		aria-disabled={disabled}

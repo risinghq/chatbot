@@ -4,6 +4,7 @@ import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import { auth } from "#lib/state/auth.svelte.js";
 import { businessPath } from "#lib/state/business.svelte.js";
+import { SUPPORT } from "#lib/utils/support.js";
 import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import EmptyState from "#lib/components/ui/empty-state.svelte";
@@ -168,13 +169,16 @@ onMount(() => {
 				title="Sin números conectados"
 				description={auth.isPlatformOperator
 					? "Agrega el número de WhatsApp Business del negocio con su phone number id de Meta."
-					: "El equipo de VendeYa conecta el número de WhatsApp Business de tu negocio. Mientras tanto, conversa con el asistente como si fueras un cliente."}
+					: `El equipo de VendeYa conecta el número de WhatsApp Business de tu negocio. Escríbenos al ${SUPPORT.phoneDisplay} o a ${SUPPORT.email}. Mientras tanto, conversa con el asistente como si fueras un cliente.`}
 			>
 				{#snippet action()}
 					{#if auth.isPlatformOperator}
 						<Button onclick={() => (adding = true)}>Agregar número</Button>
 					{:else}
-						<Button href={businessPath("/asistente/probar")} variant="secondary">Probar el asistente</Button>
+						<div class="flex flex-wrap justify-center gap-2">
+							<Button href={SUPPORT.whatsappUrl} external>Escribir por WhatsApp</Button>
+							<Button href={businessPath("/asistente/probar")} variant="secondary">Probar el asistente</Button>
+						</div>
 					{/if}
 				{/snippet}
 			</EmptyState>
