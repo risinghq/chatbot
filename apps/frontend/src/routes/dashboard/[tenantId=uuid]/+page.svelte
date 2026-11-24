@@ -2,6 +2,7 @@
 import { businessPath } from "#lib/state/business.svelte.js";
 import type { Conversation, OrderMetrics } from "@vendeya/types";
 import { onMount } from "svelte";
+import { goto } from "$app/navigation";
 import { page } from "$app/state";
 import PageHeader from "#lib/components/shared/page-header.svelte";
 import Page from "#lib/components/shared/page.svelte";
@@ -35,6 +36,15 @@ let waiting = $derived(
 let activeCount = $derived(
   (conversations ?? []).filter((c) => c.status === "active").length,
 );
+
+// A new business's admin answers what it sells before anything else, since
+// the catalog forms follow the answer. An operator visiting has no role in
+// the business and is never sent there.
+$effect(() => {
+  if (activeTenant?.role === "admin" && activeTenant.business_kind === null) {
+    void goto(businessPath("/bienvenida"), { replaceState: true });
+  }
+});
 
 onMount(() => {
   fetchApi<Conversation[]>("/api/conversations")

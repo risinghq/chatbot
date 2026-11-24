@@ -1,5 +1,10 @@
 import { newId } from "@vendeya/utils";
-import type { Tenant, TenantMembership, TenantRole } from "@vendeya/types";
+import type {
+  BusinessKind,
+  Tenant,
+  TenantMembership,
+  TenantRole,
+} from "@vendeya/types";
 import type { Compilable } from "kysely";
 import { batch, db, withoutTenantScope } from "../../db/index.ts";
 
@@ -65,6 +70,18 @@ export const TenantService = {
     const id = data.id ?? newId();
     await batch([TenantService.createStatement({ ...data, id })]);
     return (await TenantService.getById(id))!;
+  },
+
+  update: async (
+    id: string,
+    fields: { name?: string; business_kind?: BusinessKind },
+  ): Promise<Tenant | null> => {
+    await tenants()
+      .updateTable("tenants")
+      .set({ ...fields, updated_at: Date.now() })
+      .where("id", "=", id)
+      .execute();
+    return await TenantService.getById(id);
   },
 
   count: async (): Promise<number> =>

@@ -7,6 +7,7 @@ import Button from "#lib/components/ui/button.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
+import BusinessKindSection from "#lib/components/admin/business-kind-section.svelte";
 
 let settings = $state<Record<string, string>>({});
 let initialSettings = $state<Record<string, string>>({});
@@ -111,6 +112,8 @@ onMount(loadSettings);
 			save();
 		}}
 	>
+		<BusinessKindSection />
+
 		<SectionShell
 				title="OpenAI"
 				description="La clave de API de OpenAI de este negocio. El asistente la usa para responder a los clientes."

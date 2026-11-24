@@ -241,6 +241,8 @@ function words(entry: HistoryEntry): Words {
       return { verb: "entró al negocio" };
     case "update_settings":
       return { verb: "cambió los ajustes del negocio", hide: true };
+    case "update_business":
+      return { verb: "cambió los datos del negocio", hide: true };
     case "update_assistant_settings":
       return { verb: "cambió la configuración del" };
     case "update_platform_settings":
