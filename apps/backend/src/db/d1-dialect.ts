@@ -19,7 +19,7 @@ export class D1Dialect implements Dialect {
   constructor(private readonly database: () => D1Database) {}
 
   createAdapter() {
-    return new SqliteAdapter();
+    return new D1Adapter();
   }
 
   createDriver(): Driver {
@@ -32,6 +32,19 @@ export class D1Dialect implements Dialect {
 
   createQueryCompiler() {
     return new SqliteQueryCompiler();
+  }
+}
+
+/**
+ * SQLite's adapter makes Kysely queue every query behind one lock. The lock is
+ * a promise held by the isolate, so a query in one request waits on a promise
+ * another request made, and workerd fails it: "This promise was created by a
+ * request that has since ended". A D1 binding holds no connection state, so
+ * queries need no lock.
+ */
+class D1Adapter extends SqliteAdapter {
+  override get supportsMultipleConnections(): boolean {
+    return true;
   }
 }
 
