@@ -18,6 +18,7 @@ import FormField from "#lib/components/ui/form-field.svelte";
 import Icon from "#lib/components/ui/icon.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import Select from "#lib/components/ui/select.svelte";
+import OrderShopify from "#lib/components/orders/order-shopify.svelte";
 import { formatPhone, formatDateTime } from "#lib/utils/formatters.js";
 import { formatCents, parseCents } from "#lib/utils/money.js";
 import {
@@ -247,6 +248,8 @@ function decide(paymentId: string, action: "confirm" | "reject") {
 							<p class="text-fg-muted">Recojo en tienda.</p>
 						{/if}
 					</section>
+
+					<OrderShopify {order} />
 				</div>
 
 				<section class="rounded-md border border-border bg-surface p-4">

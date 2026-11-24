@@ -8,6 +8,7 @@ import PageHeader from "#lib/components/shared/page-header.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import InventoryGrid from "#lib/components/catalog/inventory-grid.svelte";
 import CatalogImport from "#lib/components/catalog/catalog-import.svelte";
+import ShopifyConnection from "#lib/components/catalog/shopify-connection.svelte";
 import Page from "#lib/components/shared/page.svelte";
 import PageTitle from "#lib/components/shared/page-title.svelte";
 import type { PageData } from "./$types";
@@ -39,6 +40,10 @@ onMount(() => {
   </PageHeader>
 
   <InventoryGrid products={data.products} onProductClick={handleProductClick} />
+
+  {#if auth.canEditCatalog}
+    <ShopifyConnection />
+  {/if}
 </Page>
 
 {#if auth.canEditCatalog}
