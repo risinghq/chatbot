@@ -245,10 +245,15 @@ function words(entry: HistoryEntry): Words {
       return { verb: "cambió la configuración del" };
     case "update_platform_settings":
       return { verb: "cambió los ajustes de la plataforma", hide: true };
+    // Revokes before the name was recorded have nothing to name.
     case "create_api_token":
-      return { verb: "creó el token de API" };
+      return entry.subject?.label
+        ? { verb: "creó el token de API" }
+        : { verb: "creó un token de API", hide: true };
     case "revoke_api_token":
-      return { verb: "revocó el token de API" };
+      return entry.subject?.label
+        ? { verb: "revocó el token de API" }
+        : { verb: "revocó un token de API", hide: true };
     default:
       return { verb: `hizo «${entry.action.replaceAll("_", " ")}» en` };
   }
