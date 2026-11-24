@@ -23,6 +23,15 @@ export function formatTime(date: string | Date | number): string {
   });
 }
 
+/** Hour and minute in Lima, for a list already grouped by day. */
+export function formatClock(date: string | Date | number): string {
+  return new Date(date).toLocaleTimeString("es-PE", {
+    timeZone: "America/Lima",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 const LIMA_DATE = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Lima",
   year: "numeric",
