@@ -2,7 +2,7 @@
 import type { HistoryEntry } from "@vendeya/types";
 import Badge from "#lib/components/ui/badge.svelte";
 import { byDay, phrase, type HistoryPlace } from "#lib/utils/history.js";
-import { formatTime } from "#lib/utils/formatters.js";
+import { formatClock } from "#lib/utils/formatters.js";
 
 let {
   entries,
@@ -22,10 +22,10 @@ const days = $derived(byDay(entries, now));
 					{@const p = phrase(entry, place)}
 					<li class="flex gap-4 px-4 py-3">
 						<time
-							class="w-20 shrink-0 pt-px text-sm text-fg-muted tabular-nums"
+							class="w-20 shrink-0 pt-px text-sm whitespace-nowrap text-fg-muted tabular-nums"
 							datetime={new Date(entry.at).toISOString()}
 						>
-							{formatTime(entry.at)}
+							{formatClock(entry.at)}
 						</time>
 						<div class="min-w-0 flex-1">
 							<p class="text-base text-pretty text-fg-muted">

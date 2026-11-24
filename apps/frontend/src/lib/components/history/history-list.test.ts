@@ -35,7 +35,7 @@ describe("the history list", () => {
   it("shows the time in es-PE and America/Lima, under the Lima day", async () => {
     const body = await show([entry({})], 1_700_300_000_000);
 
-    expect(body).toContain("10:13:20");
+    expect(body).toMatch(/>\s*10:13\s*p\.\s*m\.\s*</);
     expect(body).toContain("Martes, 14 de noviembre de 2023");
   });
 
