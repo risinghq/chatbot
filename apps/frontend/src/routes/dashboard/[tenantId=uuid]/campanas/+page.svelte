@@ -1,4 +1,5 @@
 <script lang="ts">
+import { untrack } from "svelte";
 import { invalidateAll } from "$app/navigation";
 import type {
   Audience,
@@ -242,14 +243,32 @@ async function cancelCampaign(campaign: CampaignSummary) {
 
 // --- Reminders ---------------------------------------------------------------
 
-let cartEnabled = $state(data.reminders.abandoned_cart.enabled);
-let cartHours = $state(data.reminders.abandoned_cart.hours);
-let cartTemplateId = $state(data.reminders.abandoned_cart.template_id ?? "");
-let inactiveEnabled = $state(data.reminders.inactive.enabled);
-let inactiveDays = $state(data.reminders.inactive.days);
-let inactiveTemplateId = $state(data.reminders.inactive.template_id ?? "");
-let marketingDays = $state(data.reminders.marketing_min_interval_days);
+const reminderFields = (r: PageData["reminders"]) => ({
+  cartEnabled: r.abandoned_cart.enabled,
+  cartHours: r.abandoned_cart.hours,
+  cartTemplateId: r.abandoned_cart.template_id ?? "",
+  inactiveEnabled: r.inactive.enabled,
+  inactiveDays: r.inactive.days,
+  inactiveTemplateId: r.inactive.template_id ?? "",
+  marketingDays: r.marketing_min_interval_days,
+});
+
+let synced = reminderFields(data.reminders);
+const reminders = $state(reminderFields(data.reminders));
 let savingReminders = $state(false);
+
+// Refreshed data replaces a field only while it still holds its last-loaded
+// value; a field the user edited keeps what they typed.
+$effect(() => {
+  const next = reminderFields(data.reminders);
+  untrack(() => {
+    const fields: Record<keyof typeof next, unknown> = reminders;
+    for (const key of Object.keys(next) as (keyof typeof next)[]) {
+      if (fields[key] === synced[key]) fields[key] = next[key];
+    }
+    synced = next;
+  });
+});
 
 async function saveReminders() {
   savingReminders = true;
@@ -259,16 +278,16 @@ async function saveReminders() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         abandoned_cart: {
-          enabled: cartEnabled,
-          hours: cartHours,
-          template_id: cartTemplateId || null,
+          enabled: reminders.cartEnabled,
+          hours: reminders.cartHours,
+          template_id: reminders.cartTemplateId || null,
         },
         inactive: {
-          enabled: inactiveEnabled,
-          days: inactiveDays,
-          template_id: inactiveTemplateId || null,
+          enabled: reminders.inactiveEnabled,
+          days: reminders.inactiveDays,
+          template_id: reminders.inactiveTemplateId || null,
         },
-        marketing_min_interval_days: marketingDays,
+        marketing_min_interval_days: reminders.marketingDays,
       }),
     });
     toast.success("Recordatorios guardados");
@@ -350,18 +369,18 @@ function formatDate(at: number | null): string {
 			<form class="grid gap-4 p-4" onsubmit={(e) => { e.preventDefault(); saveReminders(); }}>
 				<div class="grid gap-3">
 					<label class="flex items-center gap-2 text-sm text-fg">
-						<input type="checkbox" bind:checked={cartEnabled} />
+						<input type="checkbox" bind:checked={reminders.cartEnabled} />
 						Recordatorio de carrito abandonado
 					</label>
 					<div class="grid max-w-md grid-cols-2 gap-3">
 						<FormField label="Horas sin respuesta" for="cart-hours">
-							<Input id="cart-hours" type="number" bind:value={cartHours} disabled={!cartEnabled} />
+							<Input id="cart-hours" type="number" bind:value={reminders.cartHours} disabled={!reminders.cartEnabled} />
 						</FormField>
 						<FormField label="Plantilla" for="cart-template">
 							<Select
 								id="cart-template"
-								bind:value={cartTemplateId}
-								disabled={!cartEnabled}
+								bind:value={reminders.cartTemplateId}
+								disabled={!reminders.cartEnabled}
 								items={approvedTemplates.map((t) => ({ value: t.id, label: t.name }))}
 							/>
 						</FormField>
@@ -370,18 +389,18 @@ function formatDate(at: number | null): string {
 
 				<div class="grid gap-3 border-t border-border-subtle pt-4">
 					<label class="flex items-center gap-2 text-sm text-fg">
-						<input type="checkbox" bind:checked={inactiveEnabled} />
+						<input type="checkbox" bind:checked={reminders.inactiveEnabled} />
 						Cliente inactivo
 					</label>
 					<div class="grid max-w-md grid-cols-2 gap-3">
 						<FormField label="Días sin comprar" for="inactive-days">
-							<Input id="inactive-days" type="number" bind:value={inactiveDays} disabled={!inactiveEnabled} />
+							<Input id="inactive-days" type="number" bind:value={reminders.inactiveDays} disabled={!reminders.inactiveEnabled} />
 						</FormField>
 						<FormField label="Plantilla" for="inactive-template">
 							<Select
 								id="inactive-template"
-								bind:value={inactiveTemplateId}
-								disabled={!inactiveEnabled}
+								bind:value={reminders.inactiveTemplateId}
+								disabled={!reminders.inactiveEnabled}
 								items={approvedTemplates.map((t) => ({ value: t.id, label: t.name }))}
 							/>
 						</FormField>
@@ -390,7 +409,7 @@ function formatDate(at: number | null): string {
 
 				<div class="border-t border-border-subtle pt-4">
 					<FormField label="Un cliente recibe marketing como máximo cada (días)" for="marketing-days">
-						<Input id="marketing-days" type="number" bind:value={marketingDays} class="max-w-32" />
+						<Input id="marketing-days" type="number" bind:value={reminders.marketingDays} class="max-w-32" />
 					</FormField>
 				</div>
 
