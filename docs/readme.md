@@ -18,13 +18,15 @@ repeating it.
    check, its providers and their outages.
 7. [Connecting WhatsApp](./whatsapp.md): register a number and configure Meta's
    callback.
-8. [Shopify](./shopify.md): connect a store, keep the catalog in step and write
+8. [Connecting Instagram](./instagram.md): register a professional account and
+   set its comment replies.
+9. [Shopify](./shopify.md): connect a store, keep the catalog in step and write
    orders back.
-9. [Deploy](./deploy.md): create the Cloudflare resources, set the secrets,
-   deploy the Workers, and restore the database.
-10. [Operations](./operations.md): inspect health and logs, manage accounts, and
+10. [Deploy](./deploy.md): create the Cloudflare resources, set the secrets,
+    deploy the Workers, and restore the database.
+11. [Operations](./operations.md): inspect health and logs, manage accounts, and
     investigate missing replies.
-11. [Development](./development.md): run checks, find CI jobs, and follow code
+12. [Development](./development.md): run checks, find CI jobs, and follow code
     conventions.
 
 Contributors should also read the [architecture map](./architecture.md) before

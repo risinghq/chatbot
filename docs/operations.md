@@ -51,6 +51,7 @@ the values in `wrangler.jsonc`.
 | `ENVIRONMENT`                             | variable | anything but `production` makes a 500 carry the error's message and stack                                                       |
 | `PUBLIC_URL`                              | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:`          |
 | `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL` | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                               |
+| `INSTAGRAM_GRAPH_BASE_URL`                | variable | see [Instagram](./instagram.md#metas-side)                                                                                      |
 | `BOT_RESPONSE_DELAY_MS`                   | variable | 2300                                                                                                                            |
 | `PLATFORM_OPS_PHONE_NUMBER_ID`            | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one                   |
 | `WHATSAPP_GROUP_DEV`                      | variable | system alerts with no tenant setting have no target. See [Alerts](#alerts)                                                      |

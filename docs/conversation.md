@@ -17,6 +17,8 @@ webhook -> message_inbox -> wake the conversation's object
 
 Meta posts a signed batch to the backend Worker at `/api/webhook`. How the
 endpoint is set up and secured is in [Connecting WhatsApp](./whatsapp.md).
+Instagram DMs arrive at `/api/webhook/instagram` and join the same intake
+([Connecting Instagram](./instagram.md)).
 
 [`routes/webhook.ts`](../apps/backend/src/routes/webhook.ts) handles each
 message in the batch on its own and reports a status for it in the 200 body:

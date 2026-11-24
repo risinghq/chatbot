@@ -51,7 +51,8 @@ commit. A page that is wrong is worse than none.
 
 - `bun run dev`, `seed` and `account` read `apps/backend/.dev.vars`. A number
   registered with a real access token can send real messages. Point
-  `GRAPH_API_BASE_URL` at a fake server for local probes.
+  `GRAPH_API_BASE_URL` and `INSTAGRAM_GRAPH_BASE_URL` at a fake server for local
+  probes.
 - `account --remote` and `db:migrate:remote` write to the deployed D1 database.
   Run them only when you mean to. The seed only writes the local one.
 - The backend's tests run in workerd with their own D1, KV and R2 per test, and

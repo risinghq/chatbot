@@ -44,6 +44,7 @@ covers the setup step by step.
   zones and fees.
 - TAYPI pay links (Yape, Plin and cards) that record the payment on the order.
 - Takeover: a person answers a chat and hands it back.
+- Instagram DMs, and a public and a private reply to each comment on a post.
 - A catalog shaped by what the shop sells: sizes and colours for clothing, brand
   and model for electronics, and a grid that creates every variant at once.
 - Catalog import from an Excel or CSV sheet, with a preview before anything is

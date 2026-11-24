@@ -243,9 +243,10 @@ wait until it is active again.
 
 A platform operator registers a number (`POST /api/admin/channels`). A tenant
 admin lists their tenant's numbers and replaces a token or sets the status of
-one (`PATCH /api/admin/channels/:id`). Both are API-only; the dashboard has no
-page for them. How to get the values from Meta is in
-[Connecting WhatsApp](./whatsapp.md).
+one (`PATCH /api/admin/channels/:id`). The Canales page
+(`/dashboard/<tenant id>/admin/channels`) does both. How to get the values from
+Meta is in [Connecting WhatsApp](./whatsapp.md) and
+[Connecting Instagram](./instagram.md).
 
 When a tenant has several numbers and the caller names none (such as an alert),
 the tenant's default is its oldest active account, then its oldest pending one.
