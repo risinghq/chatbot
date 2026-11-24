@@ -51,7 +51,9 @@ async function handleSubmit(e: Event) {
 <div class="flex min-h-dvh flex-col items-center justify-center bg-canvas p-4">
 	<div class="w-full max-w-sm rounded-lg border border-border bg-surface p-6 shadow-sm">
 		<h1 class="text-lg font-medium text-fg">Crea tu negocio en vendeya</h1>
-		<p class="mt-1 mb-6 text-base text-fg-muted">Quedas como administrador y luego invitas a tu equipo.</p>
+		<p class="mt-1 mb-6 text-base text-fg-muted">
+			Quedas como administrador. Luego cargas tu catálogo, pruebas el asistente y el equipo de VendeYa conecta tu número de WhatsApp.
+		</p>
 
 		<form onsubmit={handleSubmit}>
 			<FormField label="Nombre del negocio" for="business-name">
