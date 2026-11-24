@@ -216,6 +216,9 @@ function goBack() {
 
 				<div class="space-y-1 p-4 text-sm text-fg-muted">
 					<p>Última actividad: {formatDateTime(conversation.last_activity_at)}</p>
+					{#if conversation.ad_source_id}
+						<p>Llegó por un anuncio: {conversation.ad_headline ?? conversation.ad_source_id}</p>
+					{/if}
 					{#if conversation.handover_reason}
 						<p class="text-danger-text">Motivo de escalamiento: {conversation.handover_reason}</p>
 					{/if}
