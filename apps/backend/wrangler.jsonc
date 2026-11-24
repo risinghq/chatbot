@@ -53,6 +53,7 @@
     "GRAPH_API_VERSION": "v26.0",
     "GRAPH_API_BASE_URL": "https://graph.facebook.com",
     "CALIDDA_BASE_URL": "https://appweb.calidda.com.pe",
+    "SHOPIFY_BASE_URL": "",
     "BOT_RESPONSE_DELAY_MS": "2300",
     "PLATFORM_OPS_PHONE_NUMBER_ID": "",
     "WHATSAPP_GROUP_DEV": "",

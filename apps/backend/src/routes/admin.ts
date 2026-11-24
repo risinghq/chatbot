@@ -5,6 +5,7 @@ import system from "./admin/system.ts";
 import channels from "./admin/channels.ts";
 import business from "./admin/business.ts";
 import taypi from "./admin/taypi.ts";
+import shopify from "./shopify.ts";
 
 const admin = new Hono();
 
@@ -13,6 +14,7 @@ admin.route("/users", users);
 admin.route("/invitations", invitations);
 admin.route("/channels", channels);
 admin.route("/taypi", taypi);
+admin.route("/shopify", shopify);
 admin.route("/", system);
 
 export default admin;

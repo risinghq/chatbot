@@ -11,4 +11,5 @@ export const TEST_BINDINGS = {
   BOT_RESPONSE_DELAY_MS: "0",
   SECRETS_KEY: "0".repeat(64),
   CALIDDA_BASE_URL: "https://calidda.test",
+  SHOPIFY_BASE_URL: "https://shopify.test",
 } as const;

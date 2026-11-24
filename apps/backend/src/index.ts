@@ -27,6 +27,7 @@ import push from "./routes/push.ts";
 import reports from "./routes/reports.ts";
 import simulator from "./routes/simulator.ts";
 import stock from "./routes/stock.ts";
+import shopifyWebhook from "./routes/shopify-webhook.ts";
 import taypiWebhook from "./routes/taypi-webhook.ts";
 import tenants from "./routes/tenants.ts";
 import webhook from "./routes/webhook.ts";
@@ -62,6 +63,7 @@ app.get("/media/:key{.+}", async (c) => {
 
 app.route("/api/health", health);
 app.route("/api/webhook/taypi", taypiWebhook);
+app.route("/api/webhook/shopify", shopifyWebhook);
 app.route("/api/webhook", webhook);
 app.route("/api/auth", auth);
 app.route("/api/pay", pay);
