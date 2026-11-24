@@ -1,5 +1,5 @@
 /** The types `messages.type` can hold. */
-export type StoredMessageType = "text" | "image";
+export type StoredMessageType = "text" | "image" | "template";
 
 /** What a channel can deliver. Only the stored types are kept in `messages`. */
 export type InboundMessageType =

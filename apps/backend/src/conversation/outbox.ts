@@ -85,7 +85,7 @@ export type OutboxRow = {
   channel_account_id: string;
   phone_number: string;
   message_id: string;
-  type: "text" | "image";
+  type: "text" | "image" | "template";
   content: string;
   caption: string | null;
   status: OutboxStatus;
@@ -205,6 +205,39 @@ export async function hasQueuedReply(ref: ConversationRef): Promise<boolean> {
 }
 
 /** Append a reply to the conversation's queue. `id` gives the order it goes out in. */
+export function outboxInsert(args: {
+  ref: ConversationRef;
+  messageId: string;
+  message: OutboundMessage;
+  state: OutboxStep;
+  now: number;
+}) {
+  const { ref, messageId, message, state, now } = args;
+
+  return db.insertInto("outbox").values({
+    tenant_id: ref.tenantId,
+    channel_account_id: ref.channelAccountId,
+    phone_number: ref.phoneNumber,
+    message_id: messageId,
+    type: message.type,
+    content: message.content,
+    caption:
+      message.type === "image"
+        ? (message.caption ?? null)
+        : message.type === "template"
+          ? JSON.stringify(message.template)
+          : null,
+    status: state.status,
+    attempts: state.attempts,
+    ambiguous_attempts: state.ambiguousAttempts,
+    last_kind: state.lastKind,
+    last_reason: state.lastReason,
+    next_attempt_at: state.nextAttemptAt,
+    created_at: now,
+    updated_at: now,
+  });
+}
+
 export async function enqueue(args: {
   ref: ConversationRef;
   messageId: string;
@@ -212,29 +245,7 @@ export async function enqueue(args: {
   state: OutboxStep;
   now: number;
 }): Promise<number> {
-  const { ref, messageId, message, state, now } = args;
-
-  const result = await db
-    .insertInto("outbox")
-    .values({
-      tenant_id: ref.tenantId,
-      channel_account_id: ref.channelAccountId,
-      phone_number: ref.phoneNumber,
-      message_id: messageId,
-      type: message.type,
-      content: message.content,
-      caption: message.type === "image" ? (message.caption ?? null) : null,
-      status: state.status,
-      attempts: state.attempts,
-      ambiguous_attempts: state.ambiguousAttempts,
-      last_kind: state.lastKind,
-      last_reason: state.lastReason,
-      next_attempt_at: state.nextAttemptAt,
-      created_at: now,
-      updated_at: now,
-    })
-    .executeTakeFirstOrThrow();
-
+  const result = await outboxInsert(args).executeTakeFirstOrThrow();
   return Number(result.insertId);
 }
 
@@ -248,6 +259,15 @@ export function outboundOf(row: OutboxRow): OutboundMessage {
       type: "image",
       content: row.content,
       caption: row.caption ?? undefined,
+    };
+  }
+  if (row.type === "template") {
+    // `content` is the rendered body the thread shows; the send payload is in
+    // `caption` as JSON.
+    return {
+      type: "template",
+      content: row.content,
+      template: JSON.parse(row.caption ?? "{}"),
     };
   }
   return { type: "text", content: row.content };

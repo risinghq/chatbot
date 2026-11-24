@@ -143,6 +143,9 @@ async function callAdapter(
   if (message.type === "image") {
     return adapter.sendImage(account, to, message.content, message.caption);
   }
+  if (message.type === "template") {
+    return adapter.sendTemplate(account, to, message.template);
+  }
   return adapter.sendMessage(account, to, message.content);
 }
 

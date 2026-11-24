@@ -13,6 +13,30 @@ import { db } from "../../db/index.ts";
  * contact number writing to two businesses keeps two separate threads.
  */
 export const MessageStore = {
+  logStatement(
+    id: string,
+    ref: ConversationRef,
+    direction: MessageDirection,
+    type: StoredMessageType,
+    content: string,
+    status: string = "sent",
+    whatsappMessageId?: string,
+    productId?: string,
+  ) {
+    return db.insertInto("messages").values({
+      id,
+      tenant_id: ref.tenantId,
+      channel_account_id: ref.channelAccountId,
+      phone_number: ref.phoneNumber,
+      direction,
+      type,
+      content,
+      status,
+      whatsapp_message_id: whatsappMessageId ?? null,
+      product_id: productId ?? null,
+    });
+  },
+
   async log(
     ref: ConversationRef,
     direction: MessageDirection,
@@ -23,21 +47,16 @@ export const MessageStore = {
     productId?: string,
   ): Promise<string> {
     const id = newId();
-    await db
-      .insertInto("messages")
-      .values({
-        id,
-        tenant_id: ref.tenantId,
-        channel_account_id: ref.channelAccountId,
-        phone_number: ref.phoneNumber,
-        direction,
-        type,
-        content,
-        status,
-        whatsapp_message_id: whatsappMessageId ?? null,
-        product_id: productId ?? null,
-      })
-      .execute();
+    await this.logStatement(
+      id,
+      ref,
+      direction,
+      type,
+      content,
+      status,
+      whatsappMessageId,
+      productId,
+    ).execute();
 
     // The outbox row keeps this id, so a retry moves this row rather than
     // writing a second one for the same reply.

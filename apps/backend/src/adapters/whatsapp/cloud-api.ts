@@ -173,6 +173,60 @@ async function post(
   }
 }
 
+/**
+ * Registers a template with Meta on the account's WABA. Meta answers the new
+ * template's id and its first review status; approval arrives later on the
+ * `message_template_status_update` webhook. Returns the refusal reason as a
+ * `permanent`-style string when the account cannot reach Meta, or throws the
+ * classified outcome's reason on a failed call.
+ */
+export async function createMessageTemplate(
+  account: ChannelAccount,
+  spec: { name: string; language: string; category: string; body: string },
+): Promise<{ id: string | null; status: string } | { error: string }> {
+  if (!account.waba_id) return { error: "no_waba_id" };
+  const token = await ChannelAccountService.getAccessToken(account);
+  if (!token) return { error: "no_token" };
+
+  const { signal, cleanup } = createAbortTimeout(TIMEOUTS.WHATSAPP_SEND);
+  try {
+    const response = await fetch(
+      graphUrl(`${account.waba_id}/message_templates`),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: spec.name,
+          category: spec.category.toUpperCase(),
+          language: spec.language,
+          components: [{ type: "BODY", text: spec.body }],
+        }),
+        signal,
+      },
+    );
+    const body = await response.text().catch(() => "");
+    if (!response.ok) {
+      return { error: classifyHttpFailure(response.status, body).reason };
+    }
+    try {
+      const parsed = JSON.parse(body) as { id?: unknown; status?: unknown };
+      return {
+        id: typeof parsed.id === "string" ? parsed.id : null,
+        status: typeof parsed.status === "string" ? parsed.status : "PENDING",
+      };
+    } catch {
+      return { error: "bad_response" };
+    }
+  } catch (error) {
+    return { error: classifyThrown(error).reason };
+  } finally {
+    cleanup();
+  }
+}
+
 export const CloudApiAdapter: WhatsAppAdapter = {
   sendMessage(
     account: ChannelAccount,
@@ -208,6 +262,35 @@ export const CloudApiAdapter: WhatsAppAdapter = {
         image: { link, ...(caption && { caption }) },
       },
       TIMEOUTS.WHATSAPP_IMAGE,
+    );
+  },
+
+  sendTemplate(
+    account: ChannelAccount,
+    to: string,
+    template: { name: string; language: string; parameters: string[] },
+  ): Promise<SendOutcome> {
+    return post(
+      account,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "template",
+        template: {
+          name: template.name,
+          language: { code: template.language },
+          components: [
+            {
+              type: "body",
+              parameters: template.parameters.map((text) => ({
+                type: "text",
+                text,
+              })),
+            },
+          ],
+        },
+      },
+      TIMEOUTS.WHATSAPP_SEND,
     );
   },
 

@@ -28,8 +28,18 @@ export type SendOutcome =
 export type SendResult = SendOutcome & { queued?: true };
 
 /**
+ * A WhatsApp template send, as the Cloud API takes it. `parameters` are the
+ * resolved `{{n}}` values of the body, in order.
+ */
+export type TemplatePayload = {
+  name: string;
+  language: string;
+  parameters: string[];
+};
+
+/**
  * One outbound message, with everything needed to send it again. `content` is
- * the text, or the image path.
+ * the text, the image path, or the template's rendered body for display.
  */
 export type OutboundMessage =
   | { type: "text"; content: string }
@@ -38,7 +48,8 @@ export type OutboundMessage =
       content: string;
       caption?: string;
       productId?: string;
-    };
+    }
+  | { type: "template"; content: string; template: TemplatePayload };
 
 /**
  * Every send takes the channel account it goes out on. Credentials and the
@@ -55,6 +66,11 @@ export interface WhatsAppAdapter {
     to: string,
     imagePath: string,
     caption?: string,
+  ): Promise<SendOutcome>;
+  sendTemplate(
+    account: ChannelAccount,
+    to: string,
+    template: TemplatePayload,
   ): Promise<SendOutcome>;
   markAsRead(
     account: ChannelAccount,

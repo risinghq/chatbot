@@ -293,3 +293,4 @@ export type {
 } from "./whatsapp.ts";
 
 export * from "./events.ts";
+export * from "./campaigns.ts";
