@@ -116,4 +116,26 @@ export const templates = {
       // Removed link as requested
     ].join("\n");
   },
+
+  // Push bodies: short, plain text, no WhatsApp marks and no link — the
+  // notification itself carries the URL it opens.
+  pushAssignment(clientName: string): string {
+    return `${clientName} espera atención.`;
+  },
+
+  pushNewOrder(
+    clientName: string,
+    orderNumber: string,
+    amountCents: number,
+  ): string {
+    return `${clientName} generó orden ${orderNumber} por S/ ${(amountCents / 100).toFixed(2)}.`;
+  },
+
+  pushEscalation(clientName: string): string {
+    return `${clientName} requiere atención.`;
+  },
+
+  pushCustomerMessage(clientName: string): string {
+    return `${clientName} escribió en la conversación que atiendes.`;
+  },
 };

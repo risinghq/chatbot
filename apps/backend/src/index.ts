@@ -23,6 +23,7 @@ import orders from "./routes/orders.ts";
 import pay from "./routes/pay.ts";
 import platform from "./routes/platform.ts";
 import providerRoutes from "./routes/providers.ts";
+import push from "./routes/push.ts";
 import reports from "./routes/reports.ts";
 import simulator from "./routes/simulator.ts";
 import stock from "./routes/stock.ts";
@@ -86,6 +87,7 @@ app.route("/api/admin", admin);
 
 app.route("/api/reports", reports);
 app.route("/api/providers", providerRoutes);
+app.route("/api/push", push);
 app.route("/api/platform", platform);
 
 app.onError(errorHandler);

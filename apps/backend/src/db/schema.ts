@@ -368,6 +368,16 @@ export interface ProductsTable {
   status: Generated<"draft" | "active" | "archived">;
 }
 
+export interface PushSubscriptionsTable {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  created_at: Generated<number>;
+}
+
 export interface SessionTable {
   id: string;
   user_id: string;
@@ -531,6 +541,7 @@ export interface Database {
   product_images: ProductImagesTable;
   product_variants: ProductVariantsTable;
   products: ProductsTable;
+  push_subscriptions: PushSubscriptionsTable;
   session: SessionTable;
   shipments: ShipmentsTable;
   stock_levels: StockLevelsTable;
@@ -576,6 +587,7 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "product_images",
   "product_variants",
   "products",
+  "push_subscriptions",
   "shipments",
   "stock_levels",
   "stock_locations",

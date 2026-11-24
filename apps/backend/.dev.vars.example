@@ -9,6 +9,11 @@ PUBLIC_URL=http://localhost:5173
 LOG_LEVEL=debug
 # Point the Graph API at a fake server to run without Meta, as the tests do.
 GRAPH_API_BASE_URL=https://graph.facebook.com
+# Web Push (VAPID). Generate a pair with `bun scripts/generate-vapid-keys.ts`
+# from apps/backend. Empty values turn push off.
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:ops@example.com
 
 # Secrets.
 # Encrypts every stored credential in D1: 32 bytes as hex, base64 or base64url.

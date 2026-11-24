@@ -3,30 +3,58 @@ import { createLogger } from "../../lib/logger.ts";
 import { WhatsAppService } from "../../adapters/whatsapp/index.ts";
 import { ChannelAccountService } from "../channels/accounts.ts";
 import { NotificationResolver } from "./resolver.ts";
+import { sendEventPush } from "./push.ts";
 import type { NotificationDecision } from "./evaluator.ts";
 import type { ChannelAccount, DomainEvent } from "@vendeya/types";
 import { db, withoutTenantScope } from "../../db/index.ts";
 
 const logger = createLogger("notification-dispatcher");
 
+/**
+ * What a send attempt did. "no_recipient" is not a failure: nobody opted in,
+ * so there was nothing to deliver.
+ */
+type SendOutcome = "sent" | "no_recipient" | "failed";
+
 interface NotificationChannelAdapter {
-  /** Whether the message actually went out. */
+  /**
+   * Whether the rule's target goes through NotificationResolver, which answers
+   * a phone number. Push resolves its own users, so its target passes through.
+   */
+  resolvesTarget: boolean;
+  /** Whether the send needs a channel account. Push needs none. */
+  needsAccount: boolean;
+  /** What the send attempt did. */
   send(
-    account: ChannelAccount,
+    account: ChannelAccount | null,
     target: string,
     content: string,
-  ): Promise<boolean>;
+    event: DomainEvent,
+  ): Promise<SendOutcome>;
 }
 
 const whatsAppAdapter: NotificationChannelAdapter = {
-  async send(account: ChannelAccount, target: string, content: string) {
-    if (!target) return false;
-    return WhatsAppService.sendDirect(account, target, content);
+  resolvesTarget: true,
+  needsAccount: true,
+  async send(account: ChannelAccount | null, target: string, content: string) {
+    if (!account || !target) return "no_recipient";
+    return (await WhatsAppService.sendDirect(account, target, content))
+      ? "sent"
+      : "failed";
+  },
+};
+
+const pushAdapter: NotificationChannelAdapter = {
+  resolvesTarget: false,
+  needsAccount: false,
+  async send(_account, target, content, event) {
+    return sendEventPush(target, content, event);
   },
 };
 
 const adapters: Record<string, NotificationChannelAdapter> = {
   whatsapp: whatsAppAdapter,
+  push: pushAdapter,
 };
 
 /**
@@ -88,10 +116,19 @@ export async function dispatchNotifications(
 
     if (decision.status === "sent") {
       try {
-        const resolvedTarget = await NotificationResolver.resolve(
-          decision.target,
-          event,
-        );
+        const adapter = adapters[decision.channel];
+        if (!adapter) {
+          logger.warn(
+            { channel: decision.channel },
+            "Channel not implemented yet",
+          );
+          await markTrace(traceId, ruleId, "failed", "channel_not_implemented");
+          continue;
+        }
+
+        const resolvedTarget = adapter.resolvesTarget
+          ? await NotificationResolver.resolve(decision.target, event)
+          : decision.target;
 
         if (!resolvedTarget) {
           logger.error(
@@ -99,64 +136,73 @@ export async function dispatchNotifications(
             "Resolution failed: Unknown recipient target",
           );
 
-          await markFailed(traceId, ruleId, "recipient_resolution_failed");
-          continue;
-        }
-
-        const account = await accountForEvent(event);
-        if (!account) {
-          logger.error(
-            { ruleId, tenantId: event.tenantId, eventType: event.type },
-            event.tenantId
-              ? "No channel account available to send notification from"
-              : "Platform-wide alert has nowhere to go: set platform_ops_channel_account_id or PLATFORM_OPS_PHONE_NUMBER_ID",
+          await markTrace(
+            traceId,
+            ruleId,
+            "failed",
+            "recipient_resolution_failed",
           );
-
-          await markFailed(traceId, ruleId, "no_channel_account");
           continue;
         }
 
-        const adapter = adapters[decision.channel];
-        if (!adapter) {
-          logger.warn(
-            { channel: decision.channel },
-            "Channel not implemented yet",
-          );
-          await markFailed(traceId, ruleId, "channel_not_implemented");
-          continue;
+        let account: ChannelAccount | null = null;
+        if (adapter.needsAccount) {
+          account = await accountForEvent(event);
+          if (!account) {
+            logger.error(
+              { ruleId, tenantId: event.tenantId, eventType: event.type },
+              event.tenantId
+                ? "No channel account available to send notification from"
+                : "Platform-wide alert has nowhere to go: set platform_ops_channel_account_id or PLATFORM_OPS_PHONE_NUMBER_ID",
+            );
+
+            await markTrace(traceId, ruleId, "failed", "no_channel_account");
+            continue;
+          }
         }
 
-        // The Cloud adapter answers false, without throwing, when the account
-        // is not active. A false answer must mark the trace failed.
-        const sent = await adapter.send(
+        // The Cloud adapter reports a failed send without throwing. A real
+        // failure must mark the trace failed; nobody subscribed is a skip.
+        const outcome = await adapter.send(
           account,
           resolvedTarget,
           decision.content,
+          event,
         );
 
-        if (!sent) {
-          logger.error(
-            {
-              ruleId,
-              traceId,
-              channelAccountId: account.id,
-              channelAccountStatus: account.status,
-            },
-            "Notification was not delivered",
-          );
-
-          await markFailed(traceId, ruleId, "send_failed");
+        if (outcome === "sent") {
+          delivered = true;
           continue;
         }
 
-        delivered = true;
+        if (outcome === "no_recipient") {
+          await markTrace(traceId, ruleId, "skipped", "no_recipient");
+          continue;
+        }
+
+        logger.error(
+          {
+            ruleId,
+            traceId,
+            channelAccountId: account?.id,
+            channelAccountStatus: account?.status,
+          },
+          "Notification was not delivered",
+        );
+
+        await markTrace(traceId, ruleId, "failed", "send_failed");
       } catch (error: any) {
         logger.error(
           { error, traceId, ruleId },
           "Failed to dispatch notification",
         );
 
-        await markFailed(traceId, ruleId, error?.message ?? "unknown_error");
+        await markTrace(
+          traceId,
+          ruleId,
+          "failed",
+          error?.message ?? "unknown_error",
+        );
       }
     }
   }
@@ -164,15 +210,16 @@ export async function dispatchNotifications(
   return delivered;
 }
 
-async function markFailed(
+async function markTrace(
   traceId: string,
   ruleId: string,
+  status: "skipped" | "failed",
   reason: string,
 ): Promise<void> {
   try {
     await withoutTenantScope("a trace is keyed by trace_id and rule_id")
       .updateTable("notification_traces")
-      .set({ status: "failed", reason })
+      .set({ status, reason })
       .where("trace_id", "=", traceId)
       .where("rule_id", "=", ruleId)
       .execute();

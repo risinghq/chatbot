@@ -4,7 +4,7 @@ import { templates } from "./templates.ts";
 export type NotificationRule = {
   id: string;
   triggerEvent: DomainEvent["type"];
-  channel: "whatsapp";
+  channel: "whatsapp" | "push";
   target: string | ((event: DomainEvent) => string | undefined);
   condition: (event: DomainEvent) => boolean;
   template: (event: DomainEvent) => string;
@@ -149,6 +149,61 @@ export const notificationRules: NotificationRule[] = [
         { phoneNumber: "N/A", dni: event.payload.dni },
         event.payload.failedProvider,
         event.payload.workingProvider,
+      );
+    },
+  },
+  // Push mirrors the business events above with short bodies and no WhatsApp
+  // markup: the notification shows the text and opens the page it is about.
+  {
+    id: "agent_assignment_push",
+    triggerEvent: "agent_assigned",
+    channel: "push",
+    target: (event) =>
+      event.type === "agent_assigned" ? event.payload.agentId : undefined,
+    condition: (event) => event.type === "agent_assigned",
+    template: (event) => {
+      if (event.type !== "agent_assigned") return "";
+      return templates.pushAssignment(
+        event.payload.clientName || event.payload.phoneNumber,
+      );
+    },
+  },
+  {
+    id: "new_order_push",
+    triggerEvent: "order_created",
+    channel: "push",
+    target: "agent",
+    condition: (event) => event.type === "order_created",
+    template: (event) => {
+      if (event.type !== "order_created") return "";
+      return templates.pushNewOrder(
+        event.payload.clientName || "Cliente",
+        event.payload.orderNumber,
+        event.payload.amountCents,
+      );
+    },
+  },
+  {
+    id: "escalation_push",
+    triggerEvent: "escalation_triggered",
+    channel: "push",
+    target: "agent",
+    condition: (event) => event.type === "escalation_triggered",
+    template: (event) => {
+      if (event.type !== "escalation_triggered") return "";
+      return templates.pushEscalation(event.payload.phoneNumber);
+    },
+  },
+  {
+    id: "customer_message_push",
+    triggerEvent: "customer_message_received",
+    channel: "push",
+    target: "assigned_agent",
+    condition: (event) => event.type === "customer_message_received",
+    template: (event) => {
+      if (event.type !== "customer_message_received") return "";
+      return templates.pushCustomerMessage(
+        event.payload.clientName || event.payload.phoneNumber,
       );
     },
   },
