@@ -11,9 +11,12 @@ import EmptyState from "#lib/components/ui/empty-state.svelte";
 import FormField from "#lib/components/ui/form-field.svelte";
 import Input from "#lib/components/ui/input.svelte";
 import SectionShell from "#lib/components/ui/section-shell.svelte";
+import Select from "#lib/components/ui/select.svelte";
+import InstagramCommentReplies from "#lib/components/admin/instagram-comment-replies.svelte";
 
 type ChannelAccount = {
   id: string;
+  channel_type: "whatsapp" | "instagram" | "simulator";
   phone_number_id: string;
   display_phone_number: string | null;
   label: string | null;
@@ -34,6 +37,7 @@ let appSecrets = $state<Record<string, string>>({});
 let verifyTokens = $state<Record<string, string>>({});
 
 const emptyDraft = {
+  channelType: "whatsapp",
   phoneNumberId: "",
   displayPhoneNumber: "",
   label: "",
@@ -44,6 +48,22 @@ const emptyDraft = {
 let draft = $state({ ...emptyDraft });
 let adding = $state(false);
 let creating = $state(false);
+
+const channelItems = [
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "instagram", label: "Instagram" },
+];
+
+const channelLabels: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  simulator: "Simulador",
+};
+
+const isInstagramDraft = $derived(draft.channelType === "instagram");
+const hasInstagram = $derived(
+  accounts.some((account) => account.channel_type === "instagram"),
+);
 
 const statusLabels: Record<string, string> = {
   active: "Activo",
@@ -73,7 +93,11 @@ async function load() {
 
 async function create() {
   if (!draft.phoneNumberId.trim()) {
-    toast.error("El phone number id es obligatorio");
+    toast.error(
+      isInstagramDraft
+        ? "El id de la cuenta de Instagram es obligatorio"
+        : "El phone number id es obligatorio",
+    );
     return;
   }
   // Empty optional fields go as absent, which the API reads as unset.
@@ -82,6 +106,8 @@ async function create() {
       .map(([key, value]) => [key, value.trim()])
       .filter(([, value]) => value !== ""),
   );
+  // An Instagram account has no WhatsApp Business Account.
+  if (isInstagramDraft) delete body.wabaId;
   creating = true;
   try {
     await fetchApi("/api/admin/channels", {
@@ -91,13 +117,13 @@ async function create() {
     });
     draft = { ...emptyDraft };
     adding = false;
-    toast.success("Número agregado");
+    toast.success("Canal agregado");
     await load();
   } catch (e) {
     toast.error(
       e instanceof ApiError && e.status === 409
-        ? "Ese phone number id ya está registrado"
-        : "Error al agregar el número",
+        ? "Ese id ya está registrado"
+        : "Error al agregar el canal",
     );
   } finally {
     creating = false;
@@ -153,10 +179,10 @@ onMount(() => {
 
 <div class="flex flex-col gap-6">
 	<SectionShell
-		title="Números de WhatsApp"
+		title="Canales"
 		description={auth.isPlatformOperator
 			? "El token de acceso y el app secret de Meta se guardan cifrados. Copia la URL del webhook y el token de verificación en la configuración del webhook de tu app de Meta."
-			: "Los números por los que tus clientes te escriben. El asistente responde en ellos."}
+			: "Los números de WhatsApp y las cuentas de Instagram por los que tus clientes te escriben. El asistente responde en ellos."}
 		action={auth.isPlatformOperator && accounts.length > 0 && !adding ? addAction : undefined}
 	>
 		{#if loading}
@@ -166,14 +192,14 @@ onMount(() => {
 			</div>
 		{:else if accounts.length === 0 && !adding}
 			<EmptyState
-				title="Sin números conectados"
+				title="Sin canales conectados"
 				description={auth.isPlatformOperator
-					? "Agrega el número de WhatsApp Business del negocio con su phone number id de Meta."
-					: `El equipo de VendeYa conecta el número de WhatsApp Business de tu negocio. Escríbenos al ${SUPPORT.phoneDisplay} o a ${SUPPORT.email}. Mientras tanto, conversa con el asistente como si fueras un cliente.`}
+					? "Agrega el número de WhatsApp Business del negocio con su phone number id de Meta, o su cuenta profesional de Instagram."
+					: `El equipo de VendeYa conecta el WhatsApp Business o el Instagram de tu negocio. Escríbenos al ${SUPPORT.phoneDisplay} o a ${SUPPORT.email}. Mientras tanto, conversa con el asistente como si fueras un cliente.`}
 			>
 				{#snippet action()}
 					{#if auth.isPlatformOperator}
-						<Button onclick={() => (adding = true)}>Agregar número</Button>
+						<Button onclick={() => (adding = true)}>Agregar canal</Button>
 					{:else}
 						<div class="flex flex-wrap justify-center gap-2">
 							<Button href={SUPPORT.whatsappUrl} external>Escribir por WhatsApp</Button>
@@ -194,10 +220,14 @@ onMount(() => {
 	{#if adding}
 		{@render createForm()}
 	{/if}
+
+	{#if hasInstagram}
+		<InstagramCommentReplies />
+	{/if}
 </div>
 
 {#snippet addAction()}
-	<Button size="sm" variant="secondary" onclick={() => (adding = true)}>Agregar número</Button>
+	<Button size="sm" variant="secondary" onclick={() => (adding = true)}>Agregar canal</Button>
 {/snippet}
 
 {#snippet accountRow(account: ChannelAccount)}
@@ -211,9 +241,12 @@ onMount(() => {
 					{#if account.display_phone_number}{account.display_phone_number} · {/if}{account.phone_number_id}
 				</p>
 			</div>
-			<Badge variant={statusVariants[account.status] ?? "default"}>
-				{statusLabels[account.status] ?? account.status}
-			</Badge>
+			<div class="flex shrink-0 gap-1.5">
+				<Badge>{channelLabels[account.channel_type] ?? account.channel_type}</Badge>
+				<Badge variant={statusVariants[account.status] ?? "default"}>
+					{statusLabels[account.status] ?? account.status}
+				</Badge>
+			</div>
 		</div>
 
 		<dl class="grid gap-3 md:grid-cols-2">
@@ -283,22 +316,33 @@ onMount(() => {
 		}}
 	>
 		<SectionShell
-			title="Agregar número"
-			description="Los datos están en Meta, en WhatsApp › Configuración de la API de tu app. El número queda pendiente hasta que tenga token de acceso."
+			title="Agregar canal"
+			description={isInstagramDraft
+				? "El id de la cuenta profesional de Instagram está en Meta, en Instagram › Configuración de la API de tu app. Suscribe el webhook a messages y comments. La cuenta queda pendiente hasta que tenga token de acceso."
+				: "Los datos están en Meta, en WhatsApp › Configuración de la API de tu app. El número queda pendiente hasta que tenga token de acceso."}
 		>
 			<div class="grid gap-x-4 p-4 md:grid-cols-2">
-				<FormField label="Phone number id" for="new-pnid">
+				<FormField label="Canal" for="new-channel" class="md:col-span-2">
+					<Select id="new-channel" items={channelItems} bind:value={draft.channelType} />
+				</FormField>
+				<FormField label={isInstagramDraft ? "Id de la cuenta de Instagram" : "Phone number id"} for="new-pnid">
 					<Input id="new-pnid" bind:value={draft.phoneNumberId} placeholder="123456789012345" class="font-mono" />
 				</FormField>
-				<FormField label="Número visible" for="new-display">
-					<Input id="new-display" bind:value={draft.displayPhoneNumber} placeholder="+51 987 654 321" />
+				<FormField label={isInstagramDraft ? "Usuario visible" : "Número visible"} for="new-display">
+					<Input
+						id="new-display"
+						bind:value={draft.displayPhoneNumber}
+						placeholder={isInstagramDraft ? "@mitienda" : "+51 987 654 321"}
+					/>
 				</FormField>
 				<FormField label="Nombre interno" for="new-label">
 					<Input id="new-label" bind:value={draft.label} placeholder="Ventas Lima" />
 				</FormField>
-				<FormField label="WhatsApp Business Account id" for="new-waba">
-					<Input id="new-waba" bind:value={draft.wabaId} placeholder="Opcional" class="font-mono" />
-				</FormField>
+				{#if !isInstagramDraft}
+					<FormField label="WhatsApp Business Account id" for="new-waba">
+						<Input id="new-waba" bind:value={draft.wabaId} placeholder="Opcional" class="font-mono" />
+					</FormField>
+				{/if}
 				<FormField label="Token de acceso" for="new-at">
 					<Input id="new-at" type="password" bind:value={draft.accessToken} autocomplete="off" />
 				</FormField>
@@ -309,7 +353,7 @@ onMount(() => {
 			<footer class="flex justify-end gap-2 border-t border-border-subtle px-4 py-3">
 				<Button variant="ghost" onclick={() => (adding = false)}>Cancelar</Button>
 				<Button type="submit" disabled={creating || !draft.phoneNumberId.trim()}>
-					{creating ? "Agregando…" : "Agregar número"}
+					{creating ? "Agregando…" : "Agregar canal"}
 				</Button>
 			</footer>
 		</SectionShell>
