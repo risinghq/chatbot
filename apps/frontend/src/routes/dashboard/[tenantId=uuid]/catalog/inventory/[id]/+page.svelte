@@ -39,7 +39,6 @@ let formData = $state({
   brand: "",
   model: "",
   status: "active" as ProductStatus,
-  specs: "{}",
 });
 
 let errors = $state<ValidationErrors>({});
@@ -54,7 +53,6 @@ $effect(() => {
       brand: product.brand || "",
       model: product.model || "",
       status: product.status,
-      specs: product.specs_json || "{}",
     };
   }
 });
@@ -67,12 +65,6 @@ function validate(): boolean {
 
   const categoryError = validateRequired(formData.category, "La categoría");
   if (categoryError) newErrors.category = categoryError;
-
-  try {
-    JSON.parse(formData.specs);
-  } catch {
-    newErrors.specs = "JSON inválido";
-  }
 
   errors = newErrors;
   return !hasErrors(newErrors);
@@ -97,7 +89,6 @@ async function handleSave() {
       brand: formData.brand.trim() || null,
       model: formData.model.trim() || null,
       status: formData.status,
-      specs_json: formData.specs,
     };
 
     if (!product) {
@@ -170,16 +161,6 @@ async function handleSave() {
                         <Input id="model" bind:value={formData.model} />
                     </FormField>
                 </div>
-
-                <FormField label="Especificaciones (JSON)" for="specs" error={errors.specs}>
-                    <Textarea
-                        id="specs"
-                        bind:value={formData.specs}
-                        placeholder='&#123;"material": "algodón"&#125;'
-                        class="font-mono text-sm"
-                    />
-                    <p class="mt-1.5 text-sm text-fg-muted">Datos técnicos que el asistente puede citar. Debe ser JSON válido.</p>
-                </FormField>
             </fieldset>
 
             {#if canEdit}

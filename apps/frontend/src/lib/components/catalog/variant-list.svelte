@@ -58,7 +58,8 @@ function formProblems(
   cost: number | null,
 ): Record<string, string> {
   const problems: Record<string, string> = {};
-  if (!form.sku.trim()) problems.sku = "El SKU es obligatorio";
+  if (editing && !form.sku.trim())
+    problems.sku = "El SKU no puede quedar vacío";
   if (price === null) problems.price = "Escribe un monto, por ejemplo 49.90";
   if (form.cost.trim() !== "" && cost === null)
     problems.cost = "Escribe un monto, por ejemplo 21.00";
@@ -73,7 +74,7 @@ async function save() {
 
   const body = JSON.stringify({
     name: form.name.trim() || null,
-    sku: form.sku.trim(),
+    sku: form.sku.trim() || undefined,
     price_cents: price,
     cost_cents: cost,
     is_active: form.active,
@@ -160,8 +161,11 @@ const columns = [
       La opción que elige el cliente. Déjalo vacío si el producto tiene una sola forma.
     </p>
   </FormField>
-  <FormField label="SKU*" for="variant-sku" error={errors.sku}>
+  <FormField label={editing ? "SKU*" : "SKU"} for="variant-sku" error={errors.sku}>
     <Input id="variant-sku" bind:value={form.sku} placeholder="Ej. POLO-ROJO-M" class="font-mono" />
+    {#if !editing}
+      <p class="mt-1.5 text-sm text-fg-muted">Tu código interno. Si no usas códigos, déjalo vacío y se crea uno.</p>
+    {/if}
   </FormField>
   <div class="grid grid-cols-2 gap-x-4">
     <FormField label="Precio*" for="variant-price" error={errors.price}>
