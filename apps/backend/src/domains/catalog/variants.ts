@@ -23,7 +23,8 @@ const NON_NEGATIVE_INTEGER = (value: unknown): value is number =>
 
 /**
  * The fields of a create (`partial` false) or an update (`partial` true), or
- * the reason the body is refused. A SKU is trimmed and cannot be empty.
+ * the reason the body is refused. A SKU is trimmed. A create may leave it out
+ * or empty, and `VariantService.create` makes one; an update cannot empty it.
  */
 export function parseVariantFields(
   body: Record<string, unknown>,
@@ -31,11 +32,11 @@ export function parseVariantFields(
 ): Partial<VariantFields> | string {
   const fields: Partial<VariantFields> = {};
 
-  if (body.sku !== undefined || !partial) {
-    if (typeof body.sku !== "string" || body.sku.trim() === "") {
-      return "sku must be a non-empty string";
-    }
-    fields.sku = body.sku.trim();
+  if (body.sku !== undefined && body.sku !== null) {
+    if (typeof body.sku !== "string") return "sku must be a string";
+    const sku = body.sku.trim();
+    if (sku === "" && partial) return "sku must be a non-empty string";
+    if (sku !== "") fields.sku = sku;
   }
   if (body.price_cents !== undefined || !partial) {
     if (!NON_NEGATIVE_INTEGER(body.price_cents)) {
@@ -99,17 +100,28 @@ export const VariantService = {
       .where("tenant_id", "=", tenantId)
       .executeTakeFirst()) ?? null,
 
-  /** Throws `DuplicateSkuError` when the SKU is taken. */
+  /**
+   * Without a SKU the variant gets the random tail of its id, so an owner who
+   * keeps no codes never has to invent one. Throws `DuplicateSkuError` when
+   * the SKU is taken.
+   */
   create: async (
     tenantId: string,
     productId: string,
-    fields: VariantFields,
+    fields: Omit<VariantFields, "sku"> & { sku?: string },
   ): Promise<ProductVariant> => {
     const id = newId();
-    await withSkuCheck(fields.sku, () =>
+    const sku = fields.sku ?? id.slice(-8).toUpperCase();
+    await withSkuCheck(sku, () =>
       db
         .insertInto("product_variants")
-        .values({ id, tenant_id: tenantId, product_id: productId, ...fields })
+        .values({
+          id,
+          tenant_id: tenantId,
+          product_id: productId,
+          ...fields,
+          sku,
+        })
         .execute(),
     );
     return (await VariantService.getById(tenantId, id))!;

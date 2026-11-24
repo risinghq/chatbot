@@ -257,6 +257,37 @@ describe("the stock ledger", () => {
     expect(response.status).toBe(409);
   });
 
+  it("makes a SKU for a variant created without one", async () => {
+    const product = await json<Product>(
+      await call("POST", "/api/catalog/products", {
+        name: "Pan francés",
+        category: "panadería",
+      }),
+      200,
+    );
+    const path = `/api/catalog/products/${product.id}/variants`;
+    const made = [
+      await json<ProductVariant>(
+        await call("POST", path, { price_cents: 50 }),
+        201,
+      ),
+      await json<ProductVariant>(
+        await call("POST", path, { sku: "  ", price_cents: 60 }),
+        201,
+      ),
+    ];
+    for (const v of made) {
+      expect(v.sku).toBe(v.id.slice(-8).toUpperCase());
+    }
+    expect(
+      (
+        await call("PATCH", `/api/catalog/variants/${made[0]!.id}`, {
+          sku: "",
+        })
+      ).status,
+    ).toBe(400);
+  });
+
   it("updates a variant's price and SKU", async () => {
     const updated = await json<ProductVariant>(
       await call("PATCH", `/api/catalog/variants/${variant.id}`, {
