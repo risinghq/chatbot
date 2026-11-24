@@ -8,6 +8,7 @@ import Button from "#lib/components/ui/button.svelte";
 import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { PASSWORD_TOO_SHORT_MESSAGE } from "#lib/utils/password.js";
 import PageTitle from "#lib/components/shared/page-title.svelte";
+import { SUPPORT } from "#lib/utils/support.js";
 
 let businessName = $state("");
 let name = $state("");
@@ -85,6 +86,10 @@ async function handleSubmit(e: Event) {
 
 		<p class="mt-6 text-sm text-fg-muted">
 			¿Ya tienes cuenta? <a href="/login" class="text-fg underline underline-offset-2">Inicia sesión</a>
+		</p>
+		<p class="mt-2 text-sm text-fg-muted">
+			¿Dudas? Escríbenos por <a href={SUPPORT.whatsappUrl} target="_blank" rel="noopener noreferrer" class="text-fg underline underline-offset-2">WhatsApp al {SUPPORT.phoneDisplay}</a>
+			o a <a href="mailto:{SUPPORT.email}" class="text-fg underline underline-offset-2">{SUPPORT.email}</a>.
 		</p>
 	</div>
 </div>

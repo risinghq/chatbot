@@ -19,6 +19,7 @@ import { page } from "$app/state";
 import Icon from "#lib/components/ui/icon.svelte";
 import { auth } from "#lib/state/auth.svelte.js";
 import { roleLabel } from "#lib/utils/roles.js";
+import { SUPPORT } from "#lib/utils/support.js";
 
 let {
   home,
@@ -89,6 +90,16 @@ const visible = $derived(sections.filter((s) => s.items.length > 0));
 				{auth.isAvailable ? "Disponible" : "No disponible"}
 			</button>
 		{/if}
+		<a
+			href={SUPPORT.whatsappUrl}
+			target="_blank"
+			rel="noopener noreferrer"
+			title="WhatsApp {SUPPORT.phoneDisplay} · {SUPPORT.email}"
+			class="flex h-8 items-center gap-2.5 rounded-sm px-2 text-base text-fg-muted transition-colors hover:bg-hover hover:text-fg pointer-coarse:h-11"
+		>
+			<Icon name="help" />
+			Ayuda
+		</a>
 		<div class="flex items-center gap-2 px-2">
 			<svelte:element
 				this={account ? "a" : "div"}
