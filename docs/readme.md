@@ -12,16 +12,18 @@ repeating it.
    dashboard page. [Dashboard design](./design.md) holds its visual rules.
 4. [Tenancy](./tenancy.md): manage tenant scope, roles, channel accounts, and
    encrypted credentials.
-5. [Eligibility](./eligibility.md): understand the optional Cálidda credit
+5. [Campaigns](./campaigns.md): send template messages to groups of customers
+   and keep the cart and inactive-customer reminders.
+6. [Eligibility](./eligibility.md): understand the optional Cálidda credit
    check, its providers and their outages.
-6. [Connecting WhatsApp](./whatsapp.md): register a number and configure Meta's
+7. [Connecting WhatsApp](./whatsapp.md): register a number and configure Meta's
    callback.
-7. [Deploy](./deploy.md): create the Cloudflare resources, set the secrets,
+8. [Deploy](./deploy.md): create the Cloudflare resources, set the secrets,
    deploy the Workers, and restore the database.
-8. [Operations](./operations.md): inspect health and logs, manage accounts, and
+9. [Operations](./operations.md): inspect health and logs, manage accounts, and
    investigate missing replies.
-9. [Development](./development.md): run checks, find CI jobs, and follow code
-   conventions.
+10. [Development](./development.md): run checks, find CI jobs, and follow code
+    conventions.
 
 Contributors should also read the [architecture map](./architecture.md) before
 changing code.
