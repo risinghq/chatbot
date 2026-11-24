@@ -182,34 +182,47 @@ export type User = {
   created_by: string | null;
 };
 
-export type AuditLog = {
+/**
+ * The thing a history entry acted on, named as people know it: an order by its
+ * number, a customer or product by its name. `label` is null when the row is
+ * gone and the entry did not record a name. A variant or stock movement is
+ * reported as its product, so the entry links to a page that exists.
+ */
+export type HistorySubject = {
+  type: string;
   id: string;
-  tenant_id: string | null;
-  /** Null for an action no user took, such as one from the account command. */
-  user_id: string | null;
-  /** `user:<user id>` or `cli:<operating-system user>`. */
-  actor: string;
-  action: string;
-  resource_type: string;
-  resource_id: string | null;
-  metadata: string;
-  created_at: number;
+  label: string | null;
 };
 
-export type SystemLogSource = "llm" | "audit";
-export type SystemLogStatus = "success" | "error" | "info";
+/** Who took a history entry's action: a person, or a terminal command. */
+export type HistoryActor =
+  | { kind: "user"; userId: string; name: string | null }
+  | { kind: "terminal"; name: string };
 
-/** One row of the activity timeline, from an LLM call or an audit entry. */
-export type SystemLogEntry = {
+/** One audit row, as the Historial pages read it. */
+export type HistoryEntry = {
   id: string;
-  timestamp: string;
-  source: SystemLogSource;
-  event: string;
-  status: SystemLogStatus;
-  actor: string;
-  summary: string;
-  metadata?: any;
-  original_data: any;
+  at: number;
+  actor: HistoryActor;
+  action: string;
+  subject: HistorySubject | null;
+  /** The row's recorded metadata. Secrets are recorded as `<stored>`. */
+  details: Record<string, unknown>;
+};
+
+/** One call the assistant made to the model, for the Asistente's Registro. */
+export type AssistantCall = {
+  id: string;
+  created_at: number;
+  operation: string;
+  model: string;
+  phone_number: string;
+  status: "success" | "error";
+  latency_ms: number | null;
+  tokens_total: number | null;
+  prompt: string;
+  response: string | null;
+  error_message: string | null;
 };
 
 export type ProviderCheckResult = {

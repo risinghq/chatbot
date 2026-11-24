@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { jsonObject } from "../lib/http.ts";
+import { getRecentLLMCalls } from "../intelligence/tracker.ts";
+import { jsonObject, queryLimit, queryOffset } from "../lib/http.ts";
 import {
   AssistantSettingsService,
   parseAssistantFields,
@@ -54,5 +55,18 @@ assistant.put(
     }
   },
 );
+
+/**
+ * The assistant's calls to the model, with the prompt and the answer. A prompt
+ * holds the customer's messages, so only the people who tune the assistant
+ * read it.
+ */
+assistant.get("/calls", requireRole("admin", "developer"), async (c) => {
+  const limit = queryLimit(c, 50);
+  const offset = queryOffset(c);
+  return c.json({
+    calls: await getRecentLLMCalls(activeTenantId(c), limit, offset),
+  });
+});
 
 export default assistant;

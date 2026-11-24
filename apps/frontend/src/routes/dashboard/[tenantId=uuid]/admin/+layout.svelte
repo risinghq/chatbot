@@ -9,7 +9,6 @@ let { children } = $props();
 
 const tabs = $derived([
   { href: businessPath("/admin/users"), label: "Usuarios" },
-  { href: businessPath("/admin/audit"), label: "Auditoría" },
   { href: businessPath("/admin/channels"), label: "Números" },
   { href: businessPath("/admin/orders"), label: "Entregas y pagos" },
   { href: businessPath("/admin/settings"), label: "Configuración" },

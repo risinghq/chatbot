@@ -17,13 +17,13 @@ import conversations from "./routes/conversations.ts";
 import customers from "./routes/customers.ts";
 import { deliveryZones, paymentMethods } from "./routes/order-settings.ts";
 import health from "./routes/health.ts";
+import history from "./routes/history.ts";
 import orders from "./routes/orders.ts";
 import platform from "./routes/platform.ts";
 import providerRoutes from "./routes/providers.ts";
 import reports from "./routes/reports.ts";
 import simulator from "./routes/simulator.ts";
 import stock from "./routes/stock.ts";
-import systemLogs from "./routes/system-logs.ts";
 import tenants from "./routes/tenants.ts";
 import webhook from "./routes/webhook.ts";
 import { sweep } from "./sweep.ts";
@@ -73,8 +73,7 @@ app.route("/api/customers", customers);
 app.route("/api/delivery-zones", deliveryZones);
 app.route("/api/payment-methods", paymentMethods);
 
-app.use("/api/system/logs/*", requireRole("admin", "developer", "supervisor"));
-app.route("/api/system/logs", systemLogs);
+app.route("/api/history", history);
 
 app.use("/api/admin/*", requireRole("admin"));
 app.route("/api/admin", admin);

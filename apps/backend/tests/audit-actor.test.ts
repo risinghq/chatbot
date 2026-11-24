@@ -1,9 +1,10 @@
-/** Who an audit row names, and the readers that show it, including a row no user wrote. */
+/** Who an audit row names, and how the history shows it, including a row no user wrote. */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
+import type { HistoryEntry } from "@vendeya/types";
 
-import { batch, getAll, getOne, run } from "./helpers/db.ts";
+import { batch, getAll, run } from "./helpers/db.ts";
 import {
   createMember,
   createTenantFixture,
@@ -16,14 +17,15 @@ import {
   generateSessionToken,
 } from "../src/platform/auth/session.ts";
 import adminRoutes from "../src/routes/admin.ts";
+import historyRoutes from "../src/routes/history.ts";
+import { cliAuditStatement, logAction } from "../src/platform/audit/logger.ts";
 import {
-  cliAuditStatement,
-  getAuditTrail,
-  logAction,
-} from "../src/platform/audit/logger.ts";
-import { SystemLogService } from "../src/domains/system/logs.ts";
+  businessHistory,
+  platformHistory,
+} from "../src/domains/history/index.ts";
 
 const SOMEONE = { name: "someone", uid: 1000 };
+const PAGE = { limit: 500, offset: 0 };
 
 type AuditRow = {
   id: string;
@@ -71,9 +73,7 @@ describe("audit actors", () => {
         action,
         "thing",
         "t1",
-        {
-          a: 1,
-        },
+        { a: 1 },
       );
 
       const [row, ...rest] = await rowsFor(action);
@@ -86,96 +86,125 @@ describe("audit actors", () => {
     });
   });
 
-  describe("readers", () => {
-    let cliRowId: string;
+  describe("the history", () => {
+    const mine = async (): Promise<HistoryEntry[]> =>
+      (await businessHistory(tenant.tenantId, PAGE)).filter(
+        (entry) => entry.action === action,
+      );
 
-    beforeEach(async () => {
+    it("names a terminal command's operator, without the cli: prefix", async () => {
       await batch([
-        cliAuditStatement(
-          SOMEONE,
-          tenant.tenantId,
-          action,
-          "user",
-          "u-target",
-          {
-            email: "maria@example.com",
-          },
-        ),
+        cliAuditStatement(SOMEONE, tenant.tenantId, action, "user", "u-x", {
+          email: "maria@example.com",
+        }),
       ]);
-      cliRowId = (await rowsFor(action))[0]!.id;
+
+      const [entry] = await mine();
+
+      expect(entry?.actor).toEqual({ kind: "terminal", name: "someone" });
+      expect(entry?.details).toMatchObject({ email: "maria@example.com" });
     });
 
-    it("returns a row with no user from the trail", async () => {
-      const row = (await getAuditTrail(tenant.tenantId)).find(
-        (log) => log.id === cliRowId,
-      );
-
-      expect(row).toMatchObject({ user_id: null, actor: "cli:someone" });
-    });
-
-    it("shows the actor label where the system log would show a user name", async () => {
-      const entry = (
-        await SystemLogService.getRecentLogs(tenant.tenantId)
-      ).find((log) => log.id === cliRowId);
-
-      expect(entry?.actor).toBe("cli:someone");
-      expect(entry?.summary).toBe("user u-target");
-    });
-
-    it("still shows a user's name for a user's row", async () => {
-      const { userId } = await createMember(tenant);
-      await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
-      const id = (await rowsFor(action)).find(
-        (row) => row.user_id === userId,
-      )!.id;
-
-      const entry = (
-        await SystemLogService.getRecentLogs(tenant.tenantId)
-      ).find((log) => log.id === id);
-
-      expect(entry?.actor).toBe(
-        (
-          (await getOne("SELECT name FROM users WHERE id = ?", [userId])) as {
-            name: string;
-          }
-        ).name,
-      );
-    });
-
-    it("answers the audit page with the label as the name, beside a user's row", async () => {
+    it("names a user by their name", async () => {
       const { userId } = await createMember(tenant);
       await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
 
+      const [entry] = await mine();
+
+      expect(entry?.actor).toEqual({
+        kind: "user",
+        userId,
+        name: "Test User",
+      });
+    });
+
+    it("gives a user with an empty name no name, so the page can say so", async () => {
+      const { userId } = await createMember(tenant);
+      await run("UPDATE users SET name = '' WHERE id = ?", [userId]);
+      await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
+
+      const [entry] = await mine();
+
+      expect(entry?.actor).toEqual({ kind: "user", userId, name: null });
+    });
+
+    it("labels a subject from its record, and a gone one from the recorded name", async () => {
+      const { userId } = await createMember(tenant);
+      const actor = { userId, tenantId: tenant.tenantId };
+      await logAction(actor, action, "user", userId);
+      await logAction(actor, action, "customer", "gone-id", { name: "Rosa" });
+      await logAction(actor, action, "customer", "nameless-id");
+
+      const subjects = (await mine()).map((entry) => entry.subject);
+
+      expect(subjects).toContainEqual({
+        type: "user",
+        id: userId,
+        label: "Test User",
+      });
+      expect(subjects).toContainEqual({
+        type: "customer",
+        id: "gone-id",
+        label: "Rosa",
+      });
+      expect(subjects).toContainEqual({
+        type: "customer",
+        id: "nameless-id",
+        label: null,
+      });
+    });
+
+    it("does not label another business's record", async () => {
+      const other = await createTenantFixture("actors-other");
+      const { userId } = await createMember(tenant);
+      await run(
+        "INSERT INTO customers (id, tenant_id, name) VALUES (?, ?, 'Ajeno')",
+        ["foreign-customer", other.tenantId],
+      );
+      await logAction(
+        { userId, tenantId: tenant.tenantId },
+        action,
+        "customer",
+        "foreign-customer",
+      );
+
+      const [entry] = await mine();
+
+      expect(entry?.subject?.label).toBeNull();
+    });
+
+    it("keeps platform rows out of a business, and business rows out of the platform", async () => {
+      const { userId } = await createMember(tenant);
+      await logAction({ userId, tenantId: null }, action, "system");
+      await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
+
+      const business = await mine();
+      const platform = (await platformHistory(PAGE)).filter(
+        (entry) => entry.action === action,
+      );
+
+      expect(business.map((e) => e.subject)).toEqual([null]);
+      expect(business).toHaveLength(1);
+      expect(platform).toHaveLength(1);
+      expect(platform[0]!.id).not.toBe(business[0]!.id);
+    });
+
+    it("refuses a sales agent", async () => {
+      const { userId } = await createMember(tenant, "sales_agent");
       const app = new Hono();
       app.use("/api/*", requireAuth);
-      app.use("/api/admin/*", requireRole("admin"));
-      app.route("/api/admin", adminRoutes);
+      app.route("/api/history", historyRoutes);
 
-      const response = await app.request("/api/admin/audit?limit=500", {
+      const response = await app.request("/api/history", {
         headers: await login(userId, tenant.tenantId),
       });
 
-      expect(response.status).toBe(200);
-      const { logs } = (await response.json()) as {
-        logs: Array<
-          AuditRow & { user_name: string; user_email: string | null }
-        >;
-      };
-      const mine = logs.filter((log) => log.action === action);
-
-      const cli = mine.find((log) => log.id === cliRowId)!;
-      expect(cli.user_id).toBeNull();
-      expect(cli.actor).toBe("cli:someone");
-      expect(cli.user_name).toBe("cli:someone");
-      expect(cli.user_email).toBeNull();
-
-      const person = mine.find((log) => log.user_id === userId)!;
-      expect(person.user_name).toBe("Test User");
+      expect(response.status).toBe(403);
     });
   });
 
   describe("empty query filters", () => {
-    it("ignores ?phone= on llm-errors and ?user_id= on audit", async () => {
+    it("ignores ?phone= on llm-errors", async () => {
       const { userId } = await createMember(tenant);
       const llmId = crypto.randomUUID();
       await run(
@@ -185,71 +214,27 @@ describe("audit actors", () => {
          VALUES (?, ?, ?, ?, 'classify', 'test-model', 'p', 'm', 'error', 'boom', 5)`,
         [llmId, tenant.tenantId, tenant.channelAccountId, "51900000001"],
       );
-      await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
 
       const app = new Hono();
       app.use("/api/*", requireAuth);
       app.use("/api/admin/*", requireRole("admin"));
       app.route("/api/admin", adminRoutes);
-      const cookie = await login(userId, tenant.tenantId);
 
       const errors = (await (
         await app.request("/api/admin/llm-errors?phone=", {
-          headers: cookie,
+          headers: await login(userId, tenant.tenantId),
         })
       ).json()) as { errors: Array<{ id: string }> };
       expect(errors.errors.map((e) => e.id)).toContain(llmId);
-
-      const audit = (await (
-        await app.request("/api/admin/audit?user_id=", {
-          headers: cookie,
-        })
-      ).json()) as { logs: Array<{ action: string }> };
-      expect(audit.logs.map((l) => l.action)).toContain(action);
     });
   });
 
-  describe("a row whose user does not resolve", () => {
-    type AuditPageRow = AuditRow & {
-      user_name: string;
-      user_email: string | null;
-    };
+  it("cannot lose a row's user, because D1 refuses to delete a user an audit row names", async () => {
+    const { userId } = await createMember(tenant);
+    await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
 
-    async function auditPage(userId: string): Promise<AuditPageRow[]> {
-      const app = new Hono();
-      app.use("/api/*", requireAuth);
-      app.use("/api/admin/*", requireRole("admin"));
-      app.route("/api/admin", adminRoutes);
-
-      const response = await app.request("/api/admin/audit?limit=500", {
-        headers: await login(userId, tenant.tenantId),
-      });
-
-      expect(response.status).toBe(200);
-      const { logs } = (await response.json()) as { logs: AuditPageRow[] };
-      return logs.filter((log) => log.action === action);
-    }
-
-    it("cannot exist, because D1 refuses to delete a user an audit row names", async () => {
-      const { userId } = await createMember(tenant);
-      await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
-
-      await expect(
-        run("DELETE FROM users WHERE id = ?", [userId]),
-      ).rejects.toThrow(/FOREIGN KEY constraint failed/);
-    });
-
-    it("does not call a living user with an empty name deleted", async () => {
-      const { userId } = await createMember(tenant);
-      await run("UPDATE users SET name = '' WHERE id = ?", [userId]);
-      await logAction({ userId, tenantId: tenant.tenantId }, action, "thing");
-
-      const row = (await auditPage(userId)).find(
-        (log) => log.user_id === userId,
-      )!;
-
-      expect(row.user_name).toBe(`user:${userId}`);
-      expect(row.user_email).toMatch(/@test\.invalid$/);
-    });
+    await expect(
+      run("DELETE FROM users WHERE id = ?", [userId]),
+    ).rejects.toThrow(/FOREIGN KEY constraint failed/);
   });
 });

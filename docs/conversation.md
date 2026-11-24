@@ -218,7 +218,8 @@ line, never the name or NSE the providers return
 A tool never sends a message or alerts anyone. It returns effects (photos to
 send, an order filed, a handoff), and the turn carries them out. A turn makes at
 most 6 tool calls; the next call allows none, so the model must answer in text.
-Every model call is a row in `llm_calls`, whether it answers or throws.
+Every model call is a row in `llm_calls`, whether it answers or throws. The
+Asistente's Registro tab lists them.
 
 The assistant calls OpenAI with the tenant's own key, stored encrypted as the
 `openai_api_key` tenant secret. A real conversation of a business with no key is

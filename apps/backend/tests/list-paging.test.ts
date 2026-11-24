@@ -1,4 +1,4 @@
-/** The six list routes read `limit` (and orders `offset`) through one reader that refuses anything but a plain in-range integer. */
+/** The list routes read `limit` (and orders `offset`) through one reader that refuses anything but a plain in-range integer. */
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
@@ -20,7 +20,8 @@ import { logAction } from "../src/platform/audit/logger.ts";
 import { batch, stmt } from "./helpers/db.ts";
 import adminRoutes from "../src/routes/admin.ts";
 import orderRoutes from "../src/routes/orders.ts";
-import systemLogRoutes from "../src/routes/system-logs.ts";
+import assistantRoutes from "../src/routes/assistant.ts";
+import historyRoutes from "../src/routes/history.ts";
 
 const CUSTOMER = "51900777888";
 const LIMIT_MESSAGE = "limit must be a whole number from 1 to 500";
@@ -92,13 +93,6 @@ const ROUTES: Route[] = [
     count: (body) => (body as unknown[]).length,
   },
   {
-    name: "system logs",
-    path: "/api/system/logs",
-    fallback: 100,
-    seed: (tenant, _userId, count) => seedLlmCalls(tenant, count, "success"),
-    count: (body) => (body as { logs: unknown[] }).logs.length,
-  },
-  {
     name: "llm errors",
     path: "/api/admin/llm-errors",
     fallback: 100,
@@ -106,16 +100,16 @@ const ROUTES: Route[] = [
     count: (body) => (body as { errors: unknown[] }).errors.length,
   },
   {
-    name: "llm calls",
-    path: "/api/admin/llm-calls",
+    name: "assistant calls",
+    path: "/api/assistant/calls",
     fallback: 50,
     seed: (tenant, _userId, count) => seedLlmCalls(tenant, count, "success"),
     count: (body) => (body as { calls: unknown[] }).calls.length,
   },
   {
-    name: "audit",
-    path: "/api/admin/audit",
-    fallback: 100,
+    name: "history",
+    path: "/api/history",
+    fallback: 50,
     async seed(tenant, userId, count) {
       for (let i = 0; i < count; i++) {
         await logAction(
@@ -125,7 +119,7 @@ const ROUTES: Route[] = [
         );
       }
     },
-    count: (body) => (body as { logs: unknown[] }).logs.length,
+    count: (body) => (body as { entries: unknown[] }).entries.length,
   },
 ];
 
@@ -142,8 +136,8 @@ describe("limit and offset on the list routes", () => {
     app = new Hono();
     app.use("/api/*", requireAuth);
     app.route("/api/orders", orderRoutes);
-    app.use("/api/system/logs/*", requireRole("admin"));
-    app.route("/api/system/logs", systemLogRoutes);
+    app.route("/api/history", historyRoutes);
+    app.route("/api/assistant", assistantRoutes);
     app.use("/api/admin/*", requireRole("admin"));
     app.route("/api/admin", adminRoutes);
     app.onError(errorHandler);

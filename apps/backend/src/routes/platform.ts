@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import { platformHistory } from "../domains/history/index.ts";
 import { reportSummary } from "../domains/reports/summary.ts";
+import { queryLimit, queryOffset } from "../lib/http.ts";
 import {
   SystemSettings,
   isTenantSecretSettingKey,
@@ -21,6 +23,12 @@ platform.get("/summary", async (c) => {
   const range = summaryRange(c);
   if ("problem" in range) return c.json({ error: range.problem }, 400);
   return c.json(await reportSummary({ tenantId: null, ...range }));
+});
+
+/** What was changed outside any business. */
+platform.get("/history", async (c) => {
+  const page = { limit: queryLimit(c, 50), offset: queryOffset(c) };
+  return c.json({ entries: await platformHistory(page) });
 });
 
 platform.get("/settings", async (c) => c.json(await SystemSettings.getAll()));

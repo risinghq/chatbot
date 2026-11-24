@@ -63,12 +63,18 @@ async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
     .execute();
 }
 
-export async function getRecentLLMCalls(tenantId: string, limit: number = 50) {
+export async function getRecentLLMCalls(
+  tenantId: string,
+  limit: number = 50,
+  offset: number = 0,
+) {
   return await db
     .selectFrom("llm_calls")
     .selectAll()
     .where(tenantScope(tenantId))
     .orderBy("created_at", "desc")
+    .orderBy("id", "desc")
     .limit(limit)
+    .offset(offset)
     .execute();
 }

@@ -95,7 +95,9 @@ customers.patch("/:id", requireCustomerWrite, async (c) => {
 customers.delete("/:id", requireCustomerDelete, async (c) => {
   const tenantId = activeTenantId(c);
   const id = pathParam(c, "id");
-  if (!(await CustomerService.delete(tenantId, id))) {
+  // The history names a deleted customer from this entry.
+  const customer = await CustomerService.get(tenantId, id);
+  if (!customer || !(await CustomerService.delete(tenantId, id))) {
     return c.json({ error: "Customer not found" }, 404);
   }
   await logAction(
@@ -103,7 +105,7 @@ customers.delete("/:id", requireCustomerDelete, async (c) => {
     "delete_customer",
     "customer",
     id,
-    {},
+    { name: customer.name },
   );
   return c.body(null, 204);
 });

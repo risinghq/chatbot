@@ -1,6 +1,5 @@
 import { newId } from "@vendeya/utils";
 import type { Compilable } from "kysely";
-import type { AuditLog } from "@vendeya/types";
 import { batch, db } from "../../db/index.ts";
 
 /**
@@ -20,19 +19,6 @@ export type CliOperator = {
   name: string;
   uid: number;
 };
-
-/**
- * What a reader shows for an audit row. `resolvedName` is the name the reader
- * looked up for `user_id`, and it is absent for a terminal command, a missing
- * user or an empty name. The stored `actor` (`user:<id>` or `cli:<name>`) covers
- * those.
- */
-export function auditActorLabel(
-  resolvedName: string | null | undefined,
-  actor: string,
-): string {
-  return resolvedName || actor;
-}
 
 function insert(
   actor: string,
@@ -104,20 +90,4 @@ export async function logAction(
   await batch([
     auditStatement(actor, action, resourceType, resourceId, metadata),
   ]);
-}
-
-/** The entries of one business, newest first. */
-export async function getAuditTrail(
-  tenantId: string,
-  userId?: string,
-  limit: number = 100,
-): Promise<AuditLog[]> {
-  return (await db
-    .selectFrom("audit_log")
-    .selectAll()
-    .where("tenant_id", "=", tenantId)
-    .$if(Boolean(userId), (q) => q.where("user_id", "=", userId!))
-    .orderBy("created_at", "desc")
-    .limit(limit)
-    .execute()) as AuditLog[];
 }

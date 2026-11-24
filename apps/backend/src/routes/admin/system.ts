@@ -1,9 +1,5 @@
 import { Hono } from "hono";
-import {
-  auditActorLabel,
-  logAction,
-  getAuditTrail,
-} from "../../platform/audit/logger.ts";
+import { logAction } from "../../platform/audit/logger.ts";
 import {
   SystemSettings,
   TenantSettings,
@@ -20,10 +16,9 @@ import {
 } from "../../domains/settings/openai.ts";
 import { tenantSetupStatus } from "../../domains/tenants/setup.ts";
 import { clearFnbState } from "../../adapters/providers/fnb-client.ts";
-import { getRecentLLMCalls } from "../../intelligence/tracker.ts";
 import { queryLimit } from "../../lib/http.ts";
 import { activeTenantId, requireTenantScope } from "../../middleware/auth.ts";
-import { db, tenantScope, withoutTenantScope } from "../../db/index.ts";
+import { db, tenantScope } from "../../db/index.ts";
 
 const system = new Hono();
 
@@ -64,45 +59,6 @@ system.get("/llm-errors", async (c) => {
       metadata: e.context_metadata ? JSON.parse(e.context_metadata) : null,
     })),
   });
-});
-
-system.get("/llm-calls", async (c) => {
-  const limit = queryLimit(c, 50);
-  return c.json({
-    calls: await getRecentLLMCalls(activeTenantId(c), limit),
-  });
-});
-
-system.get("/audit", async (c) => {
-  const userIdFilter = c.req.query("user_id");
-  const limit = queryLimit(c, 100);
-
-  const logs = await getAuditTrail(activeTenantId(c), userIdFilter, limit);
-
-  const userIds = [
-    ...new Set(logs.flatMap((l) => (l.user_id === null ? [] : [l.user_id]))),
-  ];
-  const dbUsers = userIds.length
-    ? await withoutTenantScope("users are global, keyed by id")
-        .selectFrom("users")
-        .select(["id", "email", "name"])
-        .where("id", "in", userIds)
-        .execute()
-    : [];
-
-  const userMap = new Map(dbUsers.map((u) => [u.id, u]));
-
-  const logsWithNames = logs.map((log) => {
-    const user = log.user_id === null ? undefined : userMap.get(log.user_id);
-
-    return {
-      ...log,
-      user_name: auditActorLabel(user?.name, log.actor),
-      user_email: user?.email || null,
-    };
-  });
-
-  return c.json({ logs: logsWithNames });
 });
 
 /**
