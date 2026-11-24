@@ -1,6 +1,7 @@
 <script lang="ts">
 import { businessPath } from "#lib/state/business.svelte.js";
 import type { Conversation } from "@vendeya/types";
+import Button from "#lib/components/ui/button.svelte";
 import EmptyState from "#lib/components/ui/empty-state.svelte";
 import ConversationItem from "./conversation-item.svelte";
 
@@ -38,8 +39,12 @@ function conversationKey(conv: Conversation): string {
 		{#if conversations.length === 0}
 			<EmptyState
 				title="Sin conversaciones activas"
-				description="Cuando un cliente escriba a uno de tus números, aparecerá aquí."
-			/>
+				description="Cuando un cliente escriba a uno de tus números, aparecerá aquí. Mientras tanto, conversa con el asistente como si fueras un cliente."
+			>
+				{#snippet action()}
+					<Button href={businessPath("/asistente/probar")} size="sm">Probar el asistente</Button>
+				{/snippet}
+			</EmptyState>
 		{/if}
 	</div>
 </div>
