@@ -117,16 +117,21 @@ export async function listApiTokens(userId: string): Promise<ApiToken[]> {
   return rows.map((row) => ({ ...row, expires_at: row.expires_at * 1000 }));
 }
 
-/** Revokes one of the user's tokens. False when the user has no such token. */
+/**
+ * Revokes one of the user's tokens and returns the name it had, which the
+ * audit row keeps because the token's row is gone. Null when the user has no
+ * such token.
+ */
 export async function revokeApiToken(
   userId: string,
   tokenId: string,
-): Promise<boolean> {
-  const result = await tokens()
+): Promise<{ name: string } | null> {
+  const row = await tokens()
     .deleteFrom("session")
     .where("id", "=", tokenId)
     .where("user_id", "=", userId)
     .where("kind", "=", "token")
+    .returning("name")
     .executeTakeFirst();
-  return result.numDeletedRows > 0n;
+  return row ? { name: row.name ?? "" } : null;
 }

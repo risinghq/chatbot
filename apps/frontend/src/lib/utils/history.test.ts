@@ -28,6 +28,18 @@ const sentence = (
 };
 
 describe("a history sentence", () => {
+  it("names a revoked token, or says a token when nothing named it", () => {
+    const revoke = (label: string | null) =>
+      sentence(
+        entry({
+          action: "revoke_api_token",
+          subject: { type: "api_token", id: "k", label },
+        }),
+      );
+    expect(revoke("ci")).toBe("Ana revocó el token de API ci");
+    expect(revoke(null)).toBe("Ana revocó un token de API");
+  });
+
   it("names a terminal command's operator and a nameless user", () => {
     expect(
       phrase(entry({ actor: { kind: "terminal", name: "dubu" } }), place).actor,

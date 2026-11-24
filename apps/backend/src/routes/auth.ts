@@ -243,14 +243,14 @@ auth.post("/tokens", requireAuth, requireBrowserSession, async (c) => {
 auth.delete("/tokens/:id", requireAuth, async (c) => {
   const user = c.get("user");
   const id = c.req.param("id") ?? "";
-  if (!(await revokeApiToken(user.id, id))) {
-    return c.json({ error: "No such token" }, 404);
-  }
+  const revoked = await revokeApiToken(user.id, id);
+  if (!revoked) return c.json({ error: "No such token" }, 404);
   await logAction(
     { userId: user.id, tenantId: c.get("scope").tenantId },
     "revoke_api_token",
     "api_token",
     id,
+    { name: revoked.name },
   );
   return c.json({ success: true });
 });

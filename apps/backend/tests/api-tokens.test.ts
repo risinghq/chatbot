@@ -276,6 +276,11 @@ describe("API tokens", () => {
     expect((await send("GET", "/api/auth/me", { bearer: token })).status).toBe(
       401,
     );
+    const audit = await getOne<{ metadata: string }>(
+      "SELECT metadata FROM audit_log WHERE action = 'revoke_api_token' AND resource_id = ?",
+      [id],
+    );
+    expect(JSON.parse(audit?.metadata ?? "{}")).toEqual({ name: "ci" });
   });
 
   it("cannot revoke another person's token", async () => {
