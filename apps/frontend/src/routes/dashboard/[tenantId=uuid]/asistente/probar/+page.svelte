@@ -36,6 +36,10 @@ let replayMetadata = $state<ReplayMetadata | null>(null);
 let editingMessageIndex = $state<number | null>(null);
 let editedContent = $state("");
 
+// A checked box sends the next message with a click-to-WhatsApp referral.
+let asAdClick = $state(false);
+let adHeadline = $state("");
+
 async function loadTestConversations() {
   testConversations = await fetchApi<Conversation[]>(
     "/api/simulator/conversations",
@@ -128,6 +132,12 @@ async function sendMessage(messageText?: string) {
       body: JSON.stringify({
         phoneNumber: selectedPhone,
         message: textToSend,
+        ...(asAdClick && {
+          referral: {
+            sourceId: `sim-ad-${selectedPhone}`,
+            headline: adHeadline.trim() || "Anuncio de prueba",
+          },
+        }),
       }),
     });
 
@@ -459,6 +469,21 @@ onMount(() => {
 				{/each}
 			</div>
 
+			<div class="flex items-center gap-2 border-t border-border-subtle px-3 py-2 text-sm text-fg-muted">
+				<label class="flex items-center gap-1.5">
+					<input type="checkbox" bind:checked={asAdClick} class="size-4" />
+					Llega por un anuncio
+				</label>
+				{#if asAdClick}
+					<input
+						type="text"
+						bind:value={adHeadline}
+						placeholder="Titular del anuncio"
+						aria-label="Titular del anuncio"
+						class="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-fg"
+					/>
+				{/if}
+			</div>
 			<MessageInput bind:value={currentInput} disabled={loading || hasOpenAiKey === false} onSend={() => sendMessage()} />
 		{:else}
 			<div class="flex flex-1 items-center justify-center">
