@@ -1,5 +1,10 @@
 <script lang="ts">
-import type { ReportBusiness, ReportDay, ReportSummary } from "@vendeya/types";
+import type {
+  ReportAd,
+  ReportBusiness,
+  ReportDay,
+  ReportSummary,
+} from "@vendeya/types";
 import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import DataTable from "#lib/components/ui/data-table.svelte";
@@ -150,6 +155,29 @@ const dayTitle = (day: ReportDay) =>
 	{/if}
 </SectionShell>
 
+{#if scope === "business" && summary}
+	<SectionShell
+		title="Anuncios"
+		description="Ventas atribuidas a cada anuncio de clic a WhatsApp en el mismo periodo. Pagado es lo confirmado de esos pedidos."
+	>
+		{#if summary.ads.length === 0}
+			<p class="px-4 py-6 text-base text-fg-muted">Ningún cliente llegó por un anuncio en este periodo.</p>
+		{:else}
+			<DataTable
+				data={summary.ads}
+				keyField="sourceId"
+				emptyMessage="Ningún cliente llegó por un anuncio en este periodo."
+				columns={[
+					{ header: "Anuncio", cell: adCell },
+					{ header: "Conversaciones", cell: adConversationsCell, align: "right" },
+					{ header: "Pedidos", cell: adOrdersCell, align: "right" },
+					{ header: "Pagado", cell: adPaidCell, align: "right" },
+				]}
+			/>
+		{/if}
+	</SectionShell>
+{/if}
+
 {#if summary?.businesses}
 	<SectionShell title="Por negocio" description="Cada negocio activo en el mismo periodo. Elige uno para entrar.">
 		<DataTable
@@ -192,6 +220,18 @@ const dayTitle = (day: ReportDay) =>
 {/snippet}
 {#snippet revenueCell(b: ReportBusiness)}
 	<span class="whitespace-nowrap tabular-nums">{soles(b.revenueCents)}</span>
+{/snippet}
+{#snippet adCell(ad: ReportAd)}
+	<span class="block max-w-64 truncate text-fg" title={ad.headline ?? ad.sourceId}>{ad.headline ?? ad.sourceId}</span>
+{/snippet}
+{#snippet adConversationsCell(ad: ReportAd)}
+	<span class="tabular-nums">{count(ad.conversations)}</span>
+{/snippet}
+{#snippet adOrdersCell(ad: ReportAd)}
+	<span class="tabular-nums">{count(ad.orders)}</span>
+{/snippet}
+{#snippet adPaidCell(ad: ReportAd)}
+	<span class="whitespace-nowrap tabular-nums">{soles(ad.paidCents)}</span>
 {/snippet}
 {#snippet aiCell(b: ReportBusiness)}
 	<span class="block whitespace-nowrap tabular-nums">{usd(b.aiCostUsd)}</span>

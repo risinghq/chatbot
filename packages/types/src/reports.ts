@@ -12,6 +12,20 @@ export type ReportProduct = {
   revenueCents: number;
 };
 
+/** Sales one click-to-WhatsApp ad brought in over the report's range. */
+export type ReportAd = {
+  /** Meta's ad id; the row's key. */
+  sourceId: string;
+  /** The ad's headline; null when Meta sent none, so the id stands in. */
+  headline: string | null;
+  /** Conversations the ad opened in the range. */
+  conversations: number;
+  /** Non-cancelled orders the ad is credited with in the range. */
+  orders: number;
+  /** Confirmed payments of those orders. */
+  paidCents: number;
+};
+
 /** One business's line in the operator's cross-business report. */
 export type ReportBusiness = {
   tenantId: string;
@@ -58,6 +72,8 @@ export type ReportSummary = {
   };
   days: ReportDay[];
   topProducts: ReportProduct[];
+  /** Click-to-WhatsApp ads with a conversation or order in the range. */
+  ads: ReportAd[];
   /** Every open business, for the unpinned platform operator; null otherwise. */
   businesses: ReportBusiness[] | null;
 };

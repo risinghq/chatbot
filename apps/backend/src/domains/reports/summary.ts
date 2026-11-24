@@ -2,6 +2,7 @@ import {
   ASSISTANT_MODELS,
   type AssistantModel,
   MODEL_PRICES,
+  type ReportAd,
   type ReportBusiness,
   type ReportSummary,
 } from "@vendeya/types";
@@ -91,6 +92,8 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
     llmByModel,
     topProducts,
     tenants,
+    ordersByAd,
+    conversationsByAd,
     openAiKeys,
   ] = await Promise.all([
     inboundContacts(range)
@@ -169,6 +172,50 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
           .select(["id", "name"])
           .where("status", "=", "active")
           .execute(),
+    // The ads lines join orders to their confirmed payments only, so
+    // `count(distinct o.id)` counts each order once and `sum(p.amount_cents)`
+    // is what its payments actually brought in.
+    tenantId
+      ? db
+          .selectFrom("orders as o")
+          .leftJoin("payments as p", (join) =>
+            join
+              .onRef("p.order_id", "=", "o.id")
+              .onRef("p.tenant_id", "=", "o.tenant_id")
+              .on("p.status", "=", "confirmed"),
+          )
+          .select([
+            "o.ad_source_id",
+            sql<string | null>`max(o.ad_headline)`.as("ad_headline"),
+            sql<number>`count(distinct case when ${notCancelled} then o.id end)`.as(
+              "orders",
+            ),
+            sql<number>`coalesce(sum(case when ${notCancelled} then p.amount_cents end), 0)`.as(
+              "paid",
+            ),
+          ])
+          .where(scoped(tenantId, "o.tenant_id"))
+          .where("o.ad_source_id", "is not", null)
+          .where("o.created_at", ">=", startMs)
+          .where("o.created_at", "<=", endMs)
+          .groupBy("o.ad_source_id")
+          .execute()
+      : Promise.resolve([]),
+    tenantId
+      ? db
+          .selectFrom("conversations as c")
+          .select([
+            "c.ad_source_id",
+            sql<string | null>`max(c.ad_headline)`.as("ad_headline"),
+            sql<number>`count(*)`.as("n"),
+          ])
+          .where(scoped(tenantId, "c.tenant_id"))
+          .where("c.ad_source_id", "is not", null)
+          .where("c.ad_received_at", ">=", startMs)
+          .where("c.ad_received_at", "<=", endMs)
+          .groupBy("c.ad_source_id")
+          .execute()
+      : Promise.resolve([]),
     tenantId
       ? Promise.resolve([])
       : db
@@ -268,12 +315,43 @@ export async function reportSummary(range: Range): Promise<ReportSummary> {
     }
   }
 
+  const ads = new Map<string, ReportAd>();
+  for (const row of conversationsByAd) {
+    ads.set(row.ad_source_id!, {
+      sourceId: row.ad_source_id!,
+      headline: row.ad_headline,
+      conversations: row.n,
+      orders: 0,
+      paidCents: 0,
+    });
+  }
+  for (const row of ordersByAd) {
+    const ad = ads.get(row.ad_source_id!) ?? {
+      sourceId: row.ad_source_id!,
+      headline: null,
+      conversations: 0,
+      orders: 0,
+      paidCents: 0,
+    };
+    ad.headline ??= row.ad_headline;
+    ad.orders = row.orders;
+    ad.paidCents = row.paid;
+    ads.set(ad.sourceId, ad);
+  }
+
   return {
     startDate: limaDateString(startMs),
     endDate: limaDateString(endMs),
     contacts,
     orders,
     ai,
+    ads: [...ads.values()].sort(
+      (a, b) =>
+        b.paidCents - a.paidCents ||
+        b.orders - a.orders ||
+        b.conversations - a.conversations ||
+        a.sourceId.localeCompare(b.sourceId),
+    ),
     days: [...days.values()],
     topProducts: topProducts.map((row) => ({
       name: row.name,
