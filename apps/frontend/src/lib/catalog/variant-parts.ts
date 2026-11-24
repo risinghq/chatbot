@@ -11,17 +11,21 @@ function parts(name: string | null): string[] {
 /**
  * The option values that pick out a group of variants, such as "Rojo" among
  * "S / Rojo", "M / Rojo" and "S / Negro". A value every variant shares, or
- * only one variant has, picks out no group and is left out.
+ * only one variant has, picks out no group and is left out. Values come in
+ * option order, sizes before colours, each option's in first-seen order.
  */
 export function sharedParts(names: Array<string | null>): string[] {
-  const counts = new Map<string, number>();
+  const seen = new Map<string, { count: number; option: number }>();
   for (const name of names) {
-    for (const part of new Set(parts(name))) {
-      counts.set(part, (counts.get(part) ?? 0) + 1);
-    }
+    parts(name).forEach((part, option) => {
+      const found = seen.get(part);
+      if (found) found.count += 1;
+      else seen.set(part, { count: 1, option });
+    });
   }
-  return [...counts]
-    .filter(([, count]) => count > 1 && count < names.length)
+  return [...seen]
+    .filter(([, { count }]) => count > 1 && count < names.length)
+    .sort(([, a], [, b]) => a.option - b.option)
     .map(([part]) => part);
 }
 
