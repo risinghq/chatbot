@@ -3,11 +3,12 @@ import { newId } from "@vendeya/utils";
 import { sql } from "kysely";
 import { outboxRow, queuedBehind } from "../../conversation/outbox.ts";
 import { messageRow } from "../../adapters/whatsapp/message-store.ts";
-import { ensureConversation } from "../../conversation/store.ts";
+import {
+  conversationRow,
+  createConversationQuery,
+} from "../../conversation/store.ts";
 import { batch, db, tenantScope } from "../../db/index.ts";
-import { isOptedOut } from "./consent.ts";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+import { isOptedOut, marketingCapCutoff } from "./consent.ts";
 
 /**
  * The values `{{n}}` parameters resolve to, per recipient. Order fields are
@@ -46,9 +47,9 @@ export function renderBody(body: string, parameters: string[]): string {
  * breaks consent: `"opted_out"` or `"capped"`. A campaign passes
  * `recipientId`, and that recipient is marked queued in the same transaction
  * as the send rows, so a send is never queued twice or recorded as skipped.
- * The conversation is created when the contact has never written. The
- * conversation's object sends the row on its next wake, which the sweep's
- * outbox check schedules.
+ * The conversation is created in the same batch when the contact has never
+ * written, so a refused send leaves no row behind. The conversation's object
+ * sends the row on its next wake, which the sweep's outbox check schedules.
  */
 export async function enqueueTemplate(
   ref: ConversationRef,
@@ -65,7 +66,6 @@ export async function enqueueTemplate(
   ) {
     return "opted_out";
   }
-  await ensureConversation(ref);
   const messageId = newId();
   const parameters = resolveParams(bindings, ctx);
   const rendered = renderBody(template.body, parameters);
@@ -111,6 +111,7 @@ export async function enqueueTemplate(
 
   if (marketingDays === null) {
     await batch([
+      createConversationQuery(ref),
       db.insertInto("messages").values(message),
       db.insertInto("outbox").values(outbox),
       ...marked(false),
@@ -135,13 +136,23 @@ export async function enqueueTemplate(
         oc
           .columns(["tenant_id", "phone_number"])
           .doUpdateSet({ sent_at: now, message_id: messageId })
-          .where("marketing_sends.sent_at", "<=", now - marketingDays * DAY_MS),
+          .where(
+            "marketing_sends.sent_at",
+            "<=",
+            marketingCapCutoff(now, marketingDays),
+          ),
       ),
+    insertIfClaimed(
+      "conversations",
+      conversationRow(ref),
+      ref,
+      messageId,
+    ).onConflict((oc) => oc.doNothing()),
     insertIfClaimed("messages", message, ref, messageId),
     insertIfClaimed("outbox", outbox, ref, messageId),
     ...marked(true),
   ]);
-  return (results[2]?.meta.changes ?? 0) === 0 ? "capped" : messageId;
+  return (results[3]?.meta.changes ?? 0) === 0 ? "capped" : messageId;
 }
 
 /** The phone's `marketing_sends` row, when `messageId` holds the claim. */
@@ -154,7 +165,7 @@ function claim(ref: ConversationRef, messageId: string) {
 }
 
 /** Inserts `row` into `table` only when `messageId` holds the phone's claim. */
-function insertIfClaimed<T extends "messages" | "outbox">(
+function insertIfClaimed<T extends "conversations" | "messages" | "outbox">(
   table: T,
   row: Record<string, unknown>,
   ref: ConversationRef,

@@ -28,6 +28,28 @@ export async function findConversation(
   return (row as StoredConversation | undefined) ?? null;
 }
 
+/** The values a conversation starts with, created active. */
+export function conversationRow(ref: ConversationRef, isSimulation = false) {
+  return {
+    tenant_id: ref.tenantId,
+    channel_account_id: ref.channelAccountId,
+    phone_number: ref.phoneNumber,
+    status: "active" as const,
+    is_simulation: (isSimulation ? 1 : 0) as 0 | 1,
+  };
+}
+
+/** The conversation's insert, for a caller's batch: a no-op when it exists. */
+export function createConversationQuery(
+  ref: ConversationRef,
+  isSimulation = false,
+) {
+  return db
+    .insertInto("conversations")
+    .values(conversationRow(ref, isSimulation))
+    .onConflict((oc) => oc.doNothing());
+}
+
 /** The conversation, created active the first time the contact writes. */
 export async function ensureConversation(
   ref: ConversationRef,
@@ -44,16 +66,7 @@ export async function createConversation(
   ref: ConversationRef,
   isSimulation: boolean,
 ): Promise<StoredConversation | null> {
-  const created = await db
-    .insertInto("conversations")
-    .values({
-      tenant_id: ref.tenantId,
-      channel_account_id: ref.channelAccountId,
-      phone_number: ref.phoneNumber,
-      status: "active",
-      is_simulation: isSimulation ? 1 : 0,
-    })
-    .onConflict((oc) => oc.doNothing())
+  const created = await createConversationQuery(ref, isSimulation)
     .returningAll()
     .executeTakeFirst();
   return (created as StoredConversation | undefined) ?? null;
