@@ -5,6 +5,8 @@ import {
   DeliveryZoneService,
   PaymentMethodService,
 } from "../../orders/index.ts";
+import { TAYPI_ASSISTANT_METHOD } from "../../payments/charges.ts";
+import { taypiKeys } from "../../payments/taypi.ts";
 import { StockService } from "../../stock/index.ts";
 import { AssistantSettingsService } from "../settings.ts";
 import { optionalText, soles, text } from "./args.ts";
@@ -222,15 +224,21 @@ const listPaymentMethods: Tool = {
   },
   run: async (ctx) => {
     const methods = await PaymentMethodService.list(ctx.tenantId);
-    return answer({
-      payment_methods: methods
-        .filter((m) => m.is_active)
-        .map((m) => ({
-          payment_method_id: m.id,
-          name: m.name,
-          instructions: m.instructions,
-        })),
-    });
+    const offered = methods
+      .filter((m) => m.is_active)
+      .map((m) => ({
+        payment_method_id: m.id,
+        name: m.name,
+        instructions: m.instructions,
+      }));
+    if (await taypiKeys(ctx.tenantId)) {
+      offered.unshift({
+        payment_method_id: TAYPI_ASSISTANT_METHOD.id,
+        name: TAYPI_ASSISTANT_METHOD.name,
+        instructions: TAYPI_ASSISTANT_METHOD.instructions,
+      });
+    }
+    return answer({ payment_methods: offered });
   },
 };
 

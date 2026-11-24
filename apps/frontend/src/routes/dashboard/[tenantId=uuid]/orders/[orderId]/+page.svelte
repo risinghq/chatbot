@@ -39,6 +39,9 @@ let paymentAmount = $state("");
 let paymentMethod = $state("");
 let paymentReference = $state("");
 
+type PayLink = { url: string; amount_cents: number; expires_at: number };
+let payLink = $state<PayLink | null>(null);
+
 const methodItems = $derived(
   data.methods.map((m) => ({ value: m.id, label: m.name })),
 );
@@ -108,6 +111,29 @@ async function addPayment(event: SubmitEvent) {
     paymentAmount = "";
     paymentReference = "";
   }
+}
+
+async function createPayLink() {
+  if (!data.order) return;
+  busy = true;
+  try {
+    payLink = await fetchApi<PayLink>(
+      `/api/orders/${data.order.id}/taypi-link`,
+      {
+        method: "POST",
+      },
+    );
+  } catch (error) {
+    toast.error((error as Error).message);
+  } finally {
+    busy = false;
+  }
+}
+
+async function copyPayLink() {
+  if (!payLink) return;
+  await navigator.clipboard.writeText(payLink.url);
+  toast.success("Link copiado");
 }
 
 function decide(paymentId: string, action: "confirm" | "reject") {
@@ -277,6 +303,20 @@ function decide(paymentId: string, action: "confirm" | "reject") {
 							</FormField>
 							<Button type="submit" size="sm" disabled={busy || methodItems.length === 0}>Registrar pago</Button>
 						</form>
+
+						<div class="mt-4 border-t border-border-subtle pt-4">
+							{#if payLink}
+								<p class="text-sm text-fg-muted">
+									Link por S/ {formatCents(payLink.amount_cents)}, vence {formatDateTime(payLink.expires_at)}. El pago se registra solo.
+								</p>
+								<div class="mt-2 flex flex-wrap items-center gap-2">
+									<span class="min-w-0 break-all font-mono text-sm text-fg">{payLink.url}</span>
+									<Button size="sm" variant="secondary" onclick={copyPayLink}>Copiar</Button>
+								</div>
+							{:else}
+								<Button size="sm" variant="secondary" onclick={createPayLink} disabled={busy}>Crear link de pago TAYPI</Button>
+							{/if}
+						</div>
 					{/if}
 				</section>
 			</div>

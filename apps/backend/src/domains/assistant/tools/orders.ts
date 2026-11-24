@@ -11,6 +11,16 @@ import {
   OrderWrites,
   PaymentMethodService,
 } from "../../orders/index.ts";
+import {
+  TAYPI_ASSISTANT_METHOD,
+  TaypiCharges,
+  payLink,
+} from "../../payments/charges.ts";
+import {
+  TAYPI_MAX_CENTS,
+  TaypiError,
+  taypiKeys,
+} from "../../payments/taypi.ts";
 import { StockService } from "../../stock/index.ts";
 import {
   lines as parseLines,
@@ -205,6 +215,34 @@ async function rememberAddress(
   await CustomerService.addAddress(tenantId, customerId, address);
 }
 
+/**
+ * What the assistant tells the customer to pay a filed order by TAYPI: the
+ * pay link, or why there is none so it offers another method.
+ */
+async function taypiInstructions(
+  tenantId: string,
+  orderId: string,
+): Promise<string> {
+  const other =
+    "Ofrece otro medio de pago de list_payment_methods; el pedido ya está creado.";
+  try {
+    const opened = await TaypiCharges.open(tenantId, orderId);
+    if ("charge" in opened) {
+      return (
+        `Envía al cliente este link para pagar ${soles(opened.charge.amount_cents)}: ` +
+        `${payLink(opened.charge.id)} . Vence en 1 hora. El pago se confirma solo.`
+      );
+    }
+    if (opened.refused === "above_maximum") {
+      return `TAYPI cobra hasta ${soles(TAYPI_MAX_CENTS)} por pago. ${other}`;
+    }
+    return `No se pudo crear el link de pago. ${other}`;
+  } catch (error) {
+    if (!(error instanceof TaypiError)) throw error;
+    return `TAYPI no respondió. ${other}`;
+  }
+}
+
 const createOrder: Tool = {
   name: "create_order",
   description:
@@ -279,9 +317,15 @@ const createOrder: Tool = {
       });
     }
     const priced = await price(ctx.tenantId, parseLines(args), zoneId);
-    const method = methodId
-      ? await PaymentMethodService.get(ctx.tenantId, methodId)
-      : null;
+    const viaTaypi = methodId === TAYPI_ASSISTANT_METHOD.id;
+    if (viaTaypi && !(await taypiKeys(ctx.tenantId))) {
+      throw new ToolArgumentError("payment method not found");
+    }
+    const method = viaTaypi
+      ? { ...TAYPI_ASSISTANT_METHOD, is_active: true }
+      : methodId
+        ? await PaymentMethodService.get(ctx.tenantId, methodId)
+        : null;
     if (methodId && !method?.is_active) {
       throw new ToolArgumentError("payment method not found");
     }
@@ -330,7 +374,7 @@ const createOrder: Tool = {
         : null,
     });
     if (address) await rememberAddress(ctx.tenantId, customer.id, address);
-    if (method) {
+    if (method && !viaTaypi) {
       await OrderWrites.addPayment(
         ctx.tenantId,
         created.id,
@@ -338,6 +382,9 @@ const createOrder: Tool = {
         null,
       );
     }
+    const instructions = viaTaypi
+      ? await taypiInstructions(ctx.tenantId, created.id)
+      : (method?.instructions ?? null);
     const order =
       (await OrderReads.detail(ctx.tenantId, created.id)) ?? created;
     return answer(
@@ -345,7 +392,7 @@ const createOrder: Tool = {
         order_number: order.number,
         status: order.status,
         payment_method: method?.name ?? null,
-        payment_instructions: method?.instructions ?? null,
+        payment_instructions: instructions,
         ...summary(priced),
         total: soles(order.total_cents),
       },

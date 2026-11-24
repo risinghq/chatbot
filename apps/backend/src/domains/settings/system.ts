@@ -40,7 +40,12 @@ export const TENANT_VISIBLE_PLATFORM_KEYS = [
 export const INTERNAL_TENANT_SETTING_KEYS = ["last_agent_index"] as const;
 
 export function isInternalTenantSettingKey(key: string): boolean {
-  return (INTERNAL_TENANT_SETTING_KEYS as readonly string[]).includes(key);
+  return (
+    (INTERNAL_TENANT_SETTING_KEYS as readonly string[]).includes(key) ||
+    // TAYPI's keys are encrypted by /admin/taypi, which checks them together
+    // with TAYPI; a plaintext copy here would be read back to the browser.
+    key.startsWith("taypi_")
+  );
 }
 
 export {

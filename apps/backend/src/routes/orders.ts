@@ -12,6 +12,12 @@ import {
   parseShipmentFields,
   type CustomerRef,
 } from "../domains/orders/parse.ts";
+import {
+  TaypiCharges,
+  payLink,
+  type ChargeRefusal,
+} from "../domains/payments/charges.ts";
+import { TaypiError } from "../domains/payments/taypi.ts";
 import { logAction } from "../platform/audit/logger.ts";
 import { assignedAgentScope, hasRole } from "../platform/auth/scope.ts";
 import { refOf } from "../conversation/store.ts";
@@ -239,6 +245,47 @@ app.post("/:id/payments", requireOrderDesk, async (c) => {
     amount_cents: payment.amount_cents,
   });
   return c.json(payment, 201);
+});
+
+/** What staff are told when an order gets no TAYPI link. */
+const CHARGE_REFUSALS: Record<ChargeRefusal, string> = {
+  not_connected: "Conecta TAYPI en Ajustes › Pagos para crear links de pago",
+  not_found: "Order not found",
+  cancelled: "Un pedido cancelado no se cobra",
+  paid: "El pedido ya está pagado",
+  below_minimum: "TAYPI cobra desde S/ 1.00",
+  above_maximum: "TAYPI cobra hasta S/ 500.00 por pago; usa otro medio",
+};
+
+/** A TAYPI pay link for what the order still owes, to send the customer. */
+app.post("/:id/taypi-link", requireOrderDesk, async (c) => {
+  const tenantId = activeTenantId(c);
+  const id = pathParam(c, "id");
+  if (!(await reachableOrder(c, id))) {
+    return c.json({ error: "Order not found" }, 404);
+  }
+  let opened: Awaited<ReturnType<typeof TaypiCharges.open>>;
+  try {
+    opened = await TaypiCharges.open(tenantId, id);
+  } catch (error) {
+    if (!(error instanceof TaypiError)) throw error;
+    return c.json({ error: `TAYPI no abrió el cobro: ${error.message}` }, 502);
+  }
+  if ("refused" in opened) {
+    const status = opened.refused === "not_found" ? 404 : 400;
+    return c.json(
+      { error: CHARGE_REFUSALS[opened.refused], reason: opened.refused },
+      status,
+    );
+  }
+  return c.json(
+    {
+      url: payLink(opened.charge.id),
+      amount_cents: opened.charge.amount_cents,
+      expires_at: opened.charge.expires_at,
+    },
+    201,
+  );
 });
 
 for (const [action, status] of [
