@@ -76,6 +76,12 @@ describe("simulated conversation phone numbers", () => {
     expect(new Set([first, second]).size).toBe(2);
   });
 
+  it("gives simulations created at once their own numbers", async () => {
+    const phones = await Promise.all([create(), create(), create()]);
+
+    expect(new Set(phones).size).toBe(3);
+  });
+
   it("does not hand out a number another simulation holds after a delete", async () => {
     const first = await create();
     const second = await create();
