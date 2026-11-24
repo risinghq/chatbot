@@ -364,6 +364,20 @@ export interface SystemSettingsTable {
   updated_at: Generated<number>;
 }
 
+export interface TaypiChargesTable {
+  id: string;
+  tenant_id: string;
+  order_id: string;
+  amount_cents: number;
+  checkout_token: string;
+  status: Generated<"pending" | "completed" | "expired" | "failed">;
+  payment_id: string | null;
+  payer_name: string | null;
+  expires_at: number;
+  created_at: Generated<number>;
+  updated_at: Generated<number>;
+}
+
 export interface TenantMembershipsTable {
   id: string;
   tenant_id: string;
@@ -450,6 +464,7 @@ export interface Database {
   stock_locations: StockLocationsTable;
   stock_movements: StockMovementsTable;
   system_settings: SystemSettingsTable;
+  taypi_charges: TaypiChargesTable;
   tenant_memberships: TenantMembershipsTable;
   tenant_secrets: TenantSecretsTable;
   tenant_settings: TenantSettingsTable;
@@ -487,6 +502,7 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "stock_levels",
   "stock_locations",
   "stock_movements",
+  "taypi_charges",
   "tenant_memberships",
   "tenant_secrets",
   "tenant_settings",
