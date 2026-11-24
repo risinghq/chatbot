@@ -260,6 +260,12 @@ export interface PaymentsTable {
   decided_at: number | null;
 }
 
+export interface ProductImageVariantsTable {
+  image_id: string;
+  variant_id: string;
+  tenant_id: string;
+}
+
 export interface ProductImagesTable {
   id: string;
   tenant_id: string;
@@ -434,6 +440,7 @@ export interface Database {
   outbox: OutboxTable;
   payment_methods: PaymentMethodsTable;
   payments: PaymentsTable;
+  product_image_variants: ProductImageVariantsTable;
   product_images: ProductImagesTable;
   product_variants: ProductVariantsTable;
   products: ProductsTable;
@@ -472,6 +479,7 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "outbox",
   "payment_methods",
   "payments",
+  "product_image_variants",
   "product_images",
   "product_variants",
   "products",

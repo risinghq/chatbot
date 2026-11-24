@@ -27,10 +27,38 @@ function images(tenantId: string) {
     .where("i.tenant_id", "=", tenantId);
 }
 
+type ImageRow = Omit<ProductImage, "url" | "variant_ids"> & {
+  storage_key: string;
+};
+
+/** Each photo's rows with the variants it shows, in the order given. */
+async function withVariants(
+  tenantId: string,
+  rows: ImageRow[],
+): Promise<Array<ImageRow & { variant_ids: string[] }>> {
+  if (rows.length === 0) return [];
+  const links = await db
+    .selectFrom("product_image_variants")
+    .select(["image_id", "variant_id"])
+    .where("tenant_id", "=", tenantId)
+    .where(
+      "image_id",
+      "in",
+      rows.map((row) => row.id),
+    )
+    .orderBy("variant_id")
+    .execute();
+  const byImage = Map.groupBy(links, (link) => link.image_id);
+  return rows.map((row) => ({
+    ...row,
+    variant_ids: (byImage.get(row.id) ?? []).map((link) => link.variant_id),
+  }));
+}
+
 function toImage({
   storage_key,
   ...row
-}: Omit<ProductImage, "url"> & { storage_key: string }): ProductImage {
+}: ImageRow & { variant_ids: string[] }): ProductImage {
   return { ...row, url: mediaPath(storage_key) };
 }
 
@@ -41,33 +69,89 @@ function toImage({
 export const ProductImageService = {
   list: async (tenantId: string, productId: string): Promise<ProductImage[]> =>
     (
-      await images(tenantId)
-        .where("i.product_id", "=", productId)
-        .orderBy("i.position")
-        .orderBy("i.id")
-        .execute()
+      await withVariants(
+        tenantId,
+        await images(tenantId)
+          .where("i.product_id", "=", productId)
+          .orderBy("i.position")
+          .orderBy("i.id")
+          .execute(),
+      )
     ).map(toImage),
 
-  /** The storage keys of a product's first `limit` photos, in order. */
+  /**
+   * The storage keys of a product's first `limit` photos, in order. With a
+   * variant, that variant's own photos come first, then the whole-product
+   * photos; a photo tagged only for other variants is left out.
+   */
   storageKeys: async (
     tenantId: string,
     productId: string,
     limit: number,
-  ): Promise<string[]> =>
-    (
+    variantId?: string,
+  ): Promise<string[]> => {
+    const rows = await withVariants(
+      tenantId,
       await images(tenantId)
         .where("i.product_id", "=", productId)
         .orderBy("i.position")
         .orderBy("i.id")
-        .limit(limit)
-        .execute()
-    ).map((row) => row.storage_key),
+        .execute(),
+    );
+    if (!variantId) return rows.slice(0, limit).map((row) => row.storage_key);
+    const own = rows.filter((row) => row.variant_ids.includes(variantId));
+    const whole = rows.filter((row) => row.variant_ids.length === 0);
+    return [...own, ...whole].slice(0, limit).map((row) => row.storage_key);
+  },
 
   get: async (tenantId: string, id: string): Promise<ProductImage | null> => {
     const row = await images(tenantId)
       .where("i.id", "=", id)
       .executeTakeFirst();
-    return row ? toImage(row) : null;
+    if (!row) return null;
+    const [image] = await withVariants(tenantId, [row]);
+    return toImage(image!);
+  },
+
+  /**
+   * Sets the variants a photo shows; an empty list makes it a whole-product
+   * photo. Null when the photo is not the tenant's or a variant is not one of
+   * the photo's product.
+   */
+  setVariants: async (
+    tenantId: string,
+    id: string,
+    variantIds: string[],
+  ): Promise<ProductImage | null> => {
+    const row = await images(tenantId)
+      .where("i.id", "=", id)
+      .executeTakeFirst();
+    if (!row) return null;
+    const wanted = [...new Set(variantIds)];
+    if (wanted.length > 0) {
+      const found = await db
+        .selectFrom("product_variants")
+        .select("id")
+        .where("tenant_id", "=", tenantId)
+        .where("product_id", "=", row.product_id)
+        .where("id", "in", wanted)
+        .execute();
+      if (found.length !== wanted.length) return null;
+    }
+    await batch([
+      db
+        .deleteFrom("product_image_variants")
+        .where("tenant_id", "=", tenantId)
+        .where("image_id", "=", id),
+      ...wanted.map((variantId) =>
+        db.insertInto("product_image_variants").values({
+          image_id: id,
+          variant_id: variantId,
+          tenant_id: tenantId,
+        }),
+      ),
+    ]);
+    return await ProductImageService.get(tenantId, id);
   },
 
   /**

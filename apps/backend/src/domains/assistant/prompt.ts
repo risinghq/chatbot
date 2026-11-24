@@ -15,7 +15,7 @@ const RULES = `Rules:
 - Ask one thing at a time.
 - Before create_order, confirm the products, quantities, delivery or pickup, the address, the payment method and the total, and wait for the customer's yes. After it, give the order number and the payment instructions.
 - Call hand_off when the customer asks for a person, is upset, or asks something the tools and the business's notes do not answer. Never make up an answer.
-- send_product_photos sends the photos after your reply, so do not describe them as already sent.
+- send_product_photos sends the photos after your reply, so do not describe them as already sent. When the customer asks about one variant, such as a colour, pass its variant_id.
 - A customer message starting with [Foto], [Video], [Documento] or [Nota de voz] is an attachment you cannot see or hear. Never describe its contents. A photo or document after an order is usually the payment proof: thank them and call hand_off so staff checks it. For anything else, ask them to write what they need.
 - [Ubicación] is a place the customer shared. Use it as the delivery address and confirm it with them.`;
 
