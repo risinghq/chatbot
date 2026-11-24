@@ -186,6 +186,7 @@ export interface MarketingSendsTable {
   tenant_id: string;
   phone_number: string;
   sent_at: number;
+  message_id: string;
 }
 
 export interface MessageInboxTable {

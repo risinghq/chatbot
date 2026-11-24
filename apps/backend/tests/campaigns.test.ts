@@ -655,9 +655,11 @@ describe("campaigns", () => {
         "SELECT name, language, body FROM message_templates WHERE tenant_id = ? AND id = ?",
         [tenant.tenantId, await approvedTemplate(tenant.tenantId, "marketing")],
       );
+      // One clock reading, as one sweep pass gives every sender.
+      const now = Date.now();
       const [a, b] = await Promise.all([
-        enqueueTemplate(ref, template!, [], {}, Date.now(), 7),
-        enqueueTemplate(ref, template!, [], {}, Date.now(), 7),
+        enqueueTemplate(ref, template!, [], {}, now, 7),
+        enqueueTemplate(ref, template!, [], {}, now, 7),
       ]);
       const ids = [a, b].filter((r) => r !== "opted_out" && r !== "capped");
       expect(ids).toHaveLength(1);
@@ -671,12 +673,20 @@ describe("campaigns", () => {
     }
   });
 
-  it("rolls back the cap claim when the send rows fail", async () => {
+  it("commits no cap claim when the batch fails after it", async () => {
     const tenant = await createTenantFixture("Claim rollback");
     const graph = fakeGraph();
+    const phone = "51900000095";
+    // Fails the outbox insert, the batch's last statement, after the claim
+    // and the messages insert have run.
+    await run(
+      `CREATE TRIGGER fail_outbox_insert BEFORE INSERT ON outbox
+       WHEN NEW.phone_number = '${phone}'
+       BEGIN SELECT RAISE(ABORT, 'forced outbox failure'); END`,
+      [],
+    );
     try {
-      const phone = "51900000095";
-      const ref = { ...tenant.ref(phone), channelAccountId: "bogus-account" };
+      const ref = tenant.ref(phone);
       const template = await getOne<{
         name: string;
         language: string;
@@ -687,7 +697,7 @@ describe("campaigns", () => {
       );
       await expect(
         enqueueTemplate(ref, template!, [], {}, Date.now(), 7),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/forced outbox failure/);
       for (const table of ["marketing_sends", "messages", "outbox"]) {
         const row = await getOne<{ n: number }>(
           `SELECT count(*) AS n FROM ${table} WHERE tenant_id = ? AND phone_number = ?`,
@@ -695,6 +705,45 @@ describe("campaigns", () => {
         );
         expect(row!.n, `${table} should hold no row`).toBe(0);
       }
+    } finally {
+      await run("DROP TRIGGER fail_outbox_insert", []);
+      graph.restore();
+    }
+  });
+
+  it("returns capped and writes nothing for a phone inside the window", async () => {
+    const tenant = await createTenantFixture("In-window cap");
+    const graph = fakeGraph();
+    try {
+      const phone = "51900000096";
+      const earlier = Date.now() - 2 * DAY;
+      await run(
+        "INSERT INTO marketing_sends (tenant_id, phone_number, sent_at, message_id) VALUES (?, ?, ?, 'earlier')",
+        [tenant.tenantId, phone, earlier],
+      );
+      const template = await getOne<{
+        name: string;
+        language: string;
+        body: string;
+      }>(
+        "SELECT name, language, body FROM message_templates WHERE tenant_id = ? AND id = ?",
+        [tenant.tenantId, await approvedTemplate(tenant.tenantId, "marketing")],
+      );
+      await expect(
+        enqueueTemplate(tenant.ref(phone), template!, [], {}, Date.now(), 7),
+      ).resolves.toBe("capped");
+      for (const table of ["messages", "outbox"]) {
+        const row = await getOne<{ n: number }>(
+          `SELECT count(*) AS n FROM ${table} WHERE tenant_id = ? AND phone_number = ?`,
+          [tenant.tenantId, phone],
+        );
+        expect(row!.n, `${table} should hold no row`).toBe(0);
+      }
+      const claim = await getOne<{ sent_at: number; message_id: string }>(
+        "SELECT sent_at, message_id FROM marketing_sends WHERE tenant_id = ? AND phone_number = ?",
+        [tenant.tenantId, phone],
+      );
+      expect(claim).toEqual({ sent_at: earlier, message_id: "earlier" });
     } finally {
       graph.restore();
     }
@@ -796,7 +845,7 @@ describe("campaigns", () => {
           );
         } else {
           await run(
-            "INSERT INTO marketing_sends (tenant_id, phone_number, sent_at) VALUES (?, ?, ?)",
+            "INSERT INTO marketing_sends (tenant_id, phone_number, sent_at, message_id) VALUES (?, ?, ?, 'earlier')",
             [tenant.tenantId, phone, Date.now() - 2 * DAY],
           );
         }

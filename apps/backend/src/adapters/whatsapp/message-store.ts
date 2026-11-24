@@ -8,33 +8,38 @@ import type {
 import { sql } from "kysely";
 import { db } from "../../db/index.ts";
 
+/** The `messages` row `MessageStore.logStatement` inserts. */
+export function messageRow(
+  id: string,
+  ref: ConversationRef,
+  direction: MessageDirection,
+  type: StoredMessageType,
+  content: string,
+  status: string = "sent",
+  whatsappMessageId?: string,
+  productId?: string,
+) {
+  return {
+    id,
+    tenant_id: ref.tenantId,
+    channel_account_id: ref.channelAccountId,
+    phone_number: ref.phoneNumber,
+    direction,
+    type,
+    content,
+    status,
+    whatsapp_message_id: whatsappMessageId ?? null,
+    product_id: productId ?? null,
+  };
+}
+
 /**
  * Message history is keyed by the full conversation identity, so the same
  * contact number writing to two businesses keeps two separate threads.
  */
 export const MessageStore = {
-  logStatement(
-    id: string,
-    ref: ConversationRef,
-    direction: MessageDirection,
-    type: StoredMessageType,
-    content: string,
-    status: string = "sent",
-    whatsappMessageId?: string,
-    productId?: string,
-  ) {
-    return db.insertInto("messages").values({
-      id,
-      tenant_id: ref.tenantId,
-      channel_account_id: ref.channelAccountId,
-      phone_number: ref.phoneNumber,
-      direction,
-      type,
-      content,
-      status,
-      whatsapp_message_id: whatsappMessageId ?? null,
-      product_id: productId ?? null,
-    });
+  logStatement(...args: Parameters<typeof messageRow>) {
+    return db.insertInto("messages").values(messageRow(...args));
   },
 
   async log(

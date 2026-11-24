@@ -204,17 +204,23 @@ export async function hasQueuedReply(ref: ConversationRef): Promise<boolean> {
   return row !== undefined;
 }
 
-/** Append a reply to the conversation's queue. `id` gives the order it goes out in. */
-export function outboxInsert(args: {
+type OutboxEntry = {
   ref: ConversationRef;
   messageId: string;
   message: OutboundMessage;
   state: OutboxStep;
   now: number;
-}) {
-  const { ref, messageId, message, state, now } = args;
+};
 
-  return db.insertInto("outbox").values({
+/** Append a reply to the conversation's queue. `id` gives the order it goes out in. */
+export function outboxInsert(args: OutboxEntry) {
+  return db.insertInto("outbox").values(outboxRow(args));
+}
+
+/** The `outbox` row `outboxInsert` inserts. */
+export function outboxRow(args: OutboxEntry) {
+  const { ref, messageId, message, state, now } = args;
+  return {
     tenant_id: ref.tenantId,
     channel_account_id: ref.channelAccountId,
     phone_number: ref.phoneNumber,
@@ -235,16 +241,10 @@ export function outboxInsert(args: {
     next_attempt_at: state.nextAttemptAt,
     created_at: now,
     updated_at: now,
-  });
+  };
 }
 
-export async function enqueue(args: {
-  ref: ConversationRef;
-  messageId: string;
-  message: OutboundMessage;
-  state: OutboxStep;
-  now: number;
-}): Promise<number> {
+export async function enqueue(args: OutboxEntry): Promise<number> {
   const result = await outboxInsert(args).executeTakeFirstOrThrow();
   return Number(result.insertId);
 }

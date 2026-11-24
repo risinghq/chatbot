@@ -158,10 +158,12 @@ ALTER TABLE customers ADD COLUMN inactive_reminder_sent_at INTEGER;
 
 -- The last marketing send a phone got, from any sender (campaign or
 -- reminder). Written where the outbox row is written, so the cap sees every
--- marketing send, not only campaigns.
+-- marketing send, not only campaigns. `message_id` is the `messages` row of the
+-- send that holds the claim; that send's inserts are conditional on it.
 CREATE TABLE marketing_sends (
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     phone_number TEXT NOT NULL,
     sent_at INTEGER NOT NULL,
+    message_id TEXT NOT NULL,
     PRIMARY KEY (tenant_id, phone_number)
 );
