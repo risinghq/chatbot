@@ -33,7 +33,18 @@ export async function ensureConversation(
   ref: ConversationRef,
   isSimulation = false,
 ): Promise<StoredConversation> {
-  await db
+  return (
+    (await createConversation(ref, isSimulation)) ??
+    (await findConversation(ref))!
+  );
+}
+
+/** The new conversation, or null when `ref` already names one. */
+export async function createConversation(
+  ref: ConversationRef,
+  isSimulation: boolean,
+): Promise<StoredConversation | null> {
+  const created = await db
     .insertInto("conversations")
     .values({
       tenant_id: ref.tenantId,
@@ -43,8 +54,9 @@ export async function ensureConversation(
       is_simulation: isSimulation ? 1 : 0,
     })
     .onConflict((oc) => oc.doNothing())
-    .execute();
-  return (await findConversation(ref))!;
+    .returningAll()
+    .executeTakeFirst();
+  return (created as StoredConversation | undefined) ?? null;
 }
 
 /** Staff take the conversation over, for a caller's batch. */

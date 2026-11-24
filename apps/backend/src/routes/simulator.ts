@@ -5,6 +5,7 @@ import { WhatsAppService } from "../adapters/whatsapp/index.ts";
 import { ChannelAccountService } from "../domains/channels/accounts.ts";
 import { hasOpenAiApiKey } from "../domains/settings/openai.ts";
 import {
+  createConversation,
   ensureConversation,
   findConversation,
   release,
@@ -68,18 +69,34 @@ const SIMULATOR_PHONE = "51999999999";
 const SIMULATED_FIRST_PHONE = 51900000001;
 
 /**
- * Returns one past the highest simulated number on this account. Skips the
- * reserved replay contact and any number already taken.
+ * A new simulation on this account, on one past the highest simulated number.
+ * The insert claims the number, so two simulations created at once each get
+ * their own; one that finds its number taken tries the next.
  */
-async function nextSimulatedPhone(ref: ConversationRef): Promise<string> {
+async function createSimulation(
+  account: Omit<ConversationRef, "phoneNumber">,
+): Promise<Conversation> {
+  for (let candidate = await firstSimulatedPhone(account); ; candidate++) {
+    if (String(candidate) === SIMULATOR_PHONE) continue;
+    const created = await createConversation(
+      { ...account, phoneNumber: String(candidate) },
+      true,
+    );
+    if (created) return created as Conversation;
+  }
+}
+
+async function firstSimulatedPhone(
+  account: Omit<ConversationRef, "phoneNumber">,
+): Promise<number> {
   const highest = (
     await db
       .selectFrom("conversations")
       .select(
         sql<number | null>`max(cast(phone_number as integer))`.as("phone"),
       )
-      .where("tenant_id", "=", ref.tenantId)
-      .where("channel_account_id", "=", ref.channelAccountId)
+      .where("tenant_id", "=", account.tenantId)
+      .where("channel_account_id", "=", account.channelAccountId)
       .where("is_simulation", "=", 1)
       .where(
         sql<boolean>`phone_number glob '519[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'`,
@@ -87,15 +104,7 @@ async function nextSimulatedPhone(ref: ConversationRef): Promise<string> {
       .where("phone_number", "!=", SIMULATOR_PHONE)
       .executeTakeFirst()
   )?.phone;
-
-  let candidate = highest ? highest + 1 : SIMULATED_FIRST_PHONE;
-  while (
-    String(candidate) === SIMULATOR_PHONE ||
-    (await findConversation({ ...ref, phoneNumber: String(candidate) }))
-  ) {
-    candidate++;
-  }
-  return String(candidate);
+  return highest ? highest + 1 : SIMULATED_FIRST_PHONE;
 }
 
 /**
@@ -119,10 +128,11 @@ simulator.get("/conversations", async (c) => {
 
 // Create new test conversation
 simulator.post("/conversations", async (c) => {
-  const account = await simulatorRef(c, SIMULATOR_PHONE);
-  const ref = { ...account, phoneNumber: await nextSimulatedPhone(account) };
-
-  return c.json(await ensureConversation(ref, true));
+  const { phoneNumber: _replay, ...account } = await simulatorRef(
+    c,
+    SIMULATOR_PHONE,
+  );
+  return c.json(await createSimulation(account));
 });
 
 // What the simulator needs before a message can get an answer.
