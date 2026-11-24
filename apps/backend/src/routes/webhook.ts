@@ -16,6 +16,7 @@ import { ensureConversation } from "../conversation/store.ts";
 import { lockKey } from "../conversation/locks.ts";
 import { conversationStub } from "../conversation/stub.ts";
 import { TenantService } from "../domains/tenants/index.ts";
+import { recordAd } from "../domains/ads/index.ts";
 import { TemplateService } from "../domains/campaigns/templates.ts";
 import { ATTRIBUTION_DAYS } from "../domains/campaigns/campaigns.ts";
 import { db, withoutTenantScope } from "../db/index.ts";
@@ -441,6 +442,12 @@ async function handleInbound(
   // exist before it is written. Inbound text from a contact starts one, and the
   // handler's own get-or-create later is idempotent.
   await ensureConversation(ref);
+
+  // An ad click becomes the conversation's latest ad. Orders filed inside the
+  // window from now record it.
+  if (message.referral) {
+    await recordAd(ref, message.referral, message.timestamp);
+  }
 
   await WhatsAppService.logMessage(
     ref,

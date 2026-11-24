@@ -105,6 +105,10 @@ export interface ConversationsTable {
   last_activity_at: Generated<number>;
   assigned_agent: string | null;
   assignment_notified_at: number | null;
+  ad_source_id: string | null;
+  ad_headline: string | null;
+  ad_ctwa_clid: string | null;
+  ad_received_at: number | null;
 }
 
 export interface CustomerAddressesTable {
@@ -277,6 +281,8 @@ export interface OrdersTable {
   created_at: Generated<number>;
   updated_at: Generated<number>;
   cart_reminder_sent_at: number | null;
+  ad_source_id: string | null;
+  ad_headline: string | null;
 }
 
 export interface OutboxTable {

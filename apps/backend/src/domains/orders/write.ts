@@ -17,6 +17,7 @@ import {
 } from "../stock/index.ts";
 import { OrderReads } from "./read.ts";
 import { DeliveryZoneService, PaymentMethodService } from "./settings.ts";
+import { adForOrder } from "../ads/index.ts";
 
 /** The first number a business's orders take. */
 export const FIRST_ORDER_NUMBER = 1001;
@@ -231,6 +232,20 @@ export const OrderWrites = {
     const id = newId();
     const now = Date.now();
 
+    // An order off a conversation credits the ad the contact last clicked,
+    // while the click is still inside the window.
+    const ad =
+      order.channelAccountId && order.customer.phone
+        ? await adForOrder(
+            {
+              tenantId,
+              channelAccountId: order.channelAccountId,
+              phoneNumber: order.customer.phone,
+            },
+            now,
+          )
+        : null;
+
     const statements: Compilable[] = [
       db
         .insertInto("orders")
@@ -246,6 +261,8 @@ export const OrderWrites = {
           "delivery_fee_cents",
           "total_cents",
           "notes",
+          "ad_source_id",
+          "ad_headline",
           "created_by",
           "created_at",
           "updated_at",
@@ -272,6 +289,8 @@ export const OrderWrites = {
               eb.val(fee).as("delivery_fee_cents"),
               eb.val(subtotal + fee).as("total_cents"),
               eb.val(order.notes ?? null).as("notes"),
+              eb.val(ad?.ad_source_id ?? null).as("ad_source_id"),
+              eb.val(ad?.ad_headline ?? null).as("ad_headline"),
               eb.val(order.createdBy).as("created_by"),
               eb.val(now).as("created_at"),
               eb.val(now).as("updated_at"),

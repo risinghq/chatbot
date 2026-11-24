@@ -143,6 +143,7 @@ export {
   MODEL_PRICES,
 } from "./assistant.ts";
 export type {
+  ReportAd,
   ReportBusiness,
   ReportDay,
   ReportProduct,
@@ -174,6 +175,11 @@ export type Conversation = {
   last_activity_at: number;
   assigned_agent: string | null;
   assignment_notified_at: number | null;
+  /** The click-to-WhatsApp ad the contact last arrived through, if any. */
+  ad_source_id: string | null;
+  ad_headline: string | null;
+  ad_ctwa_clid: string | null;
+  ad_received_at: number | null;
   customer_name: string | null;
 };
 
@@ -286,6 +292,7 @@ export type ReplayData = {
 
 // WhatsApp message types
 export type {
+  AdReferral,
   StoredMessageType,
   InboundMessageType,
   QuotedMessageContext,

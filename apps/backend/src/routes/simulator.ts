@@ -11,6 +11,7 @@ import {
   release,
 } from "../conversation/store.ts";
 import { conversationStub, unlocked } from "../conversation/stub.ts";
+import { recordAd } from "../domains/ads/index.ts";
 import {
   activeTenantId,
   requireRole,
@@ -142,10 +143,16 @@ simulator.get("/status", async (c) =>
 
 // Send message in simulator
 simulator.post("/message", async (c) => {
-  const { phoneNumber, message } = await c.req.json();
+  const { phoneNumber, message, referral } = await c.req.json();
 
   if (!phoneNumber || !message) {
     return c.json({ error: "phoneNumber and message required" }, 400);
+  }
+  if (referral !== undefined && typeof referral?.sourceId !== "string") {
+    return c.json(
+      { error: "referral needs a sourceId, like a click-to-WhatsApp ad's" },
+      400,
+    );
   }
 
   if (!(await hasOpenAiApiKey(activeTenantId(c)))) {
@@ -158,6 +165,20 @@ simulator.post("/message", async (c) => {
   const ref = await simulatorRef(c, phoneNumber);
 
   await ensureConversation(ref, true);
+
+  // A simulated ad click records the ad like a real referral, so the
+  // attribution flow can be shown without Meta.
+  if (referral) {
+    await recordAd(
+      ref,
+      {
+        sourceId: referral.sourceId,
+        headline: referral.headline ?? null,
+        ctwaClid: referral.ctwaClid ?? null,
+      },
+      Date.now(),
+    );
+  }
 
   await WhatsAppService.logMessage(ref, "inbound", "text", message, "received");
 

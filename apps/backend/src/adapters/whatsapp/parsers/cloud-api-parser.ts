@@ -1,4 +1,5 @@
 import type {
+  AdReferral,
   IncomingMessage,
   InboundMessageType,
   QuotedMessageContext,
@@ -59,6 +60,28 @@ function bodyOf(webhookMessage: any, type: InboundMessageType): string {
   }
 }
 
+/**
+ * The ad behind a click-to-WhatsApp message, or undefined for any other
+ * message. Meta hangs a `referral` on the first message of a conversation the
+ * customer opened from an ad (source_type "ad"), and on later messages from
+ * the same click. Other referrals, such as a post's, are not ads.
+ */
+function referralOf(webhookMessage: any): AdReferral | undefined {
+  const referral = webhookMessage.referral;
+  if (referral?.source_type !== "ad" || !referral.source_id) return undefined;
+  return {
+    sourceId: String(referral.source_id),
+    headline:
+      typeof referral.headline === "string" && referral.headline
+        ? referral.headline
+        : null,
+    ctwaClid:
+      typeof referral.ctwa_clid === "string" && referral.ctwa_clid
+        ? referral.ctwa_clid
+        : null,
+  };
+}
+
 export function parseIncomingMessage(webhookMessage: any): IncomingMessage {
   let quotedContext: QuotedMessageContext | undefined;
 
@@ -80,6 +103,7 @@ export function parseIncomingMessage(webhookMessage: any): IncomingMessage {
     timestamp:
       (webhookMessage.timestamp || Math.floor(Date.now() / 1000)) * 1000,
     quotedContext,
+    referral: referralOf(webhookMessage),
   };
 }
 

@@ -17,6 +17,14 @@ export type QuotedMessageContext = {
   timestamp: number;
 };
 
+/** The ad a click-to-WhatsApp message came from, as Meta's `referral` gives it. */
+export type AdReferral = {
+  /** Meta's ad id, `referral.source_id`. */
+  sourceId: string;
+  headline: string | null;
+  ctwaClid: string | null;
+};
+
 export type IncomingMessage = {
   id: string;
   from: string;
@@ -24,4 +32,6 @@ export type IncomingMessage = {
   type: InboundMessageType;
   timestamp: number;
   quotedContext?: QuotedMessageContext;
+  /** Set when the message arrived from a click-to-WhatsApp ad. */
+  referral?: AdReferral;
 };
