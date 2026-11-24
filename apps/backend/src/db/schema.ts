@@ -283,6 +283,7 @@ export interface OrdersTable {
   cart_reminder_sent_at: number | null;
   ad_source_id: string | null;
   ad_headline: string | null;
+  shopify_order_id: string | null;
 }
 
 export interface OutboxTable {
@@ -341,6 +342,7 @@ export interface ProductImagesTable {
   asset_id: string;
   position: number;
   created_at: Generated<number>;
+  shopify_image_id: string | null;
 }
 
 export interface ProductVariantsTable {
@@ -353,6 +355,8 @@ export interface ProductVariantsTable {
   cost_cents: number | null;
   is_active: Generated<0 | 1>;
   created_at: Generated<number>;
+  shopify_variant_id: string | null;
+  shopify_inventory_item_id: string | null;
 }
 
 export interface ProductsTable {
@@ -366,6 +370,7 @@ export interface ProductsTable {
   created_at: Generated<number>;
   description: string | null;
   status: Generated<"draft" | "active" | "archived">;
+  shopify_product_id: string | null;
 }
 
 export interface PushSubscriptionsTable {
@@ -406,6 +411,25 @@ export interface ShipmentsTable {
   shipped_at: number | null;
   delivered_at: number | null;
   created_at: Generated<number>;
+}
+
+export interface ShopifyConnectionsTable {
+  tenant_id: string;
+  shop_domain: string;
+  last_synced_at: number | null;
+  created_at: Generated<number>;
+  updated_at: Generated<number>;
+}
+
+export interface ShopifyOrderSyncsTable {
+  tenant_id: string;
+  order_id: string;
+  status: Generated<"pending" | "sending" | "synced" | "failed">;
+  attempts: Generated<number>;
+  next_attempt_at: number;
+  last_error: string | null;
+  created_at: Generated<number>;
+  updated_at: Generated<number>;
 }
 
 export interface StockLevelsTable {
@@ -544,6 +568,8 @@ export interface Database {
   push_subscriptions: PushSubscriptionsTable;
   session: SessionTable;
   shipments: ShipmentsTable;
+  shopify_connections: ShopifyConnectionsTable;
+  shopify_order_syncs: ShopifyOrderSyncsTable;
   stock_levels: StockLevelsTable;
   stock_locations: StockLocationsTable;
   stock_movements: StockMovementsTable;
@@ -589,6 +615,8 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "products",
   "push_subscriptions",
   "shipments",
+  "shopify_connections",
+  "shopify_order_syncs",
   "stock_levels",
   "stock_locations",
   "stock_movements",

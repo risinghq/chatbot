@@ -11,6 +11,8 @@ export type Product = {
   brand: string | null;
   model: string | null;
   specs_json: string | null;
+  /** The Shopify product a sync imported it from; null for a manual product. */
+  shopify_product_id: string | null;
   created_at: number;
   /** Present on list reads. */
   variant_count?: number;
@@ -40,5 +42,8 @@ export type ProductVariant = {
   price_cents: number;
   cost_cents: number | null;
   is_active: 0 | 1;
+  /** The Shopify variant and inventory item a sync imported it from. */
+  shopify_variant_id: string | null;
+  shopify_inventory_item_id: string | null;
   created_at: number;
 };

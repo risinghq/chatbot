@@ -121,6 +121,8 @@ export type Order = {
   delivery_fee_cents: number;
   total_cents: number;
   notes: string | null;
+  /** The Shopify order id a confirmed order was written back as. */
+  shopify_order_id: string | null;
   created_by: string | null;
   created_at: number;
   updated_at: number;
@@ -189,12 +191,21 @@ export type ShipmentSummary = Shipment & {
   payment_state: PaymentState;
 };
 
+/** Where the order's write-back to Shopify stands, while one is queued. */
+export type ShopifyOrderSync = {
+  status: "pending" | "sending" | "synced" | "failed";
+  last_error: string | null;
+  next_attempt_at: number;
+  attempts: number;
+};
+
 /** One order as its page shows it. */
 export type OrderDetail = OrderSummary & {
   customer: Customer;
   lines: OrderLine[];
   payments: Payment[];
   shipment: Shipment | null;
+  shopify_sync: ShopifyOrderSync | null;
   created_by_name: string | null;
 };
 

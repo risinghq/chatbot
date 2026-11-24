@@ -128,6 +128,7 @@ export type {
   PaymentStatus,
   Shipment,
   ShipmentSummary,
+  ShopifyOrderSync,
 } from "./orders.ts";
 export {
   DOCUMENT_TYPES,
