@@ -32,7 +32,11 @@ const sections = $derived.by((): NavSection[] => {
   ];
   if (auth.canAccessReports) {
     tools.push(
-      { href: businessPath("/activity"), label: "Actividad", icon: "activity" },
+      {
+        href: businessPath("/historial"),
+        label: "Historial",
+        icon: "activity",
+      },
       { href: businessPath("/reports"), label: "Reportes", icon: "chart" },
     );
   }

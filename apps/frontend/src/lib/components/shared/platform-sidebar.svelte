@@ -9,6 +9,7 @@ const sections = $derived.by((): NavSection[] => {
   const platform: NavItem[] = [
     { href: "/dashboard/negocios", label: "Negocios", icon: "building" },
     { href: "/dashboard/reports", label: "Reportes", icon: "chart" },
+    { href: "/dashboard/historial", label: "Historial", icon: "activity" },
   ];
   if (auth.canAccessProviders) {
     platform.push({

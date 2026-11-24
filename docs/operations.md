@@ -311,12 +311,21 @@ the actor (`user:<id>` or `cli:<os user>`), the tenant, the action and the
 resource. The writer is
 [`platform/audit/logger.ts`](../apps/backend/src/platform/audit/logger.ts).
 
-Admins read a business's entries on its Auditoría page
-(`/dashboard/<tenant id>/admin/audit`), backed by `GET /api/admin/audit`, which
-answers only the business the request names. Platform actions, with no tenant,
-stay in the table and are read with `wrangler d1 execute`. A `send_message` row
-whose delivery WhatsApp did not confirm carries a "Entrega sin confirmar" mark;
-see [the send](./conversation.md#the-send).
+A business's Historial page (`/dashboard/<tenant id>/historial`, backed by
+`GET /api/history`) shows its rows as sentences, newest first, to admins,
+developers and supervisors. The rows with no tenant, such as platform settings
+or an account made from the terminal, show on the platform's Historial
+(`/dashboard/historial`, backed by `GET /api/platform/history`) to platform
+operators. [`domains/history`](../apps/backend/src/domains/history/index.ts)
+names each row's actor and subject. A deleted subject is named from the `name`
+its delete row recorded. A `send_message` row whose delivery WhatsApp did not
+confirm carries a "Entrega sin confirmar" mark; see
+[the send](./conversation.md#the-send).
+
+The assistant's model calls are not in the audit log. Admins and developers read
+them, prompt and answer included, on Asistente → Registro
+(`/dashboard/<tenant id>/asistente/registro`, backed by
+`GET /api/assistant/calls`).
 
 ## Reading the database
 

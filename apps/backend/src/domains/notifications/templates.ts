@@ -92,7 +92,7 @@ export const templates = {
     return [
       `Se ha producido un error con el ${ident}. Error: ${error}`,
       `Conversación: ${conversationLink(ctx)}`,
-      `Actividad: ${formatLink(ctx, "/activity")}`,
+      `Registro del asistente: ${formatLink(ctx, "/asistente/registro")}`,
     ].join("\n");
   },
 

@@ -70,9 +70,11 @@ These pages check the role on the server:
 
 - [`[tenantId]/admin/+layout.server.ts`](../apps/frontend/src/routes/dashboard/[tenantId=uuid]/admin/+layout.server.ts)
   sends anyone but `admin` to the business's home.
-- `[tenantId]/reports/+page.server.ts` allows `admin`, `developer`,
+- `[tenantId]/reports/+page.server.ts` and
+  `[tenantId]/historial/+page.server.ts` allow `admin`, `developer`,
   `supervisor`.
-- `[tenantId]/asistente/probar/+page.server.ts` allows `admin`, `developer`.
+- `[tenantId]/asistente/probar/+page.server.ts` and
+  `[tenantId]/asistente/registro/+page.server.ts` allow `admin`, `developer`.
 - [`(platform)/+layout.server.ts`](<../apps/frontend/src/routes/dashboard/(platform)/+layout.server.ts>)
   allows platform operators only, and sends anyone else to `/dashboard`.
 
@@ -94,7 +96,8 @@ work in two businesses, and a link names the business it points into.
 - `/dashboard` holds no business. It opens the business the session last named,
   else a member's only business, else lists the businesses to pick from.
 - `(platform)/` holds the pages of VendeYa's own staff, which belong to no
-  business: Negocios, Reportes, Proveedores and Ajustes, with their own sidebar.
+  business: Negocios, Reportes, Historial, Proveedores and Ajustes, with their
+  own sidebar.
 - `[...path]` catches a link from before the business was in the URL, such as
   `/dashboard/orders/42` in a WhatsApp alert, and opens it in the business last
   named.
@@ -118,6 +121,7 @@ routes/
     (platform)/                     platform operators only, no business
       negocios/                     businesses: create, open
       reports/                      reports across businesses
+      historial/                    what changed outside any business
       providers/                    DNI lookup and provider checks
       ajustes/                      Power BI and the provider switches
     [tenantId=uuid]/                one business, named by the URL
@@ -125,17 +129,18 @@ routes/
       conversations/  [phone]/      inbox and one conversation
       asistente/                    the assistant's instructions, model and tools
         probar/                     the simulator: admin, developer
+        registro/                   the assistant's model calls: admin, developer
       clientes/  [customerId]/      customers and one customer
       catalog/  inventory/[id]/     products; one product and its variants
       inventario/                   stock per variant and the movement ledger
       orders/  [orderId]/
       envios/                       delivery zones and shipments
       reports/                      admin, developer, supervisor
-      activity/                     system activity
+      historial/                    what the team changed: admin, developer, supervisor
       cuenta/                       the signed-in user's account
       admin/                        admin only
         users/  [userId]/  create/
-        channels/  orders/  audit/  settings/
+        channels/  orders/  settings/
 ```
 
 ## Adding a page

@@ -31,7 +31,7 @@ const requireSettingsWrite = requireRole("admin", "developer", "supervisor");
  * List, read, create, update and delete for a setting a business keeps one
  * list of. Sales agents read it to fill in orders.
  */
-function settingRoutes<T extends { id: string }, F>(
+function settingRoutes<T extends { id: string; name: string }, F>(
   entity: string,
   service: Service<T, F>,
   parse: (
@@ -95,7 +95,9 @@ function settingRoutes<T extends { id: string }, F>(
   app.delete("/:id", requireSettingsWrite, async (c) => {
     const tenantId = activeTenantId(c);
     const id = pathParam(c, "id");
-    if (!(await service.delete(tenantId, id))) {
+    // The history names a deleted setting from this entry.
+    const row = await service.get(tenantId, id);
+    if (!row || !(await service.delete(tenantId, id))) {
       return c.json({ error: `${entity} not found` }, 404);
     }
     await logAction(
@@ -103,7 +105,7 @@ function settingRoutes<T extends { id: string }, F>(
       `delete_${entity}`,
       entity,
       id,
-      {},
+      { name: row.name },
     );
     return c.body(null, 204);
   });

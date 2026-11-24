@@ -6,9 +6,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import type {
-  AuditLog,
   Conversation,
   ConversationMessage,
+  HistoryEntry,
   OrderDetail,
   OrderSummary,
   Product,
@@ -33,7 +33,7 @@ import conversationRoutes from "../src/routes/conversations.ts";
 import catalogRoutes from "../src/routes/catalog.ts";
 import orderRoutes from "../src/routes/orders.ts";
 import adminUserRoutes from "../src/routes/admin/users.ts";
-import adminSystemRoutes from "../src/routes/admin/system.ts";
+import historyRoutes from "../src/routes/history.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { OrderWrites } from "../src/domains/orders/index.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
@@ -58,9 +58,9 @@ function buildApp() {
   app.route("/api/conversations", conversationRoutes);
   app.route("/api/catalog", catalogRoutes);
   app.route("/api/orders", orderRoutes);
+  app.route("/api/history", historyRoutes);
   app.use("/api/admin/*", requireRole("admin"));
   app.route("/api/admin/users", adminUserRoutes);
-  app.route("/api/admin", adminSystemRoutes);
   return app;
 }
 
@@ -164,17 +164,19 @@ describe("created_at over HTTP", () => {
     expectMilliseconds(changed.updated_at);
   });
 
-  it("returns AuditLog.created_at as a number", async () => {
+  it("returns HistoryEntry.at as a number", async () => {
     await logAction(
       { userId, tenantId: tenant.tenantId },
       "test_action",
       "test",
     );
 
-    const { logs } = await getJson<{ logs: AuditLog[] }>("/api/admin/audit");
+    const { entries } = await getJson<{ entries: HistoryEntry[] }>(
+      "/api/history",
+    );
 
-    expect(logs).toHaveLength(1);
-    expectMilliseconds(logs[0]!.created_at);
+    expect(entries).toHaveLength(1);
+    expectMilliseconds(entries[0]!.at);
   });
 
   it("returns User.created_at as a number", async () => {

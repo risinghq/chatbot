@@ -8,7 +8,10 @@ let { class: className = "" }: { class?: string } = $props();
 const tabs = $derived([
   { href: businessPath("/asistente"), label: "Configuración" },
   ...(auth.canAccessSimulator
-    ? [{ href: businessPath("/asistente/probar"), label: "Probar" }]
+    ? [
+        { href: businessPath("/asistente/probar"), label: "Probar" },
+        { href: businessPath("/asistente/registro"), label: "Registro" },
+      ]
     : []),
 ]);
 </script>
