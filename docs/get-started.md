@@ -1,8 +1,8 @@
 # Get started
 
 This takes a fresh clone to a bot you can talk to in the dashboard's simulator.
-It needs no Cloudflare account, no WhatsApp number, no Cálidda credentials and
-no LLM key.
+It needs no Cloudflare account, no WhatsApp number and no Cálidda credentials.
+The assistant answers once the business has an OpenAI key.
 
 ## Prerequisites
 
@@ -13,8 +13,8 @@ no LLM key.
 ## Install
 
 ```sh
-git clone https://github.com/totallynotdavid/chatbot.git
-cd chatbot
+git clone https://github.com/risinghq/sales.rising.sh.git
+cd sales.rising.sh
 mise install
 bun install --frozen-lockfile
 ```
