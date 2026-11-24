@@ -42,7 +42,7 @@ export function transitionLabel(from: OrderStatus, to: OrderStatus): string {
   if (to === "delivered" && from === "packed") return "Entregado en tienda";
   const labels: Record<OrderStatus, string> = {
     pending: "Pendiente",
-    confirmed: "Confirmar",
+    confirmed: "Aceptar",
     packed: "Marcar empacado",
     shipped: "Marcar enviado",
     delivered: "Marcar entregado",

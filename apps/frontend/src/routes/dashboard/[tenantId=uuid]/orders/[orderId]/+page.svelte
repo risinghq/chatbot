@@ -321,7 +321,7 @@ function decide(paymentId: string, action: "confirm" | "reject") {
 				</section>
 			</div>
 
-			<div class="flex flex-col gap-4">
+			<div class="order-first flex flex-col gap-4 lg:order-none">
 				{#if moves.length > 0}
 					<section class="rounded-md border border-border bg-surface p-4">
 						{@render heading("Siguiente paso")}
