@@ -11,13 +11,21 @@ function messagesUrl(account: ChannelAccount): string {
   return graphUrl(`${account.phone_number_id}/messages`);
 }
 
-/**
- * Credentials for one send. Returns the reason (and logs it) when the account
- * cannot currently send.
- */
 async function credentials(
   account: ChannelAccount,
 ): Promise<{ token: string; url: string } | { refusal: string }> {
+  const token = await sendingToken(account);
+  if ("refusal" in token) return token;
+  return { token: token.token, url: messagesUrl(account) };
+}
+
+/**
+ * The access token a send uses. Returns the reason (and logs it) when the
+ * account cannot currently send.
+ */
+export async function sendingToken(
+  account: ChannelAccount,
+): Promise<{ token: string } | { refusal: string }> {
   if (account.status !== "active") {
     logger.warn(
       { channelAccountId: account.id, status: account.status },
@@ -35,7 +43,7 @@ async function credentials(
     return { refusal: "no_token" };
   }
 
-  return { token, url: messagesUrl(account) };
+  return { token };
 }
 
 type SendFailure = Extract<SendOutcome, { ok: false }>;
@@ -127,26 +135,23 @@ export function classifyThrown(error: unknown): SendFailure {
 }
 
 /**
- * Posts one payload to the account's messages endpoint. `sendMessage` and
- * `sendImage` both post through here, so they classify a failure the same way.
+ * Posts one send to a Graph endpoint and classifies the answer. Every
+ * WhatsApp and Instagram send posts through here, so a failure is classified
+ * the same way on both. `idOf` reads the sent message's id from the body.
  */
-async function post(
-  account: ChannelAccount,
+export async function postSend(
+  request: { url: string; token: string },
   payload: Record<string, unknown>,
   timeoutMs: number,
+  idOf: (body: string) => string | undefined,
 ): Promise<SendOutcome> {
-  const creds = await credentials(account);
-  if ("refusal" in creds) {
-    return { ok: false, kind: "permanent", reason: creds.refusal };
-  }
-
   const { signal, cleanup } = createAbortTimeout(timeoutMs);
 
   try {
-    const response = await fetch(creds.url, {
+    const response = await fetch(request.url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${creds.token}`,
+        Authorization: `Bearer ${request.token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
@@ -158,7 +163,7 @@ async function post(
 
     if (!response.ok) return classifyHttpFailure(response.status, body);
 
-    const messageId = messageIdOf(body);
+    const messageId = idOf(body);
     if (messageId) return { ok: true, messageId };
     return {
       ok: false,
@@ -171,6 +176,19 @@ async function post(
   } finally {
     cleanup();
   }
+}
+
+/** Posts one payload to the account's messages endpoint. */
+async function post(
+  account: ChannelAccount,
+  payload: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<SendOutcome> {
+  const creds = await credentials(account);
+  if ("refusal" in creds) {
+    return { ok: false, kind: "permanent", reason: creds.refusal };
+  }
+  return postSend(creds, payload, timeoutMs, messageIdOf);
 }
 
 /**

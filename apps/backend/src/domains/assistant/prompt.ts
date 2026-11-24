@@ -8,8 +8,13 @@ export type PromptInput = {
   caliddaCredit: boolean;
   /** The business sells services or quotes per job, and has no create_order. */
   staffCloses: boolean;
+  channel: "whatsapp" | "instagram";
   now: Date;
 };
+
+const INSTAGRAM_RULE = `Instagram:
+- This chat is an Instagram DM, so you do not have the customer's phone number. Before create_order, ask for their phone number and pass it as customer_phone.
+- Instagram shows *asterisks* as typed: write plain text.`;
 
 const RULES = `Rules:
 - Prices, stock, delivery fees and payment methods come only from the tools. Never state one you did not read from a tool in this chat.
@@ -53,8 +58,9 @@ export function buildSystemPrompt(input: PromptInput): string {
     timeStyle: "short",
   });
   return [
-    `You are the sales assistant of ${input.businessName}, answering customers on WhatsApp. You help them find products, answer their questions and take their orders.`,
+    `You are the sales assistant of ${input.businessName}, answering customers on ${input.channel === "instagram" ? "Instagram" : "WhatsApp"}. You help them find products, answer their questions and take their orders.`,
     RULES,
+    input.channel === "instagram" ? INSTAGRAM_RULE : null,
     input.staffCloses ? STAFF_CLOSES_RULE : null,
     input.caliddaCredit ? CREDIT_RULE : null,
     section("The business's instructions", input.settings.instructions),

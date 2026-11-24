@@ -92,6 +92,7 @@ describe("the assistant's tools", () => {
       tenantId: fixture.tenantId,
       channelAccountId: fixture.channelAccountId,
       phone: PHONE,
+      channel: "whatsapp",
       simulated: false,
     };
     polo = await addVariant(
@@ -284,6 +285,26 @@ describe("the assistant's tools", () => {
       expect(result).toEqual({
         error: "a delivery needs zone_id: call list_delivery_zones",
       });
+    });
+
+    it("on Instagram, asks for the customer's phone and saves them by it", async () => {
+      const instagram = { channel: "instagram" as const, phone: "1789000111" };
+      const refused = await call("create_order", order(), instagram);
+      expect(refused.result).toEqual({
+        error:
+          "an Instagram order needs customer_phone: ask the customer for their phone number",
+      });
+      expect(await orderCount()).toBe(0);
+
+      const filed = await call(
+        "create_order",
+        order({ customer_phone: "987 654 321" }),
+        instagram,
+      );
+      const effect = filed.effects[0];
+      expect(effect?.kind).toBe("order_created");
+      if (effect?.kind !== "order_created") return;
+      expect(effect.order.customer?.phone).toMatch(/987654321$/);
     });
 
     it("refuses more than the stock and files nothing", async () => {

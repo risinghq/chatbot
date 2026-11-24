@@ -489,6 +489,7 @@ describe("a TAYPI pay link", () => {
         tenantId,
         channelAccountId,
         phone: "51987654321",
+        channel: "whatsapp",
         simulated: false,
       };
     });

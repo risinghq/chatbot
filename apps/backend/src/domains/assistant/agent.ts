@@ -8,12 +8,13 @@ import type { ConversationRef } from "@vendeya/types";
 import { db } from "../../db/index.ts";
 import { classifyLLMError } from "../../intelligence/llm-errors.ts";
 import { trackLLMCall } from "../../intelligence/tracker.ts";
+import { ChannelAccountService } from "../channels/accounts.ts";
 import { CustomerService } from "../customers/index.ts";
 import { caliddaLogin } from "../settings/calidda.ts";
 import { TenantService } from "../tenants/index.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { AssistantSettingsService } from "./settings.ts";
-import { toWhatsAppText } from "./whatsapp-text.ts";
+import { toInstagramText, toWhatsAppText } from "./whatsapp-text.ts";
 import {
   runTool,
   toolsFor,
@@ -175,13 +176,17 @@ export async function runAgent(input: {
   quoted?: string;
 }): Promise<AgentTurn> {
   const { ref, simulated, complete, quoted } = input;
-  const [settings, tenant, customer, history, calidda] = await Promise.all([
-    AssistantSettingsService.get(ref.tenantId),
-    TenantService.getById(ref.tenantId),
-    CustomerService.getByPhone(ref.tenantId, ref.phoneNumber),
-    loadHistory(ref),
-    caliddaLogin(ref.tenantId),
-  ]);
+  const [settings, tenant, customer, history, calidda, account] =
+    await Promise.all([
+      AssistantSettingsService.get(ref.tenantId),
+      TenantService.getById(ref.tenantId),
+      CustomerService.getByPhone(ref.tenantId, ref.phoneNumber),
+      loadHistory(ref),
+      caliddaLogin(ref.tenantId),
+      ChannelAccountService.getById(ref.channelAccountId),
+    ]);
+  const channel =
+    account?.channel_type === "instagram" ? "instagram" : "whatsapp";
   const caliddaCredit = calidda !== null;
   const staffCloses = tenant?.business_kind === "services";
   const tools = toolsFor({ caliddaCredit, staffCloses });
@@ -192,6 +197,7 @@ export async function runAgent(input: {
     customer,
     caliddaCredit,
     staffCloses,
+    channel,
     now: new Date(),
   });
   const messages: AgentMessage[] = [
@@ -209,6 +215,7 @@ export async function runAgent(input: {
     tenantId: ref.tenantId,
     channelAccountId: ref.channelAccountId,
     phone: ref.phoneNumber,
+    channel,
     simulated,
   };
 
@@ -236,7 +243,9 @@ export async function runAgent(input: {
 
     if (!allowTools || completion.toolCalls.length === 0) {
       return {
-        reply: toWhatsAppText(completion.content?.trim() ?? ""),
+        reply: (channel === "instagram" ? toInstagramText : toWhatsAppText)(
+          completion.content?.trim() ?? "",
+        ),
         effects,
       };
     }

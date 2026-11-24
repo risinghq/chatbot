@@ -12,11 +12,15 @@ const USAGE = `Usage:
   bun run account tenant create --name <business name>
   bun run account channel create --tenant <tenant id> --phone-number-id <id>
       [--waba-id <id>] [--display-phone-number <number>] [--label <label>]
+      [--instagram]
   bun run account token create <email> --name <token name> [--days <1-365>]
 
 \`token create\` prints a new API token for the account on stdout, once. It is
 how the first token reaches a program; after that, mint tokens on the
 dashboard (Mi cuenta).
+
+\`--instagram\` registers an Instagram professional account instead of a
+WhatsApp number: \`--phone-number-id\` takes the account's Instagram id.
 
 Every command writes to the local D1
 database that \`bun run dev\` uses. Add --remote to write to the deployed one,
@@ -35,6 +39,7 @@ type Options = {
   "waba-id"?: string;
   "display-phone-number"?: string;
   label?: string;
+  instagram?: boolean;
   days?: string;
   remote?: boolean;
 };
@@ -62,6 +67,7 @@ function parse(argv: string[]) {
         "waba-id": { type: "string" },
         "display-phone-number": { type: "string" },
         label: { type: "string" },
+        instagram: { type: "boolean" },
         days: { type: "string" },
         remote: { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -223,8 +229,11 @@ async function createChannel(options: Options, operator: CliOperator) {
   if (!tenant) return refuse(`No tenant has the id ${options.tenant}.`);
 
   const phoneNumberId = options["phone-number-id"]!;
-  if (await ChannelAccountService.getByPhoneNumberId(phoneNumberId)) {
-    return refuse("That phone number id is already registered.");
+  const channelType = options.instagram ? "instagram" : "whatsapp";
+  if (
+    await ChannelAccountService.getByPhoneNumberId(phoneNumberId, channelType)
+  ) {
+    return refuse(`That ${channelType} id is already registered.`);
   }
 
   const accessToken = await readSecret("Access token");
@@ -232,6 +241,7 @@ async function createChannel(options: Options, operator: CliOperator) {
 
   const account = await ChannelAccountService.create({
     tenantId: tenant.id,
+    channelType,
     phoneNumberId,
     wabaId: options["waba-id"] ?? null,
     displayPhoneNumber: options["display-phone-number"] ?? null,
@@ -246,7 +256,7 @@ async function createChannel(options: Options, operator: CliOperator) {
       "create_channel_account",
       "channel_account",
       account.id,
-      { phoneNumberId, wabaId: account.waba_id },
+      { phoneNumberId, wabaId: account.waba_id, channelType },
     ),
   ]);
 

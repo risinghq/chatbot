@@ -7,6 +7,7 @@ import type {
   StoredMessageType,
 } from "./types.ts";
 import { CloudApiAdapter } from "./cloud-api.ts";
+import { InstagramAdapter, type InstagramWindow } from "../instagram/api.ts";
 import { MessageStore } from "./message-store.ts";
 import { ChannelAccountService } from "../../domains/channels/accounts.ts";
 import { TenantService } from "../../domains/tenants/index.ts";
@@ -62,14 +63,14 @@ async function resolveAccount(ref: ConversationRef): Promise<SendTarget> {
     return { unsendable: null, reason: "account_not_found", recordable: false };
   }
 
-  if (account.channel_type !== "whatsapp") {
+  if (account.channel_type === "simulator") {
     // The simulator's turns record their replies instead of sending them, so
     // a send reaching here is a bug and Meta must not see it.
     logger.error(
       { channelAccountId: account.id, tenantId: ref.tenantId },
-      "Refusing to send on a channel that is not WhatsApp",
+      "Refusing to send on the simulator channel",
     );
-    return { unsendable: null, reason: "not_whatsapp", recordable: true };
+    return { unsendable: null, reason: "simulator", recordable: true };
   }
 
   if (account.tenant_id !== ref.tenantId) {
@@ -134,12 +135,43 @@ function logFailure(
   );
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Where an Instagram send falls in the window the customer's last message
+ * opened. Only a person's reply may go out after the first 24 hours, and
+ * nothing after 7 days.
+ */
+async function instagramWindow(
+  ref: ConversationRef,
+  sender: Sender,
+): Promise<InstagramWindow | null> {
+  const last = await MessageStore.lastInboundAt(ref);
+  if (last === null) return null;
+  const age = Date.now() - last;
+  if (age <= DAY_MS) return "open";
+  if (sender === "person" && age <= 7 * DAY_MS) return "human_agent";
+  return null;
+}
+
+/** Who wrote a send: the bot and notifications, or a person replying by hand. */
+type Sender = "automated" | "person";
+
 /** What the send methods pass the adapter, from either a caller or an outbox row. */
 async function callAdapter(
   account: ChannelAccount,
-  to: string,
+  ref: ConversationRef,
   message: OutboundMessage,
+  sender: Sender,
 ): Promise<SendOutcome> {
+  const to = ref.phoneNumber;
+  if (account.channel_type === "instagram") {
+    const window = await instagramWindow(ref, sender);
+    if (!window) {
+      return { ok: false, kind: "permanent", reason: "outside_window" };
+    }
+    return InstagramAdapter.send(account, to, message, window);
+  }
   if (message.type === "image") {
     return adapter.sendImage(account, to, message.content, message.caption);
   }
@@ -168,7 +200,7 @@ export async function sendResolved(
     return { ok: false, kind: "permanent", reason: target.reason };
   }
 
-  const outcome = await callAdapter(target.account, ref.phoneNumber, message);
+  const outcome = await callAdapter(target.account, ref, message, "automated");
   if (!outcome.ok) {
     logFailure(ref, outcome, message.type === "image" ? "image" : "message");
   }
@@ -217,7 +249,13 @@ async function deliver(
 
   let outcome: SendOutcome;
   if ("account" in target) {
-    outcome = await callAdapter(target.account, ref.phoneNumber, message);
+    // Only an agent's manual reply sends without `retry`.
+    outcome = await callAdapter(
+      target.account,
+      ref,
+      message,
+      retry ? "automated" : "person",
+    );
 
     if (outcome.ok) {
       await store("sent", outcome.messageId);
@@ -330,6 +368,10 @@ export const WhatsAppService = {
   ): Promise<void> {
     const target = await resolveAccount(ref);
     if (!("account" in target)) return;
+    if (target.account.channel_type === "instagram") {
+      await InstagramAdapter.markSeen(target.account, ref.phoneNumber, options);
+      return;
+    }
     await adapter.markAsRead(target.account, messageId, options);
   },
 

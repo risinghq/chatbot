@@ -115,6 +115,19 @@ export const MessageStore = {
       .execute();
   },
 
+  /** When the contact last wrote, in epoch milliseconds, or null if never. */
+  async lastInboundAt(ref: ConversationRef): Promise<number | null> {
+    const row = await db
+      .selectFrom("messages")
+      .select((eb) => eb.fn.max("created_at").as("at"))
+      .where("tenant_id", "=", ref.tenantId)
+      .where("channel_account_id", "=", ref.channelAccountId)
+      .where("phone_number", "=", ref.phoneNumber)
+      .where("direction", "=", "inbound")
+      .executeTakeFirst();
+    return row?.at == null ? null : Number(row.at);
+  },
+
   async clear(ref: ConversationRef): Promise<void> {
     await db
       .deleteFrom("messages")

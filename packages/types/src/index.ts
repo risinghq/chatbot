@@ -47,8 +47,11 @@ export type TenantMembership = {
 };
 
 // Channel accounts
-/** Each business has one `simulator` channel, where the dashboard's simulator talks. */
-export type ChannelType = "whatsapp" | "simulator";
+/**
+ * A WhatsApp number or an Instagram professional account. Each business also
+ * has one `simulator` channel, where the dashboard's simulator talks.
+ */
+export type ChannelType = "whatsapp" | "instagram" | "simulator";
 export type ChannelAccountStatus = "active" | "pending" | "disabled";
 
 export type ChannelAccount = {
@@ -302,3 +305,4 @@ export type {
 
 export * from "./events.ts";
 export * from "./campaigns.ts";
+export * from "./instagram.ts";

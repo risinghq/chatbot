@@ -12,3 +12,17 @@ export function toWhatsAppText(text: string): string {
     .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1 ($2)");
 }
+
+/**
+ * Instagram DMs render no markup, so Markdown and WhatsApp emphasis both lose
+ * their markers and a link keeps its address.
+ */
+export function toInstagramText(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(\S(?:.*?\S)?)\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/^#{1,6}\s+(.+)$/gm, "$1")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1 ($2)");
+}

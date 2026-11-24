@@ -52,6 +52,7 @@
     "LOG_LEVEL": "info",
     "GRAPH_API_VERSION": "v26.0",
     "GRAPH_API_BASE_URL": "https://graph.facebook.com",
+    "INSTAGRAM_GRAPH_BASE_URL": "https://graph.instagram.com",
     "CALIDDA_BASE_URL": "https://appweb.calidda.com.pe",
     "SHOPIFY_BASE_URL": "",
     "BOT_RESPONSE_DELAY_MS": "2300",

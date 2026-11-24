@@ -75,7 +75,7 @@ describe("the simulator channel", () => {
     expect(outcome).toEqual({
       ok: false,
       kind: "permanent",
-      reason: "not_whatsapp",
+      reason: "simulator",
     });
     expect(fetched).toBe(0);
   });

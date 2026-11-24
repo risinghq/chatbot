@@ -2,6 +2,7 @@ import { DOCUMENT_TYPES, type DocumentType } from "@vendeya/types";
 import { db } from "../../../db/index.ts";
 import {
   CustomerService,
+  normalizePhone,
   parseAddressFields,
   type AddressFields,
 } from "../../customers/index.ts";
@@ -243,17 +244,43 @@ async function taypiInstructions(
   }
 }
 
+/**
+ * The phone the order saves the customer by. A WhatsApp chat's number is the
+ * customer's phone. An Instagram chat has none, so the customer must give one:
+ * couriers and campaigns reach customers by phone.
+ */
+function customerPhone(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+): string {
+  if (ctx.channel === "whatsapp") return ctx.phone;
+  const given = optionalText(args, "customer_phone");
+  const phone = given ? normalizePhone(given) : null;
+  if (!phone || !/^\d{6,15}$/.test(phone)) {
+    throw new ToolArgumentError(
+      "an Instagram order needs customer_phone: ask the customer for their phone number",
+    );
+  }
+  return phone;
+}
+
 const createOrder: Tool = {
   name: "create_order",
   description:
     "File the order once the customer confirmed the products, quantities, " +
-    "delivery and payment. Saves the customer by this chat's phone. Pass " +
-    "address null for a pickup; a delivery needs zone_id when the business " +
-    "has zones. Stock is held for the order and staff confirm it.",
+    "delivery and payment. Saves the customer by this chat's phone on " +
+    "WhatsApp, or by customer_phone on Instagram. Pass address null for a " +
+    "pickup; a delivery needs zone_id when the business has zones. Stock is " +
+    "held for the order and staff confirm it.",
   parameters: {
     type: "object",
     properties: {
       customer_name: { type: "string" },
+      customer_phone: {
+        type: ["string", "null"],
+        description:
+          "The phone the customer gave. Null on WhatsApp, where the chat's number is used.",
+      },
       document_type: {
         type: ["string", "null"],
         enum: [...DOCUMENT_TYPES, null],
@@ -277,6 +304,7 @@ const createOrder: Tool = {
     },
     required: [
       "customer_name",
+      "customer_phone",
       "document_type",
       "document_number",
       "lines",
@@ -289,6 +317,7 @@ const createOrder: Tool = {
   },
   run: async (ctx, args) => {
     const name = text(args, "customer_name");
+    const phone = customerPhone(ctx, args);
     const document = documentArg(args);
     const address = addressArg(args);
     const zoneId = optionalText(args, "zone_id");
@@ -345,7 +374,7 @@ const createOrder: Tool = {
     }
 
     const customer = await CustomerService.upsertByPhone(ctx.tenantId, {
-      phone: ctx.phone,
+      phone,
       name,
       document,
     });
@@ -365,7 +394,7 @@ const createOrder: Tool = {
         ? {
             zoneId,
             recipientName: customer.name,
-            recipientPhone: ctx.phone,
+            recipientPhone: phone,
             addressLine: address.line,
             district: address.district,
             city: address.city,

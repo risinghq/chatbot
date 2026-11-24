@@ -19,6 +19,7 @@ import customers from "./routes/customers.ts";
 import { deliveryZones, paymentMethods } from "./routes/order-settings.ts";
 import health from "./routes/health.ts";
 import history from "./routes/history.ts";
+import instagramWebhook from "./routes/instagram-webhook.ts";
 import orders from "./routes/orders.ts";
 import pay from "./routes/pay.ts";
 import platform from "./routes/platform.ts";
@@ -64,6 +65,7 @@ app.get("/media/:key{.+}", async (c) => {
 app.route("/api/health", health);
 app.route("/api/webhook/taypi", taypiWebhook);
 app.route("/api/webhook/shopify", shopifyWebhook);
+app.route("/api/webhook/instagram", instagramWebhook);
 app.route("/api/webhook", webhook);
 app.route("/api/auth", auth);
 app.route("/api/pay", pay);

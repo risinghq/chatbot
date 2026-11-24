@@ -33,7 +33,10 @@ async function present(account: ChannelAccount) {
     has_access_token: account.access_token_secret_id !== null,
     has_app_secret: account.app_secret_secret_id !== null,
     verify_token: await ChannelAccountService.getVerifyToken(account),
-    webhook_url: `${publicOrigin()}/api/webhook`,
+    webhook_url:
+      account.channel_type === "instagram"
+        ? `${publicOrigin()}/api/webhook/instagram`
+        : `${publicOrigin()}/api/webhook`,
     created_at: account.created_at,
     updated_at: account.updated_at,
   };
@@ -78,7 +81,11 @@ channels.post("/", requirePlatformOperator, async (c) => {
   const { phoneNumberId, wabaId, displayPhoneNumber, label } = body;
   const accessToken: string | undefined = body.accessToken;
   const appSecret: string | undefined = body.appSecret;
+  const channelType: unknown = body.channelType ?? "whatsapp";
 
+  if (channelType !== "whatsapp" && channelType !== "instagram") {
+    return c.json({ error: "channelType must be whatsapp or instagram" }, 400);
+  }
   if (!phoneNumberId) {
     return c.json({ error: "phoneNumberId is required" }, 400);
   }
@@ -100,10 +107,12 @@ channels.post("/", requirePlatformOperator, async (c) => {
     );
   }
 
-  const existing =
-    await ChannelAccountService.getByPhoneNumberId(phoneNumberId);
+  const existing = await ChannelAccountService.getByPhoneNumberId(
+    phoneNumberId,
+    channelType,
+  );
   if (existing) {
-    return c.json({ error: "That phone number id is already registered" }, 409);
+    return c.json({ error: "That account id is already registered" }, 409);
   }
 
   const account = await ChannelAccountService.create({
@@ -114,6 +123,7 @@ channels.post("/", requirePlatformOperator, async (c) => {
     label: label ?? null,
     accessToken: accessToken ?? null,
     appSecret: appSecret ?? null,
+    channelType,
   });
 
   await logAction(
@@ -121,7 +131,7 @@ channels.post("/", requirePlatformOperator, async (c) => {
     "create_channel_account",
     "channel_account",
     account.id,
-    { phoneNumberId, wabaId: wabaId ?? null },
+    { phoneNumberId, wabaId: wabaId ?? null, channelType },
   );
 
   return c.json(await present(account), 201);
@@ -136,7 +146,7 @@ channels.patch("/:id", async (c) => {
   if (
     !account ||
     account.tenant_id !== tenantId ||
-    account.channel_type !== "whatsapp"
+    account.channel_type === "simulator"
   ) {
     return c.json({ error: "Channel account not found" }, 404);
   }

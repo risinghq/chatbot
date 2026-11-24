@@ -4,8 +4,13 @@ import type { OrderDetail } from "@vendeya/types";
 export type ToolContext = {
   tenantId: string;
   channelAccountId: string;
-  /** The customer's phone, as WhatsApp sends it. */
+  /**
+   * The conversation's contact id: the customer's phone on WhatsApp, their
+   * Instagram-scoped id on Instagram, which no customer record holds.
+   */
   phone: string;
+  /** A simulated conversation runs as WhatsApp. */
+  channel: "whatsapp" | "instagram";
   /** A simulated conversation reads real data and writes none. */
   simulated: boolean;
 };

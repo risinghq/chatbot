@@ -71,7 +71,7 @@ export interface CampaignsTable {
 export interface ChannelAccountsTable {
   id: string;
   tenant_id: string;
-  channel_type: Generated<"whatsapp" | "simulator">;
+  channel_type: Generated<"whatsapp" | "instagram" | "simulator">;
   waba_id: string | null;
   phone_number_id: string;
   display_phone_number: string | null;
@@ -142,6 +142,19 @@ export interface DeliveryZonesTable {
   name: string;
   fee_cents: number;
   is_active: Generated<0 | 1>;
+  created_at: Generated<number>;
+}
+
+export interface InstagramCommentsTable {
+  comment_id: string;
+  tenant_id: string;
+  channel_account_id: string;
+  media_id: string | null;
+  from_id: string;
+  from_username: string | null;
+  text: string;
+  public_reply_status: Generated<"pending" | "sent" | "failed" | "skipped">;
+  private_reply_status: Generated<"pending" | "sent" | "failed" | "skipped">;
   created_at: Generated<number>;
 }
 
@@ -548,6 +561,7 @@ export interface Database {
   customer_addresses: CustomerAddressesTable;
   customers: CustomersTable;
   delivery_zones: DeliveryZonesTable;
+  instagram_comments: InstagramCommentsTable;
   invitations: InvitationsTable;
   llm_calls: LlmCallsTable;
   marketing_opt_outs: MarketingOptOutsTable;
@@ -596,6 +610,7 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "customer_addresses",
   "customers",
   "delivery_zones",
+  "instagram_comments",
   "invitations",
   "llm_calls",
   "marketing_opt_outs",

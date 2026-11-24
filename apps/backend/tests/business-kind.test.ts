@@ -128,6 +128,7 @@ describe("a business where staff closes the sale", () => {
       customer: null,
       caliddaCredit: false,
       staffCloses,
+      channel: "whatsapp",
       now: new Date(0),
     });
 

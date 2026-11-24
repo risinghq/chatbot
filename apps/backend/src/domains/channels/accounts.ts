@@ -124,13 +124,13 @@ export const ChannelAccountService = {
       .where("id", "=", id)
       .executeTakeFirst()) ?? null,
 
-  /** The tenant's WhatsApp numbers. The simulator channel is not one. */
+  /** The tenant's WhatsApp numbers and Instagram accounts. The simulator channel is not one. */
   listForTenant: (tenantId: string): Promise<ChannelAccount[]> =>
     db
       .selectFrom("channel_accounts")
       .selectAll()
       .where("tenant_id", "=", tenantId)
-      .where("channel_type", "=", "whatsapp")
+      .where("channel_type", "in", ["whatsapp", "instagram"])
       .orderBy("created_at")
       .execute(),
 

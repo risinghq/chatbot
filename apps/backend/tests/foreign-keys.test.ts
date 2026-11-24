@@ -383,6 +383,7 @@ describe("the composite reference itself", () => {
     // channel_accounts itself is the parent, so it is not in this set.
     expect(tables.sort()).toEqual([
       "conversations",
+      "instagram_comments",
       "llm_calls",
       "message_inbox",
       "messages",
