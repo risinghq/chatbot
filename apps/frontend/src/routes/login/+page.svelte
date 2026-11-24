@@ -50,7 +50,10 @@ onMount(() => {
 <div class="flex min-h-dvh flex-col items-center justify-center bg-canvas p-4">
 	<div class="w-full max-w-sm rounded-lg border border-border bg-surface p-6 shadow-sm">
 		<h1 class="text-lg font-medium text-fg">vendeya</h1>
-		<p class="mt-1 mb-6 text-base text-fg-muted">Entra con tu correo y tu contraseña.</p>
+		<p class="mt-1 text-base text-fg-muted">
+			Un asistente que atiende tu WhatsApp: responde a tus clientes, cotiza tu catálogo y toma pedidos.
+		</p>
+		<p class="mt-4 mb-6 text-base text-fg-muted">Entra con tu correo y tu contraseña.</p>
 
 		<form
 			onsubmit={(e) => {
