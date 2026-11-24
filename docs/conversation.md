@@ -40,6 +40,16 @@ redelivers it, and the message id check skips the ones already stored.
 Before storing a text message, the webhook creates the conversation if needed
 and writes the inbound `messages` row. The dashboard shows it from there.
 
+A message that arrives from a click-to-WhatsApp ad carries Meta's `referral`
+object. The parser reads it into `IncomingMessage.referral`, and the webhook
+records it as the conversation's latest ad (`ad_source_id`, `ad_headline`,
+`ad_ctwa_clid`, `ad_received_at`): a later click replaces it, a plain message
+leaves it. An order filed while that click is at most seven days old
+(`AD_ATTRIBUTION_WINDOW_MS` in
+[`domains/ads/index.ts`](../apps/backend/src/domains/ads/index.ts)) copies the
+ad onto the order, which is what the Reportes page's Anuncios section counts.
+The simulator sends a referral when `POST /api/simulator/message` carries one.
+
 The webhook answers Meta once every message is stored. It then wakes the object
 of each conversation that got a message, in `waitUntil`, so the turn runs after
 the answer. A wake that fails is logged as "Waking the conversation failed; the
