@@ -318,6 +318,7 @@ export async function dispatchCampaign(
       { customer_name: customer?.name ?? null },
       now,
       marketing ? intervalDays : null,
+      r.id,
     );
     if (messageId === "opted_out" || messageId === "capped") {
       await db
@@ -326,14 +327,7 @@ export async function dispatchCampaign(
         .where(tenantScope(tenantId))
         .where("id", "=", r.id)
         .execute();
-      continue;
     }
-    await db
-      .updateTable("campaign_recipients")
-      .set({ status: "queued", message_id: messageId, queued_at: now })
-      .where(tenantScope(tenantId))
-      .where("id", "=", r.id)
-      .execute();
   }
 
   const remaining = await db

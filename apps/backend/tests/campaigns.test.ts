@@ -711,6 +711,43 @@ describe("campaigns", () => {
     }
   });
 
+  it.each(["marketing", "utility"] as const)(
+    "commits a %s campaign send only with its recipient marked queued",
+    async (category) => {
+      const tenant = await createTenantFixture(`Recipient batch ${category}`);
+      const graph = fakeGraph();
+      const phone = category === "marketing" ? "51900000097" : "51900000098";
+      // Fails marking the recipient queued, the batch's last statement.
+      await run(
+        `CREATE TRIGGER fail_recipient_queued BEFORE UPDATE OF status ON campaign_recipients
+         WHEN NEW.status = 'queued'
+         BEGIN SELECT RAISE(ABORT, 'forced recipient failure'); END`,
+        [],
+      );
+      try {
+        await withCustomer(tenant.tenantId, phone);
+        const campaignId = await createCampaign(
+          tenant.tenantId,
+          await approvedTemplate(tenant.tenantId, category),
+          { kind: "all" },
+          Date.now() - 1000,
+        );
+        await dispatchDueCampaigns(Date.now());
+        for (const table of ["marketing_sends", "messages", "outbox"]) {
+          const row = await getOne<{ n: number }>(
+            `SELECT count(*) AS n FROM ${table} WHERE tenant_id = ? AND phone_number = ?`,
+            [tenant.tenantId, phone],
+          );
+          expect(row!.n, `${table} should hold no row`).toBe(0);
+        }
+        expect((await recipientsOf(campaignId))[0]!.status).toBe("pending");
+      } finally {
+        await run("DROP TRIGGER fail_recipient_queued", []);
+        graph.restore();
+      }
+    },
+  );
+
   it("returns capped and writes nothing for a phone inside the window", async () => {
     const tenant = await createTenantFixture("In-window cap");
     const graph = fakeGraph();

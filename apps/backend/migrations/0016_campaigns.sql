@@ -28,6 +28,7 @@ ALTER TABLE messages_new RENAME TO messages;
 
 CREATE INDEX idx_messages_phone ON messages(tenant_id, channel_account_id, phone_number, created_at DESC);
 CREATE INDEX idx_messages_whatsapp_id ON messages(whatsapp_message_id);
+CREATE INDEX idx_messages_created ON messages(tenant_id, created_at);
 
 CREATE TABLE outbox_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

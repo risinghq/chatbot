@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { outboxRow, queuedBehind } from "../../conversation/outbox.ts";
 import { messageRow } from "../../adapters/whatsapp/message-store.ts";
 import { ensureConversation } from "../../conversation/store.ts";
-import { batch, db } from "../../db/index.ts";
+import { batch, db, tenantScope } from "../../db/index.ts";
 import { isOptedOut } from "./consent.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -43,7 +43,9 @@ export function renderBody(body: string, parameters: string[]): string {
 /**
  * Writes the `messages` row and the outbox row a template send needs, and
  * returns the `messages` id, or the refusal reason when a marketing template
- * breaks consent: `"opted_out"` or `"capped"`.
+ * breaks consent: `"opted_out"` or `"capped"`. A campaign passes
+ * `recipientId`, and that recipient is marked queued in the same transaction
+ * as the send rows, so a send is never queued twice or recorded as skipped.
  * The conversation is created when the contact has never written. The
  * conversation's object sends the row on its next wake, which the sweep's
  * outbox check schedules.
@@ -55,6 +57,7 @@ export async function enqueueTemplate(
   ctx: ParamContext,
   now: number,
   marketingDays: number | null,
+  recipientId?: string,
 ): Promise<string | "opted_out" | "capped"> {
   if (
     marketingDays !== null &&
@@ -90,18 +93,35 @@ export async function enqueueTemplate(
     now,
   });
 
+  const marked = (claimedOnly: boolean) => {
+    if (recipientId === undefined) return [];
+    const update = db
+      .updateTable("campaign_recipients")
+      .set({ status: "queued", message_id: messageId, queued_at: now })
+      .where(tenantScope(ref.tenantId))
+      .where("id", "=", recipientId);
+    return [
+      claimedOnly
+        ? update.where((eb) =>
+            eb.exists(claim(ref, messageId).select(sql.lit(1).as("one"))),
+          )
+        : update,
+    ];
+  };
+
   if (marketingDays === null) {
     await batch([
       db.insertInto("messages").values(message),
       db.insertInto("outbox").values(outbox),
+      ...marked(false),
     ]);
     return messageId;
   }
 
   // One batch is one transaction. The upsert stamps this send's id only when
-  // the phone is outside the window, and the two inserts run only when the
-  // stamp is this send's, so concurrent senders cannot both pass and a claim
-  // never commits without its send rows.
+  // the phone is outside the window, and the later statements run only when
+  // the stamp is this send's, so concurrent senders cannot both pass and a
+  // claim never commits without its send rows.
   const results = await batch([
     db
       .insertInto("marketing_sends")
@@ -119,8 +139,18 @@ export async function enqueueTemplate(
       ),
     insertIfClaimed("messages", message, ref, messageId),
     insertIfClaimed("outbox", outbox, ref, messageId),
+    ...marked(true),
   ]);
   return (results[2]?.meta.changes ?? 0) === 0 ? "capped" : messageId;
+}
+
+/** The phone's `marketing_sends` row, when `messageId` holds the claim. */
+function claim(ref: ConversationRef, messageId: string) {
+  return db
+    .selectFrom("marketing_sends")
+    .where("tenant_id", "=", ref.tenantId)
+    .where("phone_number", "=", ref.phoneNumber)
+    .where("message_id", "=", messageId);
 }
 
 /** Inserts `row` into `table` only when `messageId` holds the phone's claim. */
@@ -135,11 +165,8 @@ function insertIfClaimed<T extends "messages" | "outbox">(
     .insertInto(table)
     .columns(columns as never)
     .expression(
-      db
-        .selectFrom("marketing_sends")
-        .select(columns.map((c) => sql.val(row[c]).as(c)))
-        .where("tenant_id", "=", ref.tenantId)
-        .where("phone_number", "=", ref.phoneNumber)
-        .where("message_id", "=", messageId) as never,
+      claim(ref, messageId).select(
+        columns.map((c) => sql.val(row[c]).as(c)),
+      ) as never,
     );
 }
