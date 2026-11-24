@@ -38,6 +38,36 @@ export interface AuditLogTable {
   created_at: Generated<number>;
 }
 
+export interface CampaignRecipientsTable {
+  id: string;
+  tenant_id: string;
+  campaign_id: string;
+  customer_id: string | null;
+  phone_number: string;
+  message_id: string | null;
+  status: Generated<"pending" | "queued" | "skipped" | "sent" | "delivered" | "read" | "failed">;
+  skip_reason: string | null;
+  queued_at: number | null;
+  replied_at: number | null;
+  created_at: Generated<number>;
+}
+
+export interface CampaignsTable {
+  id: string;
+  tenant_id: string;
+  name: string;
+  template_id: string;
+  audience: string;
+  params: Generated<string>;
+  status: Generated<"scheduled" | "sending" | "sent" | "failed" | "cancelled">;
+  scheduled_at: number | null;
+  sent_at: number | null;
+  failure_reason: string | null;
+  created_by: string | null;
+  created_at: Generated<number>;
+  updated_at: Generated<number>;
+}
+
 export interface ChannelAccountsTable {
   id: string;
   tenant_id: string;
@@ -99,6 +129,7 @@ export interface CustomersTable {
   notes: string | null;
   created_at: Generated<number>;
   updated_at: Generated<number>;
+  inactive_reminder_sent_at: number | null;
 }
 
 export interface DeliveryZonesTable {
@@ -144,6 +175,19 @@ export interface LlmCallsTable {
   created_at: Generated<number>;
 }
 
+export interface MarketingOptOutsTable {
+  tenant_id: string;
+  phone_number: string;
+  source: "message" | "staff";
+  created_at: Generated<number>;
+}
+
+export interface MarketingSendsTable {
+  tenant_id: string;
+  phone_number: string;
+  sent_at: number;
+}
+
 export interface MessageInboxTable {
   id: Generated<number>;
   tenant_id: string;
@@ -161,13 +205,29 @@ export interface MessageInboxTable {
   processed_at: number | null;
 }
 
+export interface MessageTemplatesTable {
+  id: string;
+  tenant_id: string;
+  name: string;
+  language: string;
+  category: "marketing" | "utility";
+  body: string;
+  params: Generated<string>;
+  status: Generated<"pending" | "approved" | "rejected" | "paused" | "disabled">;
+  meta_template_id: string | null;
+  rejection_reason: string | null;
+  created_by: string | null;
+  created_at: Generated<number>;
+  updated_at: Generated<number>;
+}
+
 export interface MessagesTable {
   id: string;
   tenant_id: string;
   channel_account_id: string;
   phone_number: string;
   direction: "inbound" | "outbound";
-  type: "text" | "image";
+  type: "text" | "image" | "template";
   content: string | null;
   whatsapp_message_id: string | null;
   product_id: string | null;
@@ -215,6 +275,7 @@ export interface OrdersTable {
   created_by: string | null;
   created_at: Generated<number>;
   updated_at: Generated<number>;
+  cart_reminder_sent_at: number | null;
 }
 
 export interface OutboxTable {
@@ -223,7 +284,7 @@ export interface OutboxTable {
   channel_account_id: string;
   phone_number: string;
   message_id: string;
-  type: "text" | "image";
+  type: "text" | "image" | "template";
   content: string;
   caption: string | null;
   status: Generated<"pending" | "sending" | "sent" | "failed" | "cancelled">;
@@ -438,6 +499,8 @@ export interface Database {
   assets: AssetsTable;
   assistant_settings: AssistantSettingsTable;
   audit_log: AuditLogTable;
+  campaign_recipients: CampaignRecipientsTable;
+  campaigns: CampaignsTable;
   channel_accounts: ChannelAccountsTable;
   channel_secrets: ChannelSecretsTable;
   conversations: ConversationsTable;
@@ -446,7 +509,10 @@ export interface Database {
   delivery_zones: DeliveryZonesTable;
   invitations: InvitationsTable;
   llm_calls: LlmCallsTable;
+  marketing_opt_outs: MarketingOptOutsTable;
+  marketing_sends: MarketingSendsTable;
   message_inbox: MessageInboxTable;
+  message_templates: MessageTemplatesTable;
   messages: MessagesTable;
   notification_traces: NotificationTracesTable;
   order_lines: OrderLinesTable;
@@ -478,6 +544,8 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "assets",
   "assistant_settings",
   "audit_log",
+  "campaign_recipients",
+  "campaigns",
   "channel_accounts",
   "channel_secrets",
   "conversations",
@@ -486,7 +554,10 @@ export const TENANT_TABLES: ReadonlySet<string> = new Set([
   "delivery_zones",
   "invitations",
   "llm_calls",
+  "marketing_opt_outs",
+  "marketing_sends",
   "message_inbox",
+  "message_templates",
   "messages",
   "notification_traces",
   "order_lines",
