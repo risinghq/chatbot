@@ -18,6 +18,7 @@ import {
 import { OrderReads } from "./read.ts";
 import { DeliveryZoneService, PaymentMethodService } from "./settings.ts";
 import { adForOrder } from "../ads/index.ts";
+import { enqueueStatement as enqueueShopifySync } from "../shopify/order-sync.ts";
 
 /** The first number a business's orders take. */
 export const FIRST_ORDER_NUMBER = 1001;
@@ -422,6 +423,13 @@ export const OrderWrites = {
         .where("id", "=", orderId)
         .where("status", "=", from),
     );
+
+    // A confirmed order of imported products queues for write-back; the
+    // insert applies only when the business is connected and a line is
+    // Shopify's, so an unconnected business files nothing.
+    if (to === "confirmed") {
+      statements.push(enqueueShopifySync(tenantId, orderId, now));
+    }
 
     await runMovements(statements);
 

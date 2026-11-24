@@ -181,77 +181,84 @@ export const OrderReads = {
     const order = withPaymentState(row) as OrderSummary;
     const owner = order.tenant_id;
 
-    const [customer, lines, payments, shipment, creator] = await Promise.all([
-      db
-        .selectFrom("customers")
-        .selectAll()
-        .where("tenant_id", "=", owner)
-        .where("id", "=", order.customer_id)
-        .executeTakeFirstOrThrow(),
-      db
-        .selectFrom("order_lines")
-        .select([
-          "id",
-          "order_id",
-          "variant_id",
-          "sku",
-          "name",
-          "unit_price_cents",
-          "quantity",
-          "position",
-        ])
-        .where("tenant_id", "=", owner)
-        .where("order_id", "=", id)
-        .orderBy("position")
-        .execute(),
-      db
-        .selectFrom("payments")
-        .select([
-          "id",
-          "order_id",
-          "payment_method_id",
-          "method_name",
-          "amount_cents",
-          "status",
-          "reference",
-          "created_by",
-          "created_at",
-          "decided_at",
-        ])
-        .where("tenant_id", "=", owner)
-        .where("order_id", "=", id)
-        .orderBy("id")
-        .execute(),
-      db
-        .selectFrom("shipments")
-        .select([
-          "id",
-          "order_id",
-          "delivery_zone_id",
-          "zone_name",
-          "recipient_name",
-          "recipient_phone",
-          "address_line",
-          "district",
-          "city",
-          "reference",
-          "carrier",
-          "tracking_code",
-          "shipped_at",
-          "delivered_at",
-          "created_at",
-        ])
-        .where("tenant_id", "=", owner)
-        .where("order_id", "=", id)
-        .executeTakeFirst(),
-      order.created_by
-        ? withoutTenantScope("users are global, keyed by id")
-            .selectFrom("users")
-            .select("name")
-            .where("id", "=", order.created_by)
-            .executeTakeFirst()
-        : undefined,
-    ]);
+    const [customer, lines, payments, shipment, shopifySync, creator] =
+      await Promise.all([
+        db
+          .selectFrom("customers")
+          .selectAll()
+          .where("tenant_id", "=", owner)
+          .where("id", "=", order.customer_id)
+          .executeTakeFirstOrThrow(),
+        db
+          .selectFrom("order_lines")
+          .select([
+            "id",
+            "order_id",
+            "variant_id",
+            "sku",
+            "name",
+            "unit_price_cents",
+            "quantity",
+            "position",
+          ])
+          .where("tenant_id", "=", owner)
+          .where("order_id", "=", id)
+          .orderBy("position")
+          .execute(),
+        db
+          .selectFrom("payments")
+          .select([
+            "id",
+            "order_id",
+            "payment_method_id",
+            "method_name",
+            "amount_cents",
+            "status",
+            "reference",
+            "created_by",
+            "created_at",
+            "decided_at",
+          ])
+          .where("tenant_id", "=", owner)
+          .where("order_id", "=", id)
+          .orderBy("id")
+          .execute(),
+        db
+          .selectFrom("shipments")
+          .select([
+            "id",
+            "order_id",
+            "delivery_zone_id",
+            "zone_name",
+            "recipient_name",
+            "recipient_phone",
+            "address_line",
+            "district",
+            "city",
+            "reference",
+            "carrier",
+            "tracking_code",
+            "shipped_at",
+            "delivered_at",
+            "created_at",
+          ])
+          .where("tenant_id", "=", owner)
+          .where("order_id", "=", id)
+          .executeTakeFirst(),
+        db
+          .selectFrom("shopify_order_syncs")
+          .select(["status", "last_error", "next_attempt_at", "attempts"])
+          .where("tenant_id", "=", owner)
+          .where("order_id", "=", id)
+          .executeTakeFirst(),
+        order.created_by
+          ? withoutTenantScope("users are global, keyed by id")
+              .selectFrom("users")
+              .select("name")
+              .where("id", "=", order.created_by)
+              .executeTakeFirst()
+          : undefined,
+      ]);
 
     return {
       ...order,
@@ -259,6 +266,7 @@ export const OrderReads = {
       lines,
       payments,
       shipment: shipment ?? null,
+      shopify_sync: shopifySync ?? null,
       created_by_name: creator?.name ?? null,
     };
   },
