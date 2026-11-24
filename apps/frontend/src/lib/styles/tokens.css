@@ -20,6 +20,14 @@
   --text-lg--line-height: 1.3;
   --text-xl: 1.5rem;
   --text-xl--line-height: 1.25;
+  /* Display steps for the public pages (/ and /precios). The dashboard does
+     not use them. */
+  --text-2xl: 2rem;
+  --text-2xl--line-height: 1.15;
+  --text-3xl: 2.5rem;
+  --text-3xl--line-height: 1.1;
+  --text-4xl: 3.25rem;
+  --text-4xl--line-height: 1.05;
 
   --font-weight-*: initial;
   --font-weight-normal: 460;
