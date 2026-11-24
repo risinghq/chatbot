@@ -6,6 +6,8 @@ export type PromptInput = {
   customer: Customer | null;
   /** The business sells on Cálidda credit and has check_calidda_credit. */
   caliddaCredit: boolean;
+  /** The business sells services or quotes per job, and has no create_order. */
+  staffCloses: boolean;
   now: Date;
 };
 
@@ -22,6 +24,11 @@ const RULES = `Rules:
 const CREDIT_RULE = `Cálidda credit:
 - The business sells on Cálidda credit. When the customer wants to pay with it, ask for their DNI and call check_calidda_credit. Tell them only whether they qualify and their credit line.
 - Never ask for a DNI for anything else.`;
+
+const STAFF_CLOSES_RULE = `Staff closes the sale:
+- The business sells services, quotes per job or books appointments, so you have no create_order and cannot take an order.
+- Answer from the catalog and the business's notes. Ask what the customer needs, when and where, one thing at a time, then call hand_off with a short summary so staff quotes, books and closes it.
+- Never promise a final price, a date or a booking yourself.`;
 
 function section(title: string, text: string): string | null {
   return text.trim() ? `${title}:\n${text.trim()}` : null;
@@ -48,6 +55,7 @@ export function buildSystemPrompt(input: PromptInput): string {
   return [
     `You are the sales assistant of ${input.businessName}, answering customers on WhatsApp. You help them find products, answer their questions and take their orders.`,
     RULES,
+    input.staffCloses ? STAFF_CLOSES_RULE : null,
     input.caliddaCredit ? CREDIT_RULE : null,
     section("The business's instructions", input.settings.instructions),
     section("Frequent questions", input.settings.faq),

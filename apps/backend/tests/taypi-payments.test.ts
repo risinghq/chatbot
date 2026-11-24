@@ -481,7 +481,7 @@ describe("a TAYPI pay link", () => {
   });
 
   describe("in the assistant", () => {
-    const TOOLS = toolsFor({ caliddaCredit: false });
+    const TOOLS = toolsFor({ caliddaCredit: false, staffCloses: false });
     let ctx: ToolContext;
 
     beforeEach(() => {

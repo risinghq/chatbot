@@ -183,13 +183,15 @@ export async function runAgent(input: {
     caliddaLogin(ref.tenantId),
   ]);
   const caliddaCredit = calidda !== null;
-  const tools = toolsFor({ caliddaCredit });
+  const staffCloses = tenant?.business_kind === "services";
+  const tools = toolsFor({ caliddaCredit, staffCloses });
 
   const system = buildSystemPrompt({
     businessName: tenant?.name ?? "the business",
     settings,
     customer,
     caliddaCredit,
+    staffCloses,
     now: new Date(),
   });
   const messages: AgentMessage[] = [

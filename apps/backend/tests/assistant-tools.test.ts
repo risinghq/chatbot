@@ -29,7 +29,7 @@ import { Ok } from "../src/shared/result/index.ts";
 import { createTenantFixture } from "./helpers/tenancy.ts";
 
 const PHONE = "51987654321";
-const TOOLS = toolsFor({ caliddaCredit: true });
+const TOOLS = toolsFor({ caliddaCredit: true, staffCloses: false });
 
 async function addVariant(
   tenantId: string,

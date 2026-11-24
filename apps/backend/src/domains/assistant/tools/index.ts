@@ -17,6 +17,8 @@ export type { Tool, ToolContext, ToolEffect, ToolOutcome } from "./types.ts";
 export type ToolOptions = {
   /** The business has a Cálidda login, so it sells on Cálidda credit. */
   caliddaCredit: boolean;
+  /** The business sells services or quotes per job, so staff closes each sale. */
+  staffCloses: boolean;
 };
 
 /** The tools a business's assistant can call, in the order the model sees them. */
@@ -24,7 +26,9 @@ export function toolsFor(options: ToolOptions): readonly Tool[] {
   return [
     ...catalogTools,
     ...customerTools,
-    ...orderTools,
+    ...orderTools.filter(
+      (tool) => !(options.staffCloses && tool.name === "create_order"),
+    ),
     ...(options.caliddaCredit ? creditTools : []),
   ];
 }

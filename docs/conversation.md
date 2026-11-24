@@ -215,6 +215,13 @@ unknown tool. The tool answers whether the person qualifies and their credit
 line, never the name or NSE the providers return
 ([Eligibility](./eligibility.md#in-a-conversation)).
 
+A business whose kind is `services` gets no `create_order`. Its prompt tells the
+model to learn what the customer needs, when and where, then call `hand_off`
+with a summary, and never to promise a price, a date or a booking. Staff quotes
+and closes the sale
+([`tools/index.ts`](../apps/backend/src/domains/assistant/tools/index.ts),
+[`prompt.ts`](../apps/backend/src/domains/assistant/prompt.ts)).
+
 A tool never sends a message or alerts anyone. It returns effects (photos to
 send, an order filed, a handoff), and the turn carries them out. A turn makes at
 most 6 tool calls; the next call allows none, so the model must answer in text.
