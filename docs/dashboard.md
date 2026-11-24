@@ -337,7 +337,9 @@ invitation from its Usuarios page (`/dashboard/<tenant id>/admin/users`):
 copies and sends. The link opens `/invitacion/<token>`. A business owner who is
 not VendeYa staff starts at `/registro`, which opens the business and logs them
 in as its admin. Each user's own profile, password and API tokens are on the
-Cuenta page of a business they belong to (`/dashboard/<tenant id>/cuenta`).
+Cuenta page of a business they belong to (`/dashboard/<tenant id>/cuenta`), and
+so is the "Notificaciones en este teléfono" switch that subscribes the browser
+to Web Push alerts.
 
 While a business is unfinished, the home page and the Negocios page show a setup
 checklist (`lib/components/shared/setup-checklist.svelte`) fed by

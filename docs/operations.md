@@ -46,16 +46,18 @@ takes effect at the next deploy. Secrets are set with `wrangler secret put` and
 take effect at once. Locally, `apps/backend/.dev.vars` sets both and overrides
 the values in `wrangler.jsonc`.
 
-| Name                                      | Kind     | Without it                                                                                                             |
-| ----------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ENVIRONMENT`                             | variable | anything but `production` makes a 500 carry the error's message and stack                                              |
-| `PUBLIC_URL`                              | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:` |
-| `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL` | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                      |
-| `BOT_RESPONSE_DELAY_MS`                   | variable | 2300                                                                                                                   |
-| `PLATFORM_OPS_PHONE_NUMBER_ID`            | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one          |
-| `WHATSAPP_GROUP_DEV`                      | variable | system alerts with no tenant setting have no target. See [Alerts](#alerts)                                             |
-| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`         | variable | `info`. See [Logs](#logs)                                                                                              |
-| `SECRETS_KEY`                             | secret   | no stored credential can be written or read                                                                            |
+| Name                                      | Kind     | Without it                                                                                                                      |
+| ----------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ENVIRONMENT`                             | variable | anything but `production` makes a 500 carry the error's message and stack                                                       |
+| `PUBLIC_URL`                              | variable | image links, alert links and the CORS origin name `http://localhost:5173`; cookies are secure only when it is `https:`          |
+| `GRAPH_API_VERSION`, `GRAPH_API_BASE_URL` | variable | see [WhatsApp](./whatsapp.md#connecting-whatsapp)                                                                               |
+| `BOT_RESPONSE_DELAY_MS`                   | variable | 2300                                                                                                                            |
+| `PLATFORM_OPS_PHONE_NUMBER_ID`            | variable | alerts with no tenant have no number, unless the platform setting `platform_ops_channel_account_id` names one                   |
+| `WHATSAPP_GROUP_DEV`                      | variable | system alerts with no tenant setting have no target. See [Alerts](#alerts)                                                      |
+| `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`       | variable | Web Push is off: the Cuenta opt-in answers no key and every push send fails. Generate with `bun scripts/generate-vapid-keys.ts` |
+| `LOG_LEVEL`, `LOG_LEVEL_<MODULE>`         | variable | `info`. See [Logs](#logs)                                                                                                       |
+| `SECRETS_KEY`                             | secret   | no stored credential can be written or read                                                                                     |
+| `VAPID_PRIVATE_KEY`                       | secret   | Web Push is off: the VAPID signature cannot be made. Optional — the deploy does not require it                                  |
 
 `SECRETS_KEY` is the only secret the Worker needs. It encrypts every credential
 stored in D1: each number's access token and app secret, each tenant's OpenAI

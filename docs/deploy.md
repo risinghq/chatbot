@@ -72,12 +72,11 @@ The backend refuses to deploy until every secret in `secrets.required` of
 | ------------- | ------------------------------------------------------------------- |
 | `SECRETS_KEY` | `bun scripts/generate-token.ts secrets`, run at the repository root |
 
-`SECRETS_KEY` is the only secret the Worker needs. It is the root key that
-encrypts every credential stored in D1 — each number's WhatsApp access token and
-Meta app secret, and each tenant's OpenAI key and Cálidda password. Those
-credentials are entered after the deploy: each tenant's OpenAI key and Cálidda
-login by its admin on the business's Ajustes page
-(`/dashboard/<tenant id>/admin/settings`), each number's credentials on its
+`SECRETS_KEY` is the root key that encrypts every credential stored in D1 — each
+number's WhatsApp access token and Meta app secret, and each tenant's OpenAI key
+and Cálidda password. Those credentials are entered after the deploy: each
+tenant's OpenAI key and Cálidda login by its admin on the business's Ajustes
+page (`/dashboard/<tenant id>/admin/settings`), each number's credentials on its
 Canales page (`/dashboard/<tenant id>/admin/channels`) or the
 `account channel create` command (see [Connecting WhatsApp](./whatsapp.md)).
 Saving one takes effect at once, without a deploy.
@@ -95,6 +94,17 @@ To change the secret later:
 
 ```sh
 bunx wrangler secret put SECRETS_KEY
+```
+
+Web Push is off while its VAPID pair is unset. To turn it on, generate a pair
+once and set the public key and contact as variables, the private key as a
+secret:
+
+```sh
+cd apps/backend
+bun scripts/generate-vapid-keys.ts   # prints the three values
+bunx wrangler secret put VAPID_PRIVATE_KEY
+# set VAPID_PUBLIC_KEY and VAPID_SUBJECT in wrangler.jsonc vars, then deploy
 ```
 
 A secret takes effect at once, without a deploy. Secrets are never deleted by a
