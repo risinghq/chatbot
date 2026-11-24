@@ -1,4 +1,6 @@
 <script lang="ts">
+import { acceptsFile } from "#lib/utils/accept.js";
+
 type Props = {
   accept?: string;
   file?: File | null;
@@ -30,7 +32,7 @@ function handleDrop(e: DragEvent) {
   e.preventDefault();
   isDragging = false;
   const droppedFile = e.dataTransfer?.files?.[0];
-  if (droppedFile?.type.match(accept.replace("*", ".*"))) {
+  if (droppedFile && acceptsFile(accept, droppedFile)) {
     file = droppedFile;
     onchange?.(droppedFile);
   }

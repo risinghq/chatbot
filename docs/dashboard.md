@@ -232,6 +232,32 @@ supervisor.
 The Inventario page records only `receive` and `adjust`. Orders reserve, release
 and ship on their own; [Orders](#orders) says when.
 
+### Importing a catalog
+
+The Catálogo page's «Importar desde Excel» reads an xlsx, xls or CSV file with
+one row per variant, up to 500 rows and 2 MB. The first row names the columns.
+Producto and Precio are required; Categoría, SKU, Costo, Stock, Marca, Modelo,
+Descripción and Variante are optional, and the headers in
+`apps/backend/src/domains/catalog/import.ts` list the other spellings each one
+accepts. Columns such as Talla, Color, Medida or Presentación are joined into
+the variant name, "M / Rojo". Money may be written 49.90, 49,90 or S/ 1,299.00.
+The dialog's template is a CSV with the columns for the business's kind.
+
+| Endpoint                           | Does                                                           |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `POST /api/catalog/import/preview` | Multipart `file`; what each row would do, its errors, and more |
+| `POST /api/catalog/import`         | Multipart `file` and `location_id?`; writes the file (201)     |
+
+A row whose SKU exists updates that variant's price, and its cost when the row
+gives one. A row without a SKU updates the variant of the same product and
+name, so importing a file twice changes nothing. Any other row is a new
+variant. Stock is only set on new variants, as a `receive` movement; an
+existing variant's stock moves through Inventario. The whole file is one
+`batch()`: a row with an error answers 400 with every error and writes nothing.
+With stock and several locations, the import must name `location_id`; the
+preview lists the locations when it must. Importing needs admin, developer or
+supervisor.
+
 ## Orders
 
 An order belongs to a customer, a business-scoped record keyed by phone. Its

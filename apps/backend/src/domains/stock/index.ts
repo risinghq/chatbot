@@ -318,3 +318,46 @@ export async function runMovements(statements: Compilable[]): Promise<void> {
     throw error;
   }
 }
+
+/**
+ * The statements that give variants with no stock level yet their first
+ * stock, as `receive` movements, packed so no statement binds more than D1's
+ * 100 values. A variant that already has a level must go through
+ * `movementStatements`, which adds to it.
+ */
+export function openingStockStatements(m: {
+  tenantId: string;
+  locationId: string;
+  items: { variantId: string; quantity: number }[];
+  note: string | null;
+  createdBy: string | null;
+}): Compilable[] {
+  const statements: Compilable[] = [];
+  const items = m.items.filter((item) => item.quantity > 0);
+  for (let i = 0; i < items.length; i += 12) {
+    const part = items.slice(i, i + 12);
+    statements.push(
+      db.insertInto("stock_levels").values(
+        part.map((item) => ({
+          tenant_id: m.tenantId,
+          variant_id: item.variantId,
+          location_id: m.locationId,
+          on_hand: item.quantity,
+        })),
+      ),
+      db.insertInto("stock_movements").values(
+        part.map((item) => ({
+          id: newId(),
+          tenant_id: m.tenantId,
+          variant_id: item.variantId,
+          location_id: m.locationId,
+          kind: "receive" as const,
+          quantity: item.quantity,
+          note: m.note,
+          created_by: m.createdBy,
+        })),
+      ),
+    );
+  }
+  return statements;
+}
