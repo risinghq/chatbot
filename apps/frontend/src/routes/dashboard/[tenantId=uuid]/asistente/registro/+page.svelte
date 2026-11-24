@@ -97,7 +97,7 @@ const columns = [
 <Sheet
 	open={selected !== null}
 	onclose={() => (selected = null)}
-	title={selected ? `+${selected.phone_number}` : ""}
+	title={selected ? (selected.customer_name ?? formatPhone(selected.phone_number)) : ""}
 	description={selected ? formatDateTime(selected.created_at) : ""}
 >
 	{#if selected}
@@ -138,7 +138,12 @@ const columns = [
 {/snippet}
 
 {#snippet customerCell(call: AssistantCall)}
-	<span class="text-fg tabular-nums">{formatPhone(call.phone_number)}</span>
+	{#if call.customer_name}
+		<span class="block truncate text-fg">{call.customer_name}</span>
+		<span class="block text-sm text-fg-muted tabular-nums">{formatPhone(call.phone_number)}</span>
+	{:else}
+		<span class="text-fg tabular-nums">{formatPhone(call.phone_number)}</span>
+	{/if}
 {/snippet}
 
 {#snippet statusCell(call: AssistantCall)}
