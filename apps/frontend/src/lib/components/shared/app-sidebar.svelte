@@ -29,6 +29,7 @@ const sections = $derived.by((): NavSection[] => {
   ];
   const tools: NavItem[] = [
     { href: businessPath("/asistente"), label: "Asistente", icon: "bot" },
+    { href: businessPath("/campanas"), label: "Campañas", icon: "megaphone" },
   ];
   if (auth.canAccessReports) {
     tools.push(

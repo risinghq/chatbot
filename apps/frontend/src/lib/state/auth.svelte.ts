@@ -94,6 +94,10 @@ function createAuthState() {
     get canDeleteCustomers() {
       return this.isAdmin || this.isSupervisor;
     },
+    /** Creating and sending campaigns; every role reads them. */
+    get canManageCampaigns() {
+      return this.isAdmin || this.isSupervisor;
+    },
     get canAccessReports() {
       return this.isAdmin || this.isDeveloper || this.isSupervisor;
     },

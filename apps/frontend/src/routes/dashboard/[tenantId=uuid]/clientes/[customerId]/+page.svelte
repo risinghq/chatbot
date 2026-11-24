@@ -74,6 +74,29 @@ async function save(customer: Customer) {
   }
 }
 
+let optedOut = $state(data.optedOut);
+$effect.pre(() => {
+  optedOut = data.optedOut;
+});
+
+async function setOptOut(customer: Customer, value: boolean) {
+  try {
+    await fetchApi(`/api/campaigns/customers/${customer.id}/opt-out`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ optedOut: value }),
+    });
+    optedOut = value;
+    toast.success(
+      value
+        ? "No recibirá mensajes promocionales"
+        : "Volverá a recibir mensajes promocionales",
+    );
+  } catch {
+    toast.error("No se pudo cambiar la preferencia");
+  }
+}
+
 async function remove(customer: Customer) {
   if (!confirm(`¿Eliminar a ${customer.name} y sus direcciones?`)) return;
   isSaving = true;
@@ -127,6 +150,18 @@ async function remove(customer: Customer) {
 				{/if}
 			</div>
 		</header>
+
+		{#if customer.phone}
+			<label class="mb-4 flex items-center gap-2 text-sm text-fg">
+				<input
+					type="checkbox"
+					checked={optedOut}
+					disabled={!canEdit}
+					onchange={(e) => setOptOut(customer, e.currentTarget.checked)}
+				/>
+				Sin mensajes promocionales (baja de marketing)
+			</label>
+		{/if}
 
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
 			<div class="flex flex-col gap-4 lg:col-span-2">
