@@ -766,15 +766,32 @@ describe("campaigns", () => {
         "SELECT name, language, body FROM message_templates WHERE tenant_id = ? AND id = ?",
         [tenant.tenantId, await approvedTemplate(tenant.tenantId, "marketing")],
       );
+      const optedOutPhone = "51900000088";
+      await run(
+        "INSERT INTO marketing_opt_outs (tenant_id, phone_number, source) VALUES (?, ?, 'staff')",
+        [tenant.tenantId, optedOutPhone],
+      );
       await expect(
         enqueueTemplate(tenant.ref(phone), template!, [], {}, Date.now(), 7),
       ).resolves.toBe("capped");
-      for (const table of ["messages", "outbox"]) {
-        const row = await getOne<{ n: number }>(
-          `SELECT count(*) AS n FROM ${table} WHERE tenant_id = ? AND phone_number = ?`,
-          [tenant.tenantId, phone],
-        );
-        expect(row!.n, `${table} should hold no row`).toBe(0);
+      await expect(
+        enqueueTemplate(
+          tenant.ref(optedOutPhone),
+          template!,
+          [],
+          {},
+          Date.now(),
+          7,
+        ),
+      ).resolves.toBe("opted_out");
+      for (const refusedPhone of [phone, optedOutPhone]) {
+        for (const table of ["conversations", "messages", "outbox"]) {
+          const row = await getOne<{ n: number }>(
+            `SELECT count(*) AS n FROM ${table} WHERE tenant_id = ? AND phone_number = ?`,
+            [tenant.tenantId, refusedPhone],
+          );
+          expect(row!.n, `${table} should hold no row`).toBe(0);
+        }
       }
       const claim = await getOne<{ sent_at: number; message_id: string }>(
         "SELECT sent_at, message_id FROM marketing_sends WHERE tenant_id = ? AND phone_number = ?",
