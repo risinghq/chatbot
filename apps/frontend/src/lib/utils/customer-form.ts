@@ -37,8 +37,7 @@ export function customerFormProblems(
   if (!form.name.trim()) problems.name = "El nombre es obligatorio";
   const phone = form.phone.replace(/[\s\-()+.]/g, "");
   if (phone && !/^\d{6,15}$/.test(phone))
-    problems.phone =
-      "Escribe un número de 6 a 15 dígitos, ej. 999 888 777";
+    problems.phone = "Escribe un número de 6 a 15 dígitos, ej. 999 888 777";
   if (form.documentType && !form.documentNumber.trim())
     problems.documentNumber = "Escribe el número del documento";
   if (!form.documentType && form.documentNumber.trim())
