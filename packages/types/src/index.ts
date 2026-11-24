@@ -217,6 +217,8 @@ export type AssistantCall = {
   operation: string;
   model: string;
   phone_number: string;
+  /** The business's customer with this phone, if there is one. */
+  customer_name: string | null;
   status: "success" | "error";
   latency_ms: number | null;
   tokens_total: number | null;

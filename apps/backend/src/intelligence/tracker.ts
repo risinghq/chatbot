@@ -63,17 +63,27 @@ async function _trackLLMCallAsync(data: LLMCallData): Promise<void> {
     .execute();
 }
 
+/** The business's model calls, newest first, each with its customer's name. */
 export async function getRecentLLMCalls(
   tenantId: string,
   limit: number = 50,
   offset: number = 0,
 ) {
   return await db
-    .selectFrom("llm_calls")
-    .selectAll()
-    .where(tenantScope(tenantId))
-    .orderBy("created_at", "desc")
-    .orderBy("id", "desc")
+    .selectFrom("llm_calls as l")
+    .selectAll("l")
+    .select((eb) =>
+      eb
+        .selectFrom("customers as c")
+        .select("c.name")
+        .whereRef("c.tenant_id", "=", "l.tenant_id")
+        .whereRef("c.phone", "=", "l.phone_number")
+        .limit(1)
+        .as("customer_name"),
+    )
+    .where(tenantScope(tenantId, "l.tenant_id"))
+    .orderBy("l.created_at", "desc")
+    .orderBy("l.id", "desc")
     .limit(limit)
     .offset(offset)
     .execute();
