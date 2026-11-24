@@ -6,6 +6,7 @@ import { db, inOpenTenants, tenantScope } from "../../db/index.ts";
 import { publicOrigin } from "../../config.ts";
 import { ChannelAccountService } from "../channels/accounts.ts";
 import { createLogger } from "../../lib/logger.ts";
+import { marketingCapCutoff } from "./consent.ts";
 import { enqueueTemplate } from "./send.ts";
 import { TemplateService } from "./templates.ts";
 
@@ -29,11 +30,16 @@ const lastInbound = (eb: Eb, tenantId: string) =>
   );
 
 /**
- * Phones a marketing send may not reach: opted out, or already sent a
- * marketing message inside `capCutoff`. Skipping them in SQL keeps a
+ * Phones a marketing send may not reach: opted out, or whose last marketing
+ * send is still inside the `days`-day cap. Skipping them in SQL keeps a
  * permanently-blocked customer out of the limited due set.
  */
-const marketingAllowed = (eb: Eb, tenantId: string, capCutoff: number) =>
+const marketingAllowed = (
+  eb: Eb,
+  tenantId: string,
+  now: number,
+  days: number,
+) =>
   eb.and([
     eb.not(
       eb.exists(
@@ -51,7 +57,7 @@ const marketingAllowed = (eb: Eb, tenantId: string, capCutoff: number) =>
           .select("ms.sent_at")
           .whereRef("ms.phone_number", "=", "cu.phone")
           .where("ms.tenant_id", "=", tenantId)
-          .where("ms.sent_at", ">=", capCutoff),
+          .where("ms.sent_at", ">", marketingCapCutoff(now, days)),
       ),
     ),
   ]);
@@ -218,9 +224,7 @@ async function dueCartOrders(
     )
     .where((eb) => eb(lastInbound(eb, tenantId), "<=", cutoff))
     .$if(marketingDays !== null, (qb) =>
-      qb.where((eb) =>
-        marketingAllowed(eb, tenantId, now - (marketingDays ?? 0) * DAY_MS),
-      ),
+      qb.where((eb) => marketingAllowed(eb, tenantId, now, marketingDays ?? 0)),
     )
     .limit(50)
     .execute();
@@ -282,9 +286,7 @@ async function dueInactiveCustomers(
       ]),
     )
     .$if(marketingDays !== null, (qb) =>
-      qb.where((eb) =>
-        marketingAllowed(eb, tenantId, now - (marketingDays ?? 0) * DAY_MS),
-      ),
+      qb.where((eb) => marketingAllowed(eb, tenantId, now, marketingDays ?? 0)),
     )
     .limit(50)
     .execute();

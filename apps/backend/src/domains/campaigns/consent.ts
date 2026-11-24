@@ -12,6 +12,18 @@ const OPT_OUT_PHRASES = new Set([
   "dame de baja",
 ]);
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The marketing cap's boundary. A send stamped strictly after it is inside the
+ * `days`-day interval and holds the phone's slot; one stamped at or before it
+ * frees the slot. The claim in send.ts and the reminder filters in
+ * reminders.ts read the cap this way.
+ */
+export function marketingCapCutoff(now: number, days: number): number {
+  return now - days * DAY_MS;
+}
+
 function normalize(text: string): string {
   return text
     .toLowerCase()
