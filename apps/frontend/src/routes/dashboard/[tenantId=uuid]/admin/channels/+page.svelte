@@ -3,6 +3,7 @@ import { onMount } from "svelte";
 import { ApiError, fetchApi } from "#lib/utils/api.js";
 import { toast } from "#lib/state/toast.svelte.js";
 import { auth } from "#lib/state/auth.svelte.js";
+import { businessPath } from "#lib/state/business.svelte.js";
 import Badge from "#lib/components/ui/badge.svelte";
 import Button from "#lib/components/ui/button.svelte";
 import EmptyState from "#lib/components/ui/empty-state.svelte";
@@ -152,7 +153,9 @@ onMount(() => {
 <div class="flex flex-col gap-6">
 	<SectionShell
 		title="Números de WhatsApp"
-		description="El token de acceso y el app secret de Meta se guardan cifrados. Copia la URL del webhook y el token de verificación en la configuración del webhook de tu app de Meta."
+		description={auth.isPlatformOperator
+			? "El token de acceso y el app secret de Meta se guardan cifrados. Copia la URL del webhook y el token de verificación en la configuración del webhook de tu app de Meta."
+			: "Los números por los que tus clientes te escriben. El asistente responde en ellos."}
 		action={auth.isPlatformOperator && accounts.length > 0 && !adding ? addAction : undefined}
 	>
 		{#if loading}
@@ -165,11 +168,13 @@ onMount(() => {
 				title="Sin números conectados"
 				description={auth.isPlatformOperator
 					? "Agrega el número de WhatsApp Business del negocio con su phone number id de Meta."
-					: "El equipo de VendeYa conecta el número de tu negocio. Escríbeles para empezar."}
+					: "El equipo de VendeYa conecta el número de WhatsApp Business de tu negocio. Mientras tanto, conversa con el asistente como si fueras un cliente."}
 			>
 				{#snippet action()}
 					{#if auth.isPlatformOperator}
 						<Button onclick={() => (adding = true)}>Agregar número</Button>
+					{:else}
+						<Button href={businessPath("/asistente/probar")} variant="secondary">Probar el asistente</Button>
 					{/if}
 				{/snippet}
 			</EmptyState>
