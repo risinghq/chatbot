@@ -8,10 +8,10 @@ import { fetchApi } from "#lib/utils/api.js";
 type SetupStatus = {
   openai_configured: boolean;
   has_catalog: boolean;
+  has_stock: boolean;
   has_payment_methods: boolean;
   tried_simulator: boolean;
   whatsapp_configured: boolean;
-  has_members: boolean;
   calidda_configured: boolean;
   complete: boolean;
 };
@@ -20,15 +20,16 @@ let status = $state<SetupStatus | null>(null);
 let loading = $state(true);
 
 // The order is the path a new business takes: the assistant needs a key to
-// think, a catalog to quote and a way to be paid, the simulator proves both before a customer
-// sees them, and only then does a number go live.
+// think, a catalog to quote, stock to reserve and a way to be paid; the
+// simulator proves them before a customer sees them, and only then does a
+// number go live.
 const steps = $derived(
   status
     ? [
         {
           done: status.openai_configured,
           label: "Clave de OpenAI",
-          hint: "El asistente la usa para entender y responder.",
+          hint: "El asistente la usa para entender y responder. Se crea en platform.openai.com y OpenAI cobra por uso.",
           action: "Agregar clave",
           href: businessPath("/admin/settings"),
         },
@@ -38,6 +39,13 @@ const steps = $derived(
           hint: "Al menos un producto activo con precio. Es lo que el asistente cotiza.",
           action: "Abrir catálogo",
           href: businessPath("/catalog"),
+        },
+        {
+          done: status.has_stock,
+          label: "Stock disponible",
+          hint: "Sin stock, el asistente no puede tomar pedidos.",
+          action: "Registrar stock",
+          href: businessPath("/inventario"),
         },
         {
           done: status.has_payment_methods,
@@ -56,16 +64,9 @@ const steps = $derived(
         {
           done: status.whatsapp_configured,
           label: "Número de WhatsApp",
-          hint: "Token de acceso y app secret de Meta, y la URL del webhook.",
-          action: "Conectar número",
+          hint: "El equipo de VendeYa conecta tu número de WhatsApp Business a tu negocio.",
+          action: "Ver números",
           href: businessPath("/admin/channels"),
-        },
-        {
-          done: status.has_members,
-          label: "Equipo",
-          hint: "Quien atiende las conversaciones que el asistente deriva.",
-          action: "Invitar",
-          href: businessPath("/admin/users"),
         },
       ]
     : [],
@@ -92,7 +93,7 @@ onMount(load);
 	<section class="rounded-md border border-border bg-surface">
 		<header class="flex items-center justify-between border-b border-border-subtle px-4 py-3">
 			<h2 class="text-md text-fg">Pon a vender tu negocio</h2>
-			<span class="text-sm text-fg-muted tabular-nums">{doneCount} de {steps.length}</span>
+			<span class="text-sm text-fg-muted tabular-nums">{doneCount} de {steps.length} listos</span>
 		</header>
 		<ol class="divide-y divide-border-subtle">
 			{#each steps as step, i (step.label)}
@@ -123,11 +124,17 @@ onMount(load);
 				</li>
 			{/each}
 		</ol>
-		{#if !status.calidda_configured}
-			<footer class="border-t border-border-subtle px-4 py-2.5 text-sm text-fg-muted">
-				Opcional: si vendes con crédito Cálidda, agrega tu usuario en
-				<a href="{businessPath()}/admin/settings" class="text-fg underline underline-offset-2">Configuración</a>.
-			</footer>
-		{/if}
+		<footer class="space-y-1 border-t border-border-subtle px-4 py-2.5 text-sm text-fg-muted">
+			<p>
+				Opcional: invita a quien atiende las conversaciones que el asistente deriva en
+				<a href={businessPath("/admin/users")} class="text-fg underline underline-offset-2">Usuarios</a>.
+			</p>
+			{#if !status.calidda_configured}
+				<p>
+					Opcional: si vendes con crédito Cálidda, agrega tu usuario en
+					<a href={businessPath("/admin/settings")} class="text-fg underline underline-offset-2">Configuración</a>.
+				</p>
+			{/if}
+		</footer>
 	</section>
 {/if}

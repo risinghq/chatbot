@@ -58,6 +58,7 @@ import { MembershipService } from "../src/domains/tenants/index.ts";
 import { AssetService } from "../src/domains/assets/index.ts";
 import { ProductService } from "../src/domains/catalog/products.ts";
 import { VariantService } from "../src/domains/catalog/variants.ts";
+import { StockService } from "../src/domains/stock/index.ts";
 import { assignNextAgentHeld } from "../src/domains/conversations/assignment.ts";
 import { ChannelAccountService } from "../src/domains/channels/accounts.ts";
 import { PaymentMethodService } from "../src/domains/orders/settings.ts";
@@ -2030,10 +2031,10 @@ describe("HTTP authorization", () => {
       expect(await status()).toEqual({
         openai_configured: false,
         has_catalog: false,
+        has_stock: false,
         has_payment_methods: false,
         tried_simulator: false,
         whatsapp_configured: false,
-        has_members: false,
         calidda_configured: false,
         complete: false,
       });
@@ -2049,7 +2050,7 @@ describe("HTTP authorization", () => {
         category: "Cocinas",
       });
       expect((await status()).has_catalog).toBe(false);
-      await VariantService.create(tenantId, product.id, {
+      const variant = await VariantService.create(tenantId, product.id, {
         name: null,
         sku: "COCINA-1",
         price_cents: 100000,
@@ -2057,6 +2058,24 @@ describe("HTTP authorization", () => {
         is_active: 1,
       });
       expect((await status()).has_catalog).toBe(true);
+
+      // The assistant cannot take an order for a unit it cannot reserve, so a
+      // catalog with every unit reserved still has no stock.
+      const location = await StockService.defaultLocation(tenantId);
+      const move = (kind: "receive" | "reserve") =>
+        StockService.record({
+          tenantId,
+          variantId: variant.id,
+          locationId: location!.id,
+          kind,
+          quantity: 1,
+          createdBy: null,
+        });
+      await move("receive");
+      await move("reserve");
+      expect((await status()).has_stock).toBe(false);
+      await move("receive");
+      expect((await status()).has_stock).toBe(true);
 
       // An order can only be paid with an active method, so a paused one
       // stays pending.
@@ -2090,15 +2109,8 @@ describe("HTTP authorization", () => {
       });
       expect((await status()).whatsapp_configured).toBe(true);
 
-      await run(
-        `INSERT INTO tenant_memberships (id, tenant_id, user_id, role)
-         VALUES (?, ?, ?, 'admin')`,
-        [crypto.randomUUID(), tenantId, await createUser({})],
-      );
-
-      // Cálidda is optional: setup completes without its login.
+      // Cálidda and a team are optional: setup completes without either.
       const done = await status();
-      expect(done.has_members).toBe(true);
       expect(done.calidda_configured).toBe(false);
       expect(done.complete).toBe(true);
 
