@@ -110,7 +110,7 @@ async function confirmImport() {
     const summary = (await upload("")) as Summary;
     await invalidateAll();
     toast.success(
-      `Listo: ${summary.new_variants} variantes nuevas y ${summary.updated_variants} actualizadas`,
+      `Listo: ${plural(summary.new_variants, "variante nueva", "variantes nuevas")} y ${plural(summary.updated_variants, "actualizada", "actualizadas")}`,
     );
     close();
   } catch (error) {
@@ -171,10 +171,20 @@ function plural(n: number, one: string, many: string) {
         <Banner tone="warning">El archivo no tiene filas con productos.</Banner>
       {:else}
         <Banner tone="success">
-          Se crearán {plural(s.new_products, "producto", "productos")} y
-          {plural(s.new_variants, "variante", "variantes")}{#if s.updated_variants > 0}, y se
-            actualizarán {plural(s.updated_variants, "variante", "variantes")}{/if}.
-          {#if s.units > 0}Entran {plural(s.units, "unidad", "unidades")} al stock.{/if}
+          <ul>
+            {#if s.new_variants > 0}
+              <li>
+                Nuevos: {plural(s.new_products, "producto", "productos")} y
+                {plural(s.new_variants, "variante", "variantes")}
+              </li>
+            {/if}
+            {#if s.updated_variants > 0}
+              <li>Cambian precio: {plural(s.updated_variants, "variante", "variantes")}</li>
+            {/if}
+            {#if s.units > 0}
+              <li>Entran al stock: {plural(s.units, "unidad", "unidades")}</li>
+            {/if}
+          </ul>
         </Banner>
       {/if}
 
@@ -215,7 +225,7 @@ function plural(n: number, one: string, many: string) {
                   <td class="px-2 py-1.5 text-fg-muted tabular-nums">{row.row}</td>
                   <td class="px-2 py-1.5">{row.product}</td>
                   <td class="px-2 py-1.5">{row.variant ?? "–"}</td>
-                  <td class="px-2 py-1.5 text-fg-muted">{row.sku ?? "Automático"}</td>
+                  <td class="px-2 py-1.5 text-fg-muted">{row.sku ?? (row.action === "create" ? "Automático" : "–")}</td>
                   <td class="px-2 py-1.5 text-right tabular-nums">{formatCents(row.price_cents)}</td>
                   <td class="px-2 py-1.5 text-right tabular-nums">
                     {row.action === "create" ? row.stock : "–"}
